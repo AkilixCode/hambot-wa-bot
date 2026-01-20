@@ -363,7 +363,7 @@ _${rttStats}_
                 }
                 break;
 
-            // --- command: MUSIC (UPDATED: WARP PROXY + ANDROID CLIENT) ---
+            // --- command: MUSIC  ---
             case '.music': {
                 if (!args[0]) return sock.sendMessage(from, { text: 'Judul?' }, { quoted: msg });
                 await sock.sendMessage(from, { react: { text: "🎵", key: msg.key } });
@@ -374,9 +374,8 @@ _${rttStats}_
                 
                 console.log(`[MUSIC] 🚀 Download via WARP (Android Mode): ${qMusic}`);
 
-                // Menggunakan Proxy SOCKS5 Cloudflare WARP (Port 40000)
-                // Menggunakan 'player_client=android' untuk menghindari blokir PO Token
-                const cmdMusic = `yt-dlp "${src}" -x --audio-format mp3 --audio-quality 0 -o "${fMusic}.%(ext)s" --no-playlist --proxy "socks5://127.0.0.1:40000" --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings`;
+                //Proxy and network
+                const cmdMusic = `yt-dlp "${src}" -x --audio-format mp3 --audio-quality 0 -o "${fMusic}.%(ext)s" --no-playlist --proxy "socks5://100.93.38.17:1080" --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings`;
 
                 exec(cmdMusic, async (err, stdout, stderr) => {
                     if (err) console.log(`❌ [MUSIC ERROR]: ${err.message}`);
@@ -394,7 +393,7 @@ _${rttStats}_
                 break;
             }
 
-            // --- command: PHOTO & VIDEOS (UPDATED: WARP PROXY + ANDROID CLIENT) ---
+            // --- command: PHOTO & VIDEOS ---
             case '.photo':
             case '.video':
                 if (!args[0]) return;
@@ -405,9 +404,10 @@ _${rttStats}_
                 console.log(`[MEDIA] 🚀 Download via WARP: ${args[0]}`);
 
                 // Update Logic: Tambahkan Proxy & Client Spoofing ke kedua perintah
-                let cmd = isVid ? 
-                    `yt-dlp "${args[0]}" -o "${fMedia}.mp4" --max-filesize 100M --proxy "socks5://127.0.0.1:40000" --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings` : 
-                    `yt-dlp "${args[0]}" -o "${fMedia}" --write-thumbnail --skip-download --convert-thumbnails jpg --proxy "socks5://127.0.0.1:40000" --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings`;
+                // Cari variable cmd di case .photo / .video
+            let cmd = isVid ? 
+                    `yt-dlp "${args[0]}" -o "${fMedia}.mp4" --max-filesize 100M --proxy "socks5://100.93.38.17:1080" --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings` : 
+                    `yt-dlp "${args[0]}" -o "${fMedia}" --write-thumbnail --skip-download --convert-thumbnails jpg --proxy "socks5://100.93.38.17:1080" --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings`;
                 
                 exec(cmd, async (err, stdout, stderr) => {
                     if (err) console.log(`❌ [MEDIA ERROR]: ${err.message}`);
