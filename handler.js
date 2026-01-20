@@ -1,4 +1,4 @@
-require('dotenv').config(); // Load rahasia negara
+require('dotenv').config(); 
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const { exec } = require('child_process');
 const util = require('util');
@@ -8,6 +8,26 @@ const fsPromises = require('fs').promises; // Pakai versi Async biar server gak 
 const axios = require('axios');
 const sharp = require('sharp');
 const os = require('os');
+
+const { spawn } = require('child_process');
+
+function spawnPromise(command, args) {
+    return new Promise((resolve, reject) => {
+        const process = spawn(command, args);
+        let stdoutData = '';
+        let stderrData = '';
+
+        process.stdout.on('data', (data) => { stdoutData += data; });
+        process.stderr.on('data', (data) => { stderrData += data; });
+
+        process.on('close', (code) => {
+            if (code === 0) resolve(stdoutData);
+            else reject(new Error(`Command failed with code ${code}\nStderr: ${stderrData}`));
+        });
+
+        process.on('error', (err) => reject(err));
+    });
+}
 
 // --- PUPPETEER CONFIG (SINGLETON PATTERN) ---
 const puppeteer = require('puppeteer-extra');
@@ -184,7 +204,7 @@ _© 2025 ${namaOwner}_`.trim();
                 await sock.sendMessage(from, { text: txtPing }, { quoted: msg });
                 break;
 
-            // --- PINTEREST (HEMAT RAM EDITION) ---
+            // --- PINTEREST  ---
             case '.pinterest':
             case '.pin':
                 if (!args[0]) return sock.sendMessage(from, { text: 'Cari apa?' }, { quoted: msg });
@@ -233,95 +253,152 @@ _© 2025 ${namaOwner}_`.trim();
                 }
                 break;
 
-            // --- MUSIC DOWNLOADER (CLEAN & SAFE) ---
-            case '.music': {
-                if (!args[0]) return sock.sendMessage(from, { text: 'Judul?' }, { quoted: msg });
-                await sock.sendMessage(from, { react: { text: "🎵", key: msg.key } });
+           // --- MUSIC DOWNLOADER ---
+case '.music': {
+    if (!args[0]) return sock.sendMessage(from, { text: 'Judul?' }, { quoted: msg });
+    await sock.sendMessage(from, { react: { text: "🔍", key: msg.key } }); // React kaca pembesar dulu
 
-                const qMusic = args.join(' ');
-                const fMusic = `music_${Date.now()}`;
-                const outputParams = `${fMusic}.%(ext)s`;
-                // Sanitasi input sederhana (kalau mau aman banget pakai spawn)
-                const src = qMusic.replace(/"/g, '\\"'); 
+    const qMusic = args.join(' ');
+    const fMusic = `music_${Date.now()}`;
+    
+    // Gunakan Proxy dari ENV
+    const proxyArgs = process.env.HB_PROXY_URL ? ['--proxy', process.env.HB_PROXY_URL] : [];
+
+    try {
+        // LANGKAH 1: Cari 5 kandidat, ambil metadata-nya saja (Cepat, cuma teks)
+        // Kita pakai spawn agar aman dari hack symbol
+        const searchArgs = [
+            `ytsearch5:${qMusic}`,
+            '--dump-json',            
+            '--no-playlist',
+            '--flat-playlist',        
+            ...proxyArgs
+        ];
+
+        // Jalankan pencarian
+        const searchResult = await spawnPromise('yt-dlp', searchArgs);
+        
+        // Parsing hasil JSON (karena yt-dlp output json per baris, kita split)
+        const videos = searchResult.trim().split('\n').map(line => {
+            try { return JSON.parse(line); } catch { return null; }
+        }).filter(v => v !== null);
+
+        // LANGKAH 2: FILTER DURASI (Maksimal 10 menit / 600 detik)
+        const validVideo = videos.find(v => v.duration && v.duration < 600);
+
+        if (!validVideo) {
+            return sock.sendMessage(from, { text: '❌ Tidak ditemukan lagu yang pas. Lagu hanya bisa berdurasi maksimal 10 menit.' }, { quoted: msg });
+        }
+
+        // Kalau ketemu, update React jadi Note
+        await sock.sendMessage(from, { react: { text: "🎵", key: msg.key } });
+        console.log(`[MUSIC] Selected: ${validVideo.title} (${validVideo.duration}s)`);
+
+        // LANGKAH 3: DOWNLOAD VIDEO TERPILIH (by ID)
+        const outputParams = `${fMusic}.%(ext)s`;
+        const downloadArgs = [
+            `https://youtu.be/${validVideo.id}`, // Download pakai ID pasti akurat
+            '-x', 
+            '--audio-format', 'mp3', 
+            '--audio-quality', '0', 
+            '-o', outputParams,
+            '--max-filesize', '20M',
+            ...proxyArgs,
+            '--extractor-args', 'youtube:player_client=android',
+            '--force-ipv4',
+            '--no-warnings'
+        ];
+
+        await spawnPromise('yt-dlp', downloadArgs);
+
+        // Kirim File
+        const files = await fsPromises.readdir('./');
+        const file = files.find(x => x.startsWith(fMusic) && x.endsWith('.mp3'));
+
+        if (file) {
+            await sock.sendMessage(from, { 
+                audio: await fsPromises.readFile(file), 
+                mimetype: 'audio/mp4', 
+                caption: `🎵 ${validVideo.title}` // Caption judul asli
+            }, { quoted: msg });
+            await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+        } else {
+            throw new Error('File hasil download tidak muncul.');
+        }
+
+    } catch (err) {
+        console.error('[MUSIC ERROR]', err.message);
+        await sock.sendMessage(from, { text: '❌ Gagal (Server/Proxy Error).' }, { quoted: msg });
+    } finally {
+        // Garbage Collector
+        const files = await fsPromises.readdir('./');
+        const junk = files.filter(x => x.startsWith(fMusic));
+        for (const j of junk) await fsPromises.unlink(j).catch(() => {});
+    }
+    break;
+}
                 
-                // Gunakan Proxy dari ENV
-                const proxyCmd = process.env.HB_PROXY_URL ? `--proxy "${process.env.HB_PROXY_URL}"` : '';
+        // --- VIDEO & PHOTO ---
+case '.video':
+case '.photo': {
+    if (!args[0]) return sock.sendMessage(from, { text: 'Link?' }, { quoted: msg });
+    await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
 
-                const commandStr = `yt-dlp "ytsearch1:${src}" -x --audio-format mp3 --audio-quality 0 -o "${outputParams}" --no-playlist ${proxyCmd} --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings`;
+    const fMedia = `media_${Date.now()}`;
+    const isVid = command === '.video';
+    
+    // Siapkan Argumen Proxy (Array)
+    const proxyArgs = process.env.HB_PROXY_URL ? ['--proxy', process.env.HB_PROXY_URL] : [];
 
-                console.log(`[MUSIC] Executing: ${commandStr}`);
+    // Argumen Dasar (Aman dari Injection karena dipisah dalam Array)
+    const commonArgs = [
+        args[0], // Input user langsung aman di sini
+        '-o', isVid ? `${fMedia}.mp4` : fMedia,
+        '--max-filesize', '100M', // Batasi size biar server gak meledak
+        ...proxyArgs,
+        '--extractor-args', 'youtube:player_client=android',
+        '--force-ipv4',
+        '--no-warnings'
+    ];
 
-                try {
-                    await execPromise(commandStr);
-                    
-                    // Cari file hasil download (Async)
-                    const files = await fsPromises.readdir('./');
-                    const file = files.find(x => x.startsWith(fMusic) && x.endsWith('.mp3'));
+    // Argumen Khusus Foto (Thumbnail Only)
+    const specificArgs = isVid 
+        ? [] 
+        : ['--write-thumbnail', '--skip-download', '--convert-thumbnails', 'jpg'];
 
-                    if (file) {
-                        await sock.sendMessage(from, { audio: await fsPromises.readFile(file), mimetype: 'audio/mp4', caption: `🎵 ${qMusic}` }, { quoted: msg });
-                        await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-                    } else {
-                        throw new Error('File tidak ditemukan setelah download.');
-                    }
-                } catch (err) {
-                    console.error('[MUSIC ERROR]', err);
-                    await sock.sendMessage(from, { text: '❌ Gagal Download (Cek Proxy/Server).' }, { quoted: msg });
-                } finally {
-                    // GARBAGE COLLECTOR: Hapus file sampah apapun yg terjadi
-                    const files = await fsPromises.readdir('./');
-                    const junk = files.filter(x => x.startsWith(fMusic));
-                    for (const j of junk) await fsPromises.unlink(j).catch(() => {});
-                }
-                break;
-            }
+    try {
+        // PENTING: Pakai spawnPromise, bukan execPromise!
+        await spawnPromise('yt-dlp', [...commonArgs, ...specificArgs]);
+        
+        const files = await fsPromises.readdir('./');
+        
+        if (isVid) {
+            const vidFile = files.find(x => x.startsWith(fMedia) && x.endsWith('.mp4'));
+            if (vidFile) {
+                await sock.sendMessage(from, { video: await fsPromises.readFile(vidFile), caption: 'Done' }, { quoted: msg });
+            } else throw new Error('Video gagal di-download (Mungkin oversize/private).');
+        } else {
+            // Cari file gambar (bisa jpg/png/webp tergantung yt-dlp)
+            const imgFile = files.find(x => x.startsWith(fMedia) && (x.endsWith('.jpg') || x.endsWith('.png') || x.endsWith('.webp')));
+            if (imgFile) {
+                await sock.sendMessage(from, { image: await fsPromises.readFile(imgFile), caption: 'Done' }, { quoted: msg });
+            } else throw new Error('Foto gagal di-download.');
+        }
+        
+        await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
 
-            // --- VIDEO & PHOTO (CLEAN & SAFE) ---
-            case '.video':
-            case '.photo': {
-                if (!args[0]) return sock.sendMessage(from, { text: 'Link?' }, { quoted: msg });
-                await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
-
-                const fMedia = `media_${Date.now()}`;
-                const isVid = command === '.video';
-                const proxyCmd = process.env.HB_PROXY_URL ? `--proxy "${process.env.HB_PROXY_URL}"` : '';
-                const url = args[0].replace(/"/g, '\\"');
-
-                let cmd;
-                if (isVid) {
-                    cmd = `yt-dlp "${url}" -o "${fMedia}.mp4" --max-filesize 100M ${proxyCmd} --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings`;
-                } else {
-                    cmd = `yt-dlp "${url}" -o "${fMedia}" --write-thumbnail --skip-download --convert-thumbnails jpg ${proxyCmd} --extractor-args "youtube:player_client=android" --force-ipv4 --no-warnings`;
-                }
-
-                try {
-                    await execPromise(cmd);
-                    const files = await fsPromises.readdir('./');
-                    
-                    if (isVid) {
-                        const vidFile = files.find(x => x.startsWith(fMedia) && x.endsWith('.mp4'));
-                        if (vidFile) {
-                            await sock.sendMessage(from, { video: await fsPromises.readFile(vidFile), caption: 'Done' }, { quoted: msg });
-                        } else throw new Error('Video gagal di-download');
-                    } else {
-                        const imgFile = files.find(x => x.startsWith(fMedia) && (x.endsWith('.jpg') || x.endsWith('.png') || x.endsWith('.webp')));
-                        if (imgFile) {
-                            await sock.sendMessage(from, { image: await fsPromises.readFile(imgFile), caption: 'Done' }, { quoted: msg });
-                        } else throw new Error('Foto gagal di-download');
-                    }
-                    await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
-
-                } catch (e) {
-                    console.error('[MEDIA ERROR]', e);
-                    await sock.sendMessage(from, { text: '❌ Gagal (Link Invalid/Block).' }, { quoted: msg });
-                } finally {
-                    // GARBAGE COLLECTOR
-                    const files = await fsPromises.readdir('./');
-                    const junk = files.filter(x => x.startsWith(fMedia));
-                    for (const j of junk) await fsPromises.unlink(j).catch(() => {});
-                }
-                break;
-            }
+    } catch (e) {
+        console.error('[MEDIA ERROR]', e.message);
+        await sock.sendMessage(from, { text: '❌ Gagal (Link Error/Size > 100MB).' }, { quoted: msg });
+    } finally {
+        // GARBAGE COLLECTOR: Hapus sisa file
+        const files = await fsPromises.readdir('./');
+        const junk = files.filter(x => x.startsWith(fMedia));
+        for (const j of junk) await fsPromises.unlink(j).catch(() => {});
+    }
+    break;
+}
+                
 
             // --- STICKER ---
             case '.sticker':
