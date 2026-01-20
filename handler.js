@@ -443,32 +443,58 @@ case '.photo': {
                 }
                 break;
 
-            // --- ELEVENLABS TTS ---
+            // --- ELEVENLABS TTS (ELEVEN V3 ALPHA + SMART LANG) ---
             case '.say':
             case '.vn':
-                if (!args[0]) return sock.sendMessage(from, { text: 'Contoh: .say Halo dunia' }, { quoted: msg });
-                if (!process.env.ELEVENLABS_API_KEY) return sock.sendMessage(from, { text: '❌ API Key belum diset di .env' }, { quoted: msg });
+                // Cek argumen kosong
+                if (!args[0]) return sock.sendMessage(from, { text: 'Format: .say <kode_bahasa> <teks>\nContoh: .say en Hello World' }, { quoted: msg });
                 
+                // Cek API Key
+                if (!process.env.ELEVENLABS_API_KEY) return sock.sendMessage(from, { text: '❌ API Key belum diset di .env' }, { quoted: msg });
+
                 await sock.sendMessage(from, { react: { text: "🗣️", key: msg.key } });
 
-                const namaFile = `tts_${Date.now()}`;
-                const mp3Path = `./${namaFile}.mp3`;
-                const opusPath = `./${namaFile}.opus`;
+                const fTTS = `tts_${Date.now()}`;
+                const mp3Path = `./${fTTS}.mp3`;
+                const opusPath = `./${fTTS}.opus`;
 
                 try {
-                    // Logic Translate + ElevenLabs
-                    const textRaw = args.join(' ');
-                    const textToSpeech = await fungsiTranslate(textRaw, 'id'); // Auto translate ke Indo biar natural
+                    // --- 1. LOGIKA SMART LANGUAGE TAG ---
+                    let targetLang = 'id'; // Default Bahasa Indonesia
+                    let textRaw = '';
 
-                    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'plgKUYgnlZ1DCNh54DwJ'; // Fallback Voice ID
+                    // Cek apakah kata pertama adalah kode bahasa (tepat 2 huruf)
+                    // Contoh: "id Halo" -> Lang: id, Teks: Halo
+                    // Contoh: "Halo Dunia" -> Lang: id (default), Teks: Halo Dunia
+                    if (args[0].length === 2 && /^[a-zA-Z]{2}$/.test(args[0])) {
+                        targetLang = args[0].toLowerCase();
+                        textRaw = args.slice(1).join(' '); // Ambil sisanya
+                    } else {
+                        textRaw = args.join(' '); // Anggap semua teks
+                    }
+
+                    if (!textRaw) return sock.sendMessage(from, { text: 'Mana teksnya?' }, { quoted: msg });
+
+                    // --- 2. AUTO TRANSLATE ---
+                    // Penting: Translate dulu biar aksen ElevenLabs sesuai bahasa target
+                    const textToSpeech = await fungsiTranslate(textRaw, targetLang);
                     
+                    // Fallback Voice ID (Adam)
+                    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'plgKUYgnlZ1DCNh54DwJ'; 
+                    
+                    // --- 3. REQUEST ELEVENLABS V3 (ALPHA) ---
                     const response = await axios({
                         method: 'post',
                         url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
                         data: {
                             text: textToSpeech,
-                            model_id: "eleven_multilingual_v2", // Pakai v2 yg stabil
-                            voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+                            model_id: "eleven_v3", // <-- MODEL V3 ALPHA SESUAI DOKUMENTASI
+                            voice_settings: { 
+                                stability: 0.5, 
+                                similarity_boost: 0.75,
+                                use_speaker_boost: true
+                                // PENTING: Jangan pakai 'style' di v3, nanti error 400!
+                            }
                         },
                         headers: {
                             'Accept': 'audio/mpeg',
@@ -478,20 +504,27 @@ case '.photo': {
                         responseType: 'arraybuffer'
                     });
 
+                    // --- 4. SAVE & CONVERT ---
                     await fsPromises.writeFile(mp3Path, response.data);
-                    await execPromise(`ffmpeg -i ${mp3Path} -c:a libopus ${opusPath}`);
+                    
+                    // Convert MP3 ke OPUS (Voice Note WA) pakai spawnPromise
+                    await spawnPromise('ffmpeg', ['-i', mp3Path, '-c:a', 'libopus', opusPath, '-y']);
 
+                    // --- 5. KIRIM VOICE NOTE ---
                     await sock.sendMessage(from, { 
                         audio: await fsPromises.readFile(opusPath), 
                         mimetype: 'audio/ogg; codecs=opus', 
-                        ptt: true 
+                        ptt: true // Kirim sebagai Voice Note (bukan file audio biasa)
                     }, { quoted: msg });
+                    
                     await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
 
                 } catch (e) {
                     console.error('[ELEVENLABS ERROR]', e.response?.data || e.message);
-                    await sock.sendMessage(from, { text: '❌ Gagal generate suara.' }, { quoted: msg });
+                    const errMsg = e.response?.status === 401 ? '❌ API Key Salah/Expired.' : '❌ Gagal generate suara (Server/Limit Habis).';
+                    await sock.sendMessage(from, { text: errMsg }, { quoted: msg });
                 } finally {
+                    // GARBAGE COLLECTOR: Bersihkan file sampah
                     await fsPromises.unlink(mp3Path).catch(()=>{});
                     await fsPromises.unlink(opusPath).catch(()=>{});
                 }
@@ -528,9 +561,95 @@ case '.photo': {
                 break;
             
             // --- GEMPA & ANIME (Sisanya sama, sudah oke) ---
-            case '.gempa':
-                
+            // --- command: ANIME SEARCH (Max Quality + Translate + Full) ---
+            case '.anime':
+                if (!args[0]) return sock.sendMessage(from, { text: 'Judul anime?' }, { quoted: msg });
+                await sock.sendMessage(from, { react: { text: "⛩️", key: msg.key } });
+
+                try {
+                    const queryAnime = args.join(' ');
+                    const { data } = await axios.get(`https://api.jikan.moe/v4/anime?q=${queryAnime}&limit=1`);
+
+                    if (data.data && data.data.length > 0) {
+                        const anime = data.data[0];
+                        
+                        // 1. Gambar Max Quality
+                        const images = anime.images;
+                        const imageUrl = 
+                            images.webp?.maximum_image_url || 
+                            images.jpg?.maximum_image_url || 
+                            images.webp?.large_image_url || 
+                            images.jpg?.large_image_url;
+                        
+                        // 2. TRANSLATE OTOMATIS
+                        // Kalau sinopsis kosong, kasih strip
+                        const rawSyn = anime.synopsis || 'No synopsis available.';
+                        const sinopsisIndo = await fungsiTranslate(rawSyn, 'id');
+
+                        const status = anime.status;
+                        const score = anime.score ? anime.score : 'N/A';
+                        const episodes = anime.episodes ? anime.episodes : '?';
+                        const rank = anime.rank ? `#${anime.rank}` : 'N/A';
+                        const graphLink = `https://www.google.com/search?q=site:seriesgraph.com+${anime.title.replace(/ /g, '+')}`;
+
+                        const captionAnime = 
+`⛩️ *ANIME INFO (MAL)* ⛩️
+
+🇯🇵 *Judul:* ${anime.title} (${anime.title_japanese || '-'})
+⭐ *Score:* ${score}/10 (Rank ${rank})
+📺 *Episode:* ${episodes} (${status})
+🎭 *Studio:* ${anime.studios[0]?.name || '-'}
+📅 *Rilis:* ${anime.year || '-'}
+⏱️ *Durasi:* ${anime.duration}
+
+📊 *Info Rating Per Episode:*
+${graphLink}
+
+📝 *Sinopsis (ID):*
+${sinopsisIndo}
+
+🔗 *Link MAL:* ${anime.url}`;
+
+                        await sock.sendMessage(from, { image: { url: imageUrl }, caption: captionAnime }, { quoted: msg });
+                        await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+                    } else {
+                        await sock.sendMessage(from, { text: '❌ Anime tidak ditemukan.' }, { quoted: msg });
+                    }
+                } catch (e) {
+                    console.log(e);
+                    await sock.sendMessage(from, { text: '❌ Error Jikan API.' }, { quoted: msg });
+                }
                 break;
+
+
+             // --- command: INFO GEMPA (BMKG) ---
+            case '.gempa':
+                await sock.sendMessage(from, { react: { text: "🌍", key: msg.key } });
+                try {
+                    const { data } = await axios.get('https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json');
+                    const g = data.Infogempa.gempa;
+                    
+                    const teksGempa = 
+`⚠️ *INFO GEMPA TERKINI* ⚠️
+📅 Tanggal: ${g.Tanggal}
+ZE Jam: ${g.Jam}
+📍 Koordinat: ${g.Coordinates}
+📉 Magnitudo: ${g.Magnitude}
+🌊 Kedalaman: ${g.Kedalaman}
+🚩 Lokasi: ${g.Wilayah}
+📢 Potensi: ${g.Potensi}`;
+
+                    // Ambil gambar peta gempa
+                    const imgUrl = `https://data.bmkg.go.id/DataMKG/TEWS/${g.Shakemap}`;
+                    
+                    await sock.sendMessage(from, { image: { url: imgUrl }, caption: teksGempa }, { quoted: msg });
+                } catch (e) {
+                    await sock.sendMessage(from, { text: '❌ Gagal mengambil data BMKG.' }, { quoted: msg });
+                }
+                break;
+
+                
+        
                 
             // ... Tambahkan case lain jika perlu ...
         }
