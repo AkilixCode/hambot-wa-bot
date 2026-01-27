@@ -34,20 +34,21 @@ class RPSCommand extends CommandBase {
 
         await this.react(sock, msg, '✊');
 
-        const userChoice = args[0].toLowerCase();
-        
-        if (!this.choices.includes(userChoice)) {
-            return await this.reply(sock, from, msg, 
-                '❌ Invalid choice! Use: rock, paper, or scissors');
-        }
+        try {
+            const userChoice = args[0].toLowerCase();
+            
+            if (!this.choices.includes(userChoice)) {
+                return await this.reply(sock, from, msg, 
+                    '❌ Invalid choice! Use: rock, paper, or scissors');
+            }
 
-        const botChoice = this.choices[Math.floor(Math.random() * 3)];
-        const result = this.determineWinner(userChoice, botChoice);
+            const botChoice = this.choices[Math.floor(Math.random() * 3)];
+            const result = this.determineWinner(userChoice, botChoice);
 
-        const resultEmoji = result === 'win' ? '🎉' : result === 'lose' ? '😔' : '🤝';
-        const resultText = result === 'win' ? 'You Win!' : result === 'lose' ? 'You Lose!' : 'It\'s a Tie!';
+            const resultEmoji = result === 'win' ? '🎉' : result === 'lose' ? '😔' : '🤝';
+            const resultText = result === 'win' ? 'You Win!' : result === 'lose' ? 'You Lose!' : 'It\'s a Tie!';
 
-        const response = 
+            const response = 
 `✊✋✌️ *Rock Paper Scissors*
 
 You chose: ${this.emojis[userChoice]} ${userChoice}
@@ -55,8 +56,13 @@ Bot chose: ${this.emojis[botChoice]} ${botChoice}
 
 ${resultEmoji} **${resultText}**`;
 
-        await this.reply(sock, from, msg, response);
-        await this.react(sock, msg, resultEmoji);
+            await this.reply(sock, from, msg, response);
+            await this.react(sock, msg, resultEmoji);
+
+        } catch (error) {
+            this.logError(error, context);
+            await this.reply(sock, from, msg, '❌ Game error occurred. Try again!');
+        }
     }
 
     determineWinner(user, bot) {

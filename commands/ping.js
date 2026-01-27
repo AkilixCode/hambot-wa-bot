@@ -26,22 +26,23 @@ class PingCommand extends CommandBase {
 
         await this.react(sock, msg, '💻');
 
-        // Get system info
-        const cpus = os.cpus();
-        const mem = process.memoryUsage().rss;
-        const totalMem = os.totalmem();
-        const freeMem = os.freemem();
-        const uptime = Math.floor(process.uptime());
-        
-        // Calculate latency
-        const latency = Date.now() - startTime;
+        try {
+            // Get system info
+            const cpus = os.cpus();
+            const mem = process.memoryUsage().rss;
+            const totalMem = os.totalmem();
+            const freeMem = os.freemem();
+            const uptime = Math.floor(process.uptime());
+            
+            // Calculate latency
+            const latency = Date.now() - startTime;
 
-        // Get cache stats
-        const cacheStats = cache.getStats();
+            // Get cache stats
+            const cacheStats = cache.getStats();
 
-        const uptimeFormatted = this.formatUptime(uptime);
+            const uptimeFormatted = this.formatUptime(uptime);
 
-        const response = 
+            const response = 
 `💻 *SYSTEM STATUS*
 
 🖥️ **System Info**
@@ -64,8 +65,13 @@ class PingCommand extends CommandBase {
 • Hit Rate: ${cacheStats.hitRate}
 • Hits: ${cacheStats.hits} | Misses: ${cacheStats.misses}`;
 
-        await this.reply(sock, from, msg, response);
-        await this.react(sock, msg, '✅');
+            await this.reply(sock, from, msg, response);
+            await this.react(sock, msg, '✅');
+
+        } catch (error) {
+            this.logError(error, context);
+            await this.reply(sock, from, msg, '❌ Failed to get system status.');
+        }
     }
 
     formatUptime(seconds) {

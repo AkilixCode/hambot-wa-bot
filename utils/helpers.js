@@ -7,6 +7,7 @@ const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const { spawn } = require('child_process');
 const fsPromises = require('fs').promises;
 const axios = require('axios');
+const security = require('./security');
 
 // --- HELPER FUNCTIONS ---
 
@@ -15,6 +16,12 @@ const axios = require('axios');
  */
 function spawnPromise(command, args) {
     return new Promise((resolve, reject) => {
+        // Validate command to prevent injection
+        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node'];
+        if (!allowedCommands.includes(command)) {
+            return reject(new Error('Command not allowed'));
+        }
+
         const proc = spawn(command, args);
         let stdout = '';
         let stderr = '';
@@ -70,7 +77,10 @@ async function downloadMedia(message, type) {
  */
 async function fungsiTranslate(text, targetLang = 'id') {
     try {
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+        // Sanitize input
+        const sanitizedText = security.sanitizeInput(text, 5000);
+        
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(sanitizedText)}`;
         const { data } = await axios.get(url, { timeout: 5000 });
         return data[0].map(x => x[0]).join(''); 
     } catch (e) { 
@@ -83,7 +93,10 @@ async function fungsiTranslate(text, targetLang = 'id') {
  */
 async function smartSearchIMDb(query) {
     try {
-        const url = `https://html.duckduckgo.com/html/?q=site:imdb.com/title ${encodeURIComponent(query)}`;
+        // Sanitize query
+        const sanitizedQuery = security.sanitizeInput(query, 100);
+        
+        const url = `https://html.duckduckgo.com/html/?q=site:imdb.com/title ${encodeURIComponent(sanitizedQuery)}`;
         const { data } = await axios.get(url, { 
             headers: { 'User-Agent': getRandomUA() },
             timeout: 5000
@@ -114,18 +127,10 @@ async function getValidPosterUrl(originalUrl) {
 }
 
 /**
- * Validate and sanitize input
+ * Validate and sanitize input (wrapper for security manager)
  */
 function sanitizeInput(input, maxLength = 500) {
-    if (!input || typeof input !== 'string') return '';
-    
-    // Remove control characters
-    let sanitized = input.replace(/[\x00-\x1F\x7F]/g, '');
-    
-    // Trim and limit length
-    sanitized = sanitized.trim().slice(0, maxLength);
-    
-    return sanitized;
+    return security.sanitizeInput(input, maxLength);
 }
 
 /**

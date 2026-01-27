@@ -7,6 +7,10 @@
     "start": "node index.js",
     "dev": "NODE_ENV=development node index.js",
     "test": "node test-system.js",
+    "test:integration": "node test-integration.cjs",
+    "test:quality": "node test-quality.cjs",
+    "test:security": "node test-security.cjs",
+    "test:all": "npm run test && npm run test:integration && npm run test:quality && npm run test:security",
     "test:verbose": "LOG_LEVEL=debug node test-system.js"
   },
   "keywords": [
