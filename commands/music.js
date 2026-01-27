@@ -6,6 +6,7 @@
 
 const CommandBase = require('./base');
 const { spawn } = require('child_process');
+const { generateFilename, cleanupFiles } = require('../utils/helpers');
 const fsPromises = require('fs').promises;
 const config = require('../config');
 
@@ -24,9 +25,11 @@ class MusicCommand extends CommandBase {
 
     /**
      * Execute yt-dlp using python3 -m yt_dlp for plugin support
+     * This uses python3 which is in the allowed commands list in helpers.js
      */
     spawnYtDlp(args) {
         return new Promise((resolve, reject) => {
+            // python3 is in the allowed commands list in helpers.js
             const proc = spawn('python3', ['-m', 'yt_dlp', ...args]);
             let stdout = '';
             let stderr = '';
@@ -40,29 +43,6 @@ class MusicCommand extends CommandBase {
         });
     }
 
-    /**
-     * Generate unique filename
-     */
-    generateFilename(prefix = 'file') {
-        const timestamp = Date.now();
-        const random = Math.random().toString(36).substring(2, 8);
-        return `${prefix}_${timestamp}_${random}`;
-    }
-
-    /**
-     * Clean up temporary files
-     */
-    async cleanupFiles(prefix) {
-        try {
-            const files = await fsPromises.readdir('./');
-            const junk = files.filter(x => x.startsWith(prefix));
-            await Promise.all(junk.map(j => fsPromises.unlink(j).catch(() => {})));
-            return junk.length;
-        } catch (e) {
-            return 0;
-        }
-    }
-
     async execute(sock, msg, args, context) {
         const { from } = context;
 
@@ -73,7 +53,7 @@ class MusicCommand extends CommandBase {
         await this.react(sock, msg, '🔍');
 
         const query = args.join(' ');
-        const filePrefix = this.generateFilename('music');
+        const filePrefix = generateFilename('music', '');
         
         // Build proxy args from config
         const proxyArgs = config.media.proxyUrl ? ['--proxy', config.media.proxyUrl] : [];
@@ -144,7 +124,7 @@ class MusicCommand extends CommandBase {
             // Check file size before sending
             const stats = await fsPromises.stat(audioFile);
             if (stats.size > 200 * 1024 * 1024) { // 200MB
-                await this.cleanupFiles(filePrefix);
+                await cleanupFiles(filePrefix);
                 return await this.reply(sock, from, msg, '📦 Waduh, filenya kegedean bro (>200MB)! Coba lagu yang lebih pendek ya 😅');
             }
 
@@ -174,7 +154,7 @@ class MusicCommand extends CommandBase {
             await this.reply(sock, from, msg, errorMsg);
         } finally {
             // Cleanup temporary files immediately
-            await this.cleanupFiles(filePrefix);
+            await cleanupFiles(filePrefix);
         }
     }
 }

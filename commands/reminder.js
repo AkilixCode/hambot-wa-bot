@@ -154,12 +154,7 @@ class ReminderCommand extends CommandBase {
     }
 }
 
-// Cleanup on process exit
-process.on('SIGINT', () => {
-    for (const [id, reminder] of activeReminders.entries()) {
-        clearTimeout(reminder.timeout);
-    }
-    activeReminders.clear();
-});
+// Note: Cleanup of active reminders is handled in index.js during graceful shutdown
+// The activeReminders Map will be garbage collected when the process exits
 
 module.exports = ReminderCommand;

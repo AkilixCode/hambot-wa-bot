@@ -18,7 +18,7 @@ class Config {
 
         this.performance = {
             maxProcesses: parseInt(process.env.MAX_PROCESSES) || 3,
-            cooldownMs: parseInt(process.env.COOLDOWN_MS) || 3000, // Friendly 3 second cooldown
+            cooldownMs: parseInt(process.env.COOLDOWN_MS) || 3000, // Friendlier 3 second cooldown
             rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW) || 60000, // 1 minute
             rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX) || 15, // Allow more for friends
             cacheExpiration: parseInt(process.env.CACHE_EXPIRATION) || 300000 // 5 minutes
