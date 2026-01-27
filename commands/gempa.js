@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 
 class GempaCommand extends CommandBase {
@@ -33,7 +33,8 @@ class GempaCommand extends CommandBase {
         }
 
         try {
-            const { data } = await axios.get(
+            // BMKG API with proxy support
+            const { data } = await httpClient.get(
                 'https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json',
                 { timeout: 10000 }
             );

@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 
 class JokeCommand extends CommandBase {
     constructor() {
@@ -24,8 +24,8 @@ class JokeCommand extends CommandBase {
         await this.react(sock, msg, '😂');
 
         try {
-            // Using JokeAPI
-            const { data } = await axios.get(
+            // Using JokeAPI with proxy support
+            const { data } = await httpClient.get(
                 'https://v2.jokeapi.dev/joke/Any?safe-mode',
                 { timeout: 10000 }
             );

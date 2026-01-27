@@ -6,7 +6,7 @@
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const { spawn } = require('child_process');
 const fsPromises = require('fs').promises;
-const axios = require('axios');
+const httpClient = require('./http-client');
 const security = require('./security');
 
 // --- HELPER FUNCTIONS ---
@@ -74,6 +74,7 @@ async function downloadMedia(message, type) {
 
 /**
  * Translate text using Google Translate
+ * Uses HTTP client with proxy support
  */
 async function fungsiTranslate(text, targetLang = 'id') {
     try {
@@ -81,7 +82,7 @@ async function fungsiTranslate(text, targetLang = 'id') {
         const sanitizedText = security.sanitizeInput(text, 5000);
         
         const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(sanitizedText)}`;
-        const { data } = await axios.get(url, { timeout: 5000 });
+        const { data } = await httpClient.get(url, { timeout: 5000 });
         return data[0].map(x => x[0]).join(''); 
     } catch (e) { 
         return text; 
@@ -90,6 +91,7 @@ async function fungsiTranslate(text, targetLang = 'id') {
 
 /**
  * Smart IMDb search via DuckDuckGo
+ * Uses HTTP client with proxy support
  */
 async function smartSearchIMDb(query) {
     try {
@@ -97,7 +99,7 @@ async function smartSearchIMDb(query) {
         const sanitizedQuery = security.sanitizeInput(query, 100);
         
         const url = `https://html.duckduckgo.com/html/?q=site:imdb.com/title ${encodeURIComponent(sanitizedQuery)}`;
-        const { data } = await axios.get(url, { 
+        const { data } = await httpClient.get(url, { 
             headers: { 'User-Agent': getRandomUA() },
             timeout: 5000
         });
@@ -110,6 +112,7 @@ async function smartSearchIMDb(query) {
 
 /**
  * Get valid high-resolution poster URL
+ * Uses HTTP client with proxy support
  */
 async function getValidPosterUrl(originalUrl) {
     if (!originalUrl || originalUrl === 'N/A') {
@@ -119,7 +122,7 @@ async function getValidPosterUrl(originalUrl) {
     const hdUrl = originalUrl.replace(/\._V1_.*\.jpg$/i, '._V1_SX2000.jpg');
     
     try {
-        await axios.head(hdUrl, { timeout: 2000 });
+        await httpClient.head(hdUrl, { timeout: 2000 });
         return hdUrl;
     } catch (e) { 
         return originalUrl; 

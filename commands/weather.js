@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 
 class WeatherCommand extends CommandBase {
@@ -39,8 +39,8 @@ class WeatherCommand extends CommandBase {
         }
 
         try {
-            // Using wttr.in free weather API
-            const { data } = await axios.get(
+            // Using wttr.in free weather API with proxy support
+            const { data } = await httpClient.get(
                 `https://wttr.in/${encodeURIComponent(location)}?format=j1`,
                 { timeout: 10000 }
             );

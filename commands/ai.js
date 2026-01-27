@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 const config = require('../config');
 
 class AICommand extends CommandBase {
@@ -68,12 +68,13 @@ class AICommand extends CommandBase {
 
     /**
      * Call Google Gemini API
+     * Uses HTTP client with proxy support
      */
     async askGemini(question) {
         const apiKey = config.apis.gemini.key;
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-        const response = await axios.post(url, {
+        const response = await httpClient.post(url, {
             contents: [{
                 parts: [{
                     text: `You are a friendly and helpful AI assistant for a WhatsApp group of friends. 

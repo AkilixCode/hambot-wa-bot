@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const { fungsiTranslate, smartSearchIMDb, getValidPosterUrl } = require('../utils/helpers');
 const config = require('../config');
@@ -51,7 +51,8 @@ class MovieCommand extends CommandBase {
                 ? `http://www.omdbapi.com/?i=${imdbId}&apikey=${config.apis.omdb.key}&plot=full`
                 : `http://www.omdbapi.com/?t=${encodeURIComponent(query)}&apikey=${config.apis.omdb.key}&plot=full`;
 
-            const { data } = await axios.get(url, { timeout: 10000 });
+            // OMDb API with proxy support
+            const { data } = await httpClient.get(url, { timeout: 10000 });
 
             if (data.Response === 'False') {
                 return await this.reply(sock, from, msg, `❌ Movie not found: "${query}"\n\nTry a different title or year.`);

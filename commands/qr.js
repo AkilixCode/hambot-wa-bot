@@ -4,7 +4,6 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
 
 class QRCommand extends CommandBase {
     constructor() {

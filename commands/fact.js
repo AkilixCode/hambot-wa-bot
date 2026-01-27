@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 
 class FactCommand extends CommandBase {
     constructor() {
@@ -24,8 +24,8 @@ class FactCommand extends CommandBase {
         await this.react(sock, msg, '💡');
 
         try {
-            // Using uselessfacts API
-            const { data } = await axios.get(
+            // Using uselessfacts API with proxy support
+            const { data } = await httpClient.get(
                 'https://uselessfacts.jsph.pl/random.json?language=en',
                 { timeout: 10000 }
             );

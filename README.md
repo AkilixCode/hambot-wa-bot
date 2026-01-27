@@ -112,6 +112,55 @@ OMDB_API_KEY=your_key
 - **ElevenLabs**: For text-to-speech (.say command) - [Get Key](https://elevenlabs.io)
 - **OMDb**: For movie information (.movie command) - [Get Key](http://www.omdbapi.com/apikey.aspx)
 
+## 🌐 Proxy Configuration
+
+HamBot supports custom proxy setup for all internet-related features. This is useful when you want to route traffic through your own proxy server, such as a spare phone running Tailscale + Every Proxy.
+
+### Supported Proxy Types
+- **HTTP** - Standard HTTP proxy
+- **HTTPS** - Secure HTTP proxy
+- **SOCKS5** - SOCKS5 proxy (recommended for Tailscale + Every Proxy)
+
+### Setup with Tailscale + Every Proxy (Mobile Proxy)
+
+1. **Install Tailscale** on both your phone and server
+2. **Install Every Proxy** app on your phone (available on Google Play)
+3. **Configure Every Proxy** as SOCKS5 proxy (port 1080) or HTTP proxy (port 8080)
+4. **Get your phone's Tailscale IP** (e.g., `100.64.0.2`)
+5. **Configure HamBot**:
+
+```env
+# Enable proxy globally
+PROXY_ENABLED=true
+
+# Set proxy type (http, https, or socks5)
+PROXY_TYPE=socks5
+
+# Your phone's Tailscale IP
+PROXY_HOST=100.64.0.2
+
+# Every Proxy port (1080 for SOCKS5, 8080 for HTTP)
+PROXY_PORT=1080
+```
+
+### Alternative: Full Proxy URL
+
+You can also use a full proxy URL instead of individual components:
+
+```env
+PROXY_ENABLED=true
+HB_PROXY_URL=socks5://100.64.0.2:1080
+```
+
+### Features Using Proxy
+
+When enabled, the proxy is used by:
+- 📹 **yt-dlp** (music and video downloads)
+- 🌐 **All HTTP requests** (APIs, weather, quotes, etc.)
+- 🖼️ **Puppeteer/Browser** (Pinterest scraping, etc.)
+- 🌍 **Translation services**
+- 📊 **All external API calls**
+
 ## 🎮 Usage
 
 ### Basic Commands

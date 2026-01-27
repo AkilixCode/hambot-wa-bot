@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 
 class QuoteCommand extends CommandBase {
     constructor() {
@@ -24,8 +24,8 @@ class QuoteCommand extends CommandBase {
         await this.react(sock, msg, '💭');
 
         try {
-            // Using quotable API
-            const { data } = await axios.get(
+            // Using quotable API with proxy support
+            const { data } = await httpClient.get(
                 'https://api.quotable.io/random',
                 { timeout: 10000 }
             );
