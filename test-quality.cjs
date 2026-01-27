@@ -32,7 +32,7 @@ console.log('📁 Validating File Structure...\n');
 
 const requiredFiles = [
     'index.js',
-    'handler-new.js',
+    'handler.js',
     'config.js',
     'package.json',
     '.env.example',

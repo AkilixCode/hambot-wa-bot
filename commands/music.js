@@ -1,10 +1,12 @@
 /**
  * Music Command
  * Search and download music from YouTube
+ * Uses python3 -m yt_dlp with proxy and android client strategy
  */
 
 const CommandBase = require('./base');
-const { spawnPromise, generateFilename, cleanupFiles } = require('../utils/helpers');
+const { spawn } = require('child_process');
+const { generateFilename, cleanupFiles } = require('../utils/helpers');
 const fsPromises = require('fs').promises;
 const config = require('../config');
 
@@ -21,6 +23,26 @@ class MusicCommand extends CommandBase {
         });
     }
 
+    /**
+     * Execute yt-dlp using python3 -m yt_dlp for plugin support
+     * This uses python3 which is in the allowed commands list in helpers.js
+     */
+    spawnYtDlp(args) {
+        return new Promise((resolve, reject) => {
+            // python3 is in the allowed commands list in helpers.js
+            const proc = spawn('python3', ['-m', 'yt_dlp', ...args]);
+            let stdout = '';
+            let stderr = '';
+            proc.stdout.on('data', (data) => stdout += data);
+            proc.stderr.on('data', (data) => stderr += data);
+            proc.on('close', (code) => {
+                if (code === 0) resolve(stdout);
+                else reject(new Error(stderr || `yt-dlp failed with code ${code}`));
+            });
+            proc.on('error', (err) => reject(err));
+        });
+    }
+
     async execute(sock, msg, args, context) {
         const { from } = context;
 
@@ -32,6 +54,8 @@ class MusicCommand extends CommandBase {
 
         const query = args.join(' ');
         const filePrefix = generateFilename('music', '');
+        
+        // Build proxy args from config
         const proxyArgs = config.media.proxyUrl ? ['--proxy', config.media.proxyUrl] : [];
 
         try {
@@ -43,10 +67,12 @@ class MusicCommand extends CommandBase {
                 '--dump-json',
                 '--no-playlist',
                 '--flat-playlist',
+                '--extractor-args', 'youtube:player_client=android',
+                '--force-ipv4',
                 ...proxyArgs
             ];
 
-            const searchResult = await spawnPromise('yt-dlp', searchArgs);
+            const searchResult = await this.spawnYtDlp(searchArgs);
 
             const videos = searchResult.trim().split('\n').map(line => {
                 try { return JSON.parse(line); } 
@@ -62,22 +88,23 @@ class MusicCommand extends CommandBase {
                 return await this.reply(sock, from, msg, '❌ Song is too long or not found. Try a different song.');
             }
 
-            // Step 2: Download audio
+            // Step 2: Download audio using "Let it Be" method
+            // Let yt-dlp download whatever stream is best, then convert to mp3
             const outputPath = `${filePrefix}.%(ext)s`;
             const downloadArgs = [
                 `https://youtu.be/${validVideo.id}`,
-                '-x',
-                '--audio-format', 'mp3',
-                '--audio-quality', '0',
+                '-x',                          // Extract audio
+                '--audio-format', 'mp3',       // Auto-convert to mp3
+                '--audio-quality', '0',        // Best quality
                 '-o', outputPath,
-                '--max-filesize', config.media.maxFileSize,
-                ...proxyArgs,
+                '--max-filesize', '200M',      // Safety cap for 3GB data limit
                 '--extractor-args', 'youtube:player_client=android',
                 '--force-ipv4',
-                '--no-warnings'
+                '--no-warnings',
+                ...proxyArgs
             ];
 
-            await spawnPromise('yt-dlp', downloadArgs);
+            await this.spawnYtDlp(downloadArgs);
 
             // Find downloaded file
             const files = await fsPromises.readdir('./');
@@ -86,7 +113,19 @@ class MusicCommand extends CommandBase {
             );
 
             if (!audioFile) {
-                throw new Error('Downloaded file not found');
+                // Check if file was too large
+                const anyFile = files.find(x => x.startsWith(filePrefix));
+                if (!anyFile) {
+                    throw new Error('Downloaded file not found. The file might be too large (>200MB). Try a shorter song! 📦');
+                }
+                throw new Error('Audio conversion failed');
+            }
+
+            // Check file size before sending
+            const stats = await fsPromises.stat(audioFile);
+            if (stats.size > 200 * 1024 * 1024) { // 200MB
+                await cleanupFiles(filePrefix);
+                return await this.reply(sock, from, msg, '📦 Waduh, filenya kegedean bro (>200MB)! Coba lagu yang lebih pendek ya 😅');
             }
 
             // Send audio
@@ -101,9 +140,20 @@ class MusicCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, `❌ Failed to download music. ${error.message}`);
+            
+            // Friendly error messages
+            let errorMsg = '❌ Failed to download music.';
+            if (error.message.includes('too large') || error.message.includes('>200MB')) {
+                errorMsg = '📦 Waduh, filenya kegedean bro (>200MB)! Coba lagu yang lebih pendek ya 😅';
+            } else if (error.message.includes('Sign in') || error.message.includes('bot')) {
+                errorMsg = '⚠️ YouTube blocking detected. Please try again later or contact admin.';
+            } else if (error.message.includes('No video')) {
+                errorMsg = '❌ Song not found. Try a different search term.';
+            }
+            
+            await this.reply(sock, from, msg, errorMsg);
         } finally {
-            // Cleanup temporary files
+            // Cleanup temporary files immediately
             await cleanupFiles(filePrefix);
         }
     }
