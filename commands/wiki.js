@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 
 class WikiCommand extends CommandBase {
@@ -39,9 +39,9 @@ class WikiCommand extends CommandBase {
         }
 
         try {
-            // Wikipedia API
+            // Wikipedia API with proxy support
             const searchUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
-            const { data } = await axios.get(searchUrl, { timeout: 10000 });
+            const { data } = await httpClient.get(searchUrl, { timeout: 10000 });
 
             // Cache for 1 hour
             cache.set(cacheKey, data, 3600000);

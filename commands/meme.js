@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 
 class MemeCommand extends CommandBase {
     constructor() {
@@ -24,8 +24,8 @@ class MemeCommand extends CommandBase {
         await this.react(sock, msg, '😂');
 
         try {
-            // Using meme API
-            const { data } = await axios.get(
+            // Using meme API with proxy support
+            const { data } = await httpClient.get(
                 'https://meme-api.com/gimme',
                 { timeout: 10000 }
             );

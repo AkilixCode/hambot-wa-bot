@@ -55,8 +55,8 @@ class MusicCommand extends CommandBase {
         const query = args.join(' ');
         const filePrefix = generateFilename('music', '');
         
-        // Build proxy args from config
-        const proxyArgs = config.media.proxyUrl ? ['--proxy', config.media.proxyUrl] : [];
+        // Build proxy args from config - uses getYtDlpProxyArgs method
+        const proxyArgs = config.getYtDlpProxyArgs();
 
         try {
             // Step 1: Search for videos and check duration

@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 
 class CryptoCommand extends CommandBase {
@@ -34,8 +34,8 @@ class CryptoCommand extends CommandBase {
         await this.react(sock, msg, '💰');
 
         try {
-            // Using CoinGecko API (free, no key required)
-            const { data } = await axios.get(
+            // Using CoinGecko API (free, no key required) with proxy support
+            const { data } = await httpClient.get(
                 `https://api.coingecko.com/api/v3/coins/${symbol}`,
                 { timeout: 10000 }
             );

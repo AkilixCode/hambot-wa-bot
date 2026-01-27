@@ -4,7 +4,7 @@
  */
 
 const CommandBase = require('./base');
-const axios = require('axios');
+const httpClient = require('../utils/http-client');
 
 class TriviaCommand extends CommandBase {
     constructor() {
@@ -31,8 +31,8 @@ class TriviaCommand extends CommandBase {
             : 'medium';
 
         try {
-            // Using Open Trivia Database
-            const { data } = await axios.get(
+            // Using Open Trivia Database with proxy support
+            const { data } = await httpClient.get(
                 `https://opentdb.com/api.php?amount=1&difficulty=${selectedDifficulty}&type=multiple`,
                 { timeout: 10000 }
             );

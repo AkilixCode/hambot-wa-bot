@@ -1,11 +1,13 @@
 /**
  * Browser Session Manager
  * Singleton pattern with connection pooling and health checks
+ * Supports proxy configuration for Tailscale + Every Proxy
  */
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const logger = require('./logger');
+const config = require('../config');
 
 puppeteer.use(StealthPlugin());
 
@@ -49,6 +51,7 @@ class BrowserManager {
 
     /**
      * Launch new browser instance
+     * Includes proxy configuration if enabled
      */
     async launch() {
         this.isLaunching = true;
@@ -56,18 +59,28 @@ class BrowserManager {
         try {
             logger.info('Launching browser instance');
             
+            // Build launch arguments
+            const launchArgs = [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--window-size=1920,1080',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=IsolateOrigins,site-per-process'
+            ];
+
+            // Add proxy arguments if enabled
+            const proxyArgs = config.getPuppeteerProxyArgs();
+            if (proxyArgs.length > 0) {
+                launchArgs.push(...proxyArgs);
+                logger.info(`Browser using proxy: ${config.getProxyUrl()}`);
+            }
+            
             this.browser = await puppeteer.launch({
                 headless: "new",
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--disable-gpu',
-                    '--window-size=1920,1080',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-features=IsolateOrigins,site-per-process'
-                ]
+                args: launchArgs
             });
 
             // Start health check
@@ -86,6 +99,7 @@ class BrowserManager {
 
     /**
      * Create new page with tracking
+     * Handles proxy authentication if needed
      */
     async newPage() {
         if (this.pages.size >= this.maxPages) {
@@ -94,6 +108,14 @@ class BrowserManager {
 
         const browser = await this.getBrowser();
         const page = await browser.newPage();
+        
+        // Handle proxy authentication if credentials are provided
+        if (config.proxy.enabled && config.proxy.user && config.proxy.pass) {
+            await page.authenticate({
+                username: config.proxy.user,
+                password: config.proxy.pass
+            });
+        }
         
         this.pages.add(page);
         
