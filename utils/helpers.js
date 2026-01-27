@@ -1,0 +1,166 @@
+/**
+ * Shared Helper Functions
+ * Common utilities used across the application
+ */
+
+const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { spawn } = require('child_process');
+const fsPromises = require('fs').promises;
+const axios = require('axios');
+
+// --- HELPER FUNCTIONS ---
+
+/**
+ * Spawn Promise (Safe async process execution)
+ */
+function spawnPromise(command, args) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn(command, args);
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (data) => stdout += data);
+        proc.stderr.on('data', (data) => stderr += data);
+        proc.on('close', (code) => {
+            if (code === 0) resolve(stdout);
+            else reject(new Error(stderr || `Command failed with code ${code}`));
+        });
+        proc.on('error', (err) => reject(err));
+    });
+}
+
+/**
+ * Sleep utility
+ */
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Format bytes to human readable string
+ */
+const formatSize = (bytes) => {
+    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + " GB";
+    else if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + " MB";
+    else if (bytes >= 1024) return (bytes / 1024).toFixed(2) + " KB";
+    else return bytes + " bytes";
+};
+
+/**
+ * Random User Agent selector
+ */
+const userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+const getRandomUA = () => userAgents[Math.floor(Math.random() * userAgents.length)];
+
+/**
+ * Download media from WhatsApp message
+ */
+async function downloadMedia(message, type) {
+    const stream = await downloadContentFromMessage(message, type);
+    let buffer = Buffer.from([]);
+    for await (const chunk of stream) { 
+        buffer = Buffer.concat([buffer, chunk]); 
+    }
+    return buffer;
+}
+
+/**
+ * Translate text using Google Translate
+ */
+async function fungsiTranslate(text, targetLang = 'id') {
+    try {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+        const { data } = await axios.get(url, { timeout: 5000 });
+        return data[0].map(x => x[0]).join(''); 
+    } catch (e) { 
+        return text; 
+    }
+}
+
+/**
+ * Smart IMDb search via DuckDuckGo
+ */
+async function smartSearchIMDb(query) {
+    try {
+        const url = `https://html.duckduckgo.com/html/?q=site:imdb.com/title ${encodeURIComponent(query)}`;
+        const { data } = await axios.get(url, { 
+            headers: { 'User-Agent': getRandomUA() },
+            timeout: 5000
+        });
+        const idMatch = data.match(/\/title\/(tt\d{6,10})\/?/);
+        return (idMatch && idMatch[1]) ? idMatch[1] : null;
+    } catch (e) { 
+        return null; 
+    }
+}
+
+/**
+ * Get valid high-resolution poster URL
+ */
+async function getValidPosterUrl(originalUrl) {
+    if (!originalUrl || originalUrl === 'N/A') {
+        return 'https://via.placeholder.com/600x900?text=No+Poster';
+    }
+    
+    const hdUrl = originalUrl.replace(/\._V1_.*\.jpg$/i, '._V1_SX2000.jpg');
+    
+    try {
+        await axios.head(hdUrl, { timeout: 2000 });
+        return hdUrl;
+    } catch (e) { 
+        return originalUrl; 
+    }
+}
+
+/**
+ * Validate and sanitize input
+ */
+function sanitizeInput(input, maxLength = 500) {
+    if (!input || typeof input !== 'string') return '';
+    
+    // Remove control characters
+    let sanitized = input.replace(/[\x00-\x1F\x7F]/g, '');
+    
+    // Trim and limit length
+    sanitized = sanitized.trim().slice(0, maxLength);
+    
+    return sanitized;
+}
+
+/**
+ * Generate unique filename
+ */
+function generateFilename(prefix = 'file', extension = '') {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    return `${prefix}_${timestamp}_${random}${extension ? '.' + extension : ''}`;
+}
+
+/**
+ * Clean up temporary files
+ */
+async function cleanupFiles(prefix) {
+    try {
+        const files = await fsPromises.readdir('./');
+        const junk = files.filter(x => x.startsWith(prefix));
+        await Promise.all(junk.map(j => fsPromises.unlink(j).catch(() => {})));
+        return junk.length;
+    } catch (e) {
+        return 0;
+    }
+}
+
+module.exports = {
+    spawnPromise,
+    sleep,
+    formatSize,
+    getRandomUA,
+    downloadMedia,
+    fungsiTranslate,
+    smartSearchIMDb,
+    getValidPosterUrl,
+    sanitizeInput,
+    generateFilename,
+    cleanupFiles
+};

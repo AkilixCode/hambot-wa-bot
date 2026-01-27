@@ -1,17 +1,21 @@
 {
   "name": "hambot",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "Advanced WhatsApp bot with modular architecture",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "dev": "NODE_ENV=development node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["whatsapp", "bot", "baileys", "automation"],
+  "author": "Ilham",
   "license": "ISC",
-  "description": "",
   "dependencies": {
+    "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "axios": "^1.13.2",
+    "dotenv": "^16.4.7",
     "os": "^0.1.2",
     "pino": "^10.2.0",
     "puppeteer": "^24.35.0",
@@ -19,5 +23,8 @@
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.34.5"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }

@@ -1,0 +1,111 @@
+/**
+ * Enhanced Logging System
+ * Structured logging with different levels and context
+ */
+
+const config = require('../config');
+
+class Logger {
+    constructor() {
+        this.level = config.logging.level;
+        this.silent = config.logging.silent;
+        
+        this.levels = {
+            error: 0,
+            warn: 1,
+            info: 2,
+            debug: 3
+        };
+    }
+
+    /**
+     * Format command info for logging
+     */
+    formatCommand(command, sender, from, isGroup) {
+        return {
+            command,
+            sender: sender.split('@')[0],
+            chat: isGroup ? 'group' : 'private',
+            chatId: from.split('@')[0].slice(-4)
+        };
+    }
+
+    /**
+     * Internal log method
+     */
+    _log(level, message, context = {}) {
+        if (this.silent) return;
+        
+        const levelNum = this.levels[level] || 999;
+        const currentLevelNum = this.levels[this.level] || 999;
+        
+        if (levelNum > currentLevelNum) return;
+        
+        const timestamp = new Date().toISOString();
+        const emoji = {
+            error: '❌',
+            warn: '⚠️',
+            info: 'ℹ️',
+            debug: '🔍'
+        }[level] || '📝';
+        
+        const contextStr = Object.keys(context).length > 0 
+            ? ` ${JSON.stringify(context)}` 
+            : '';
+        
+        console.log(`${emoji} [${timestamp}] [${level.toUpperCase()}] ${message}${contextStr}`);
+    }
+
+    /**
+     * Log command execution
+     */
+    command(info) {
+        this._log('info', 'Command executed', info);
+    }
+
+    /**
+     * Log error with context
+     */
+    error(error, context = {}) {
+        const errorInfo = {
+            error: error.message,
+            stack: error.stack?.split('\n')[0],
+            ...context
+        };
+        this._log('error', 'Error occurred', errorInfo);
+    }
+
+    /**
+     * Log warning
+     */
+    warn(message, context = {}) {
+        this._log('warn', message, context);
+    }
+
+    /**
+     * Log info
+     */
+    info(message, context = {}) {
+        this._log('info', message, context);
+    }
+
+    /**
+     * Log debug information
+     */
+    debug(message, context = {}) {
+        this._log('debug', message, context);
+    }
+
+    /**
+     * Log performance metrics
+     */
+    performance(command, duration, success = true) {
+        this._log('info', 'Performance metric', {
+            command,
+            duration: `${duration}ms`,
+            success
+        });
+    }
+}
+
+module.exports = new Logger();
