@@ -39,6 +39,11 @@ module.exports = async (sock, m) => {
         const sender = msg.key.participant || from;
         const isGroup = from.endsWith('@g.us');
 
+        // Private mode: ignore private messages if ONLY_GROUP_MODE is enabled
+        if (config.bot.onlyGroupMode && !isGroup) {
+            return; // Silently ignore private messages
+        }
+
         // SECURITY: Check if user is blocked
         if (security.isUserBlocked(sender)) {
             logger.warn('Blocked user attempted command', { userId: sender.split('@')[0] });

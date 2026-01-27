@@ -8,15 +8,8 @@ const logger = require('./utils/logger');
 const browserManager = require('./utils/browser-manager');
 const cache = require('./utils/cache');
 
-// Try to use new handler, fallback to old if needed
-let handler;
-try {
-    handler = require('./handler-new');
-    logger.info('Using new modular handler');
-} catch (error) {
-    logger.warn('New handler not available, using legacy handler');
-    handler = require('./handler');
-}
+// Use the modular handler directly
+const handler = require('./handler');
 
 let sock = null;
 

@@ -17,7 +17,7 @@ const security = require('./security');
 function spawnPromise(command, args) {
     return new Promise((resolve, reject) => {
         // Validate command to prevent injection
-        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node'];
+        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node', 'python3'];
         if (!allowedCommands.includes(command)) {
             return reject(new Error('Command not allowed'));
         }
