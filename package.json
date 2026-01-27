@@ -8,14 +8,19 @@
     "dev": "NODE_ENV=development node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["whatsapp", "bot", "baileys", "automation"],
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "automation"
+  ],
   "author": "Ilham",
   "license": "ISC",
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "axios": "^1.13.2",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.6.1",
     "os": "^0.1.2",
     "pino": "^10.2.0",
     "puppeteer": "^24.35.0",
