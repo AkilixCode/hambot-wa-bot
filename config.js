@@ -127,11 +127,14 @@ class Config {
 
     /**
      * Get proxy URL for yt-dlp and other CLI tools
+     * Priority: proxy.url (from PROXY_* env vars) > media.proxyUrl (from HB_PROXY_URL legacy)
      */
     getProxyUrl() {
         if (!this.proxy.enabled) {
             return null;
         }
+        // Primary: Use proxy.url built from PROXY_* env vars
+        // Fallback: Use media.proxyUrl from legacy HB_PROXY_URL for backward compatibility
         return this.proxy.url || this.media.proxyUrl;
     }
 

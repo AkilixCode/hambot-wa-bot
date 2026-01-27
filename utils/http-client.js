@@ -8,29 +8,67 @@ const axios = require('axios');
 const config = require('../config');
 const logger = require('./logger');
 
-// Only require socks-proxy-agent if we're using SOCKS5
+// Cache for SOCKS proxy agent class
 let SocksProxyAgent = null;
+let socksLoadAttempted = false;
 
 /**
- * Get or create SOCKS proxy agent (lazy loaded)
+ * Try to load socks-proxy-agent module (lazy loaded)
+ * Uses require with try-catch for compatibility
  */
-async function getSocksAgent(proxyUrl) {
-    if (!SocksProxyAgent) {
-        try {
-            const { SocksProxyAgent: Agent } = await import('socks-proxy-agent');
-            SocksProxyAgent = Agent;
-        } catch {
-            logger.warn('socks-proxy-agent not installed. SOCKS5 proxy will not work. Install with: npm install socks-proxy-agent');
-            return null;
-        }
+function loadSocksProxyAgent() {
+    if (socksLoadAttempted) {
+        return SocksProxyAgent;
     }
-    return new SocksProxyAgent(proxyUrl);
+    
+    socksLoadAttempted = true;
+    
+    try {
+        // Use require for better compatibility with CommonJS modules
+        SocksProxyAgent = require('socks-proxy-agent').SocksProxyAgent;
+    } catch {
+        logger.warn('socks-proxy-agent not installed. SOCKS5 proxy will not work. Install with: npm install socks-proxy-agent');
+        SocksProxyAgent = null;
+    }
+    
+    return SocksProxyAgent;
+}
+
+/**
+ * Create SOCKS proxy agent instance
+ * @param {string} proxyUrl - Proxy URL
+ * @returns {Object|null} SocksProxyAgent instance or null
+ */
+function createSocksAgent(proxyUrl) {
+    const Agent = loadSocksProxyAgent();
+    if (!Agent) {
+        return null;
+    }
+    return new Agent(proxyUrl);
+}
+
+/**
+ * Apply SOCKS5 proxy agent to options if needed
+ * @param {Object} client - Axios client instance
+ * @param {Object} options - Request options to modify
+ */
+function applySocksProxy(client, options) {
+    if (client.defaults._useSocksProxy) {
+        const agent = createSocksAgent(client.defaults._proxyUrl);
+        if (agent) {
+            options.httpAgent = agent;
+            options.httpsAgent = agent;
+        }
+        // Clean up internal flags
+        delete client.defaults._useSocksProxy;
+        delete client.defaults._proxyUrl;
+    }
 }
 
 /**
  * Create axios instance with proxy configuration
  * @param {Object} customConfig - Custom axios config to merge
- * @returns {Object} axios instance or config
+ * @returns {Object} axios instance
  */
 function createHttpClient(customConfig = {}) {
     const baseConfig = {
@@ -67,18 +105,7 @@ function createHttpClient(customConfig = {}) {
  */
 async function get(url, options = {}) {
     const client = createHttpClient(options);
-    
-    // Handle SOCKS5 proxy
-    if (client.defaults._useSocksProxy) {
-        const agent = await getSocksAgent(client.defaults._proxyUrl);
-        if (agent) {
-            options.httpAgent = agent;
-            options.httpsAgent = agent;
-        }
-        delete client.defaults._useSocksProxy;
-        delete client.defaults._proxyUrl;
-    }
-
+    applySocksProxy(client, options);
     return client.get(url, options);
 }
 
@@ -91,18 +118,7 @@ async function get(url, options = {}) {
  */
 async function post(url, data = {}, options = {}) {
     const client = createHttpClient(options);
-    
-    // Handle SOCKS5 proxy
-    if (client.defaults._useSocksProxy) {
-        const agent = await getSocksAgent(client.defaults._proxyUrl);
-        if (agent) {
-            options.httpAgent = agent;
-            options.httpsAgent = agent;
-        }
-        delete client.defaults._useSocksProxy;
-        delete client.defaults._proxyUrl;
-    }
-
+    applySocksProxy(client, options);
     return client.post(url, data, options);
 }
 
@@ -114,18 +130,7 @@ async function post(url, data = {}, options = {}) {
  */
 async function head(url, options = {}) {
     const client = createHttpClient(options);
-    
-    // Handle SOCKS5 proxy
-    if (client.defaults._useSocksProxy) {
-        const agent = await getSocksAgent(client.defaults._proxyUrl);
-        if (agent) {
-            options.httpAgent = agent;
-            options.httpsAgent = agent;
-        }
-        delete client.defaults._useSocksProxy;
-        delete client.defaults._proxyUrl;
-    }
-
+    applySocksProxy(client, options);
     return client.head(url, options);
 }
 
