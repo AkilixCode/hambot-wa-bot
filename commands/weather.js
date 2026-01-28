@@ -1,6 +1,6 @@
 /**
  * Weather Command
- * Get weather information for any location
+ * Info cuaca untuk lokasi manapun
  */
 
 const CommandBase = require('./base');
@@ -12,8 +12,8 @@ class WeatherCommand extends CommandBase {
         super({
             name: 'weather',
             aliases: ['cuaca', 'wthr'],
-            description: 'Get current weather for any location',
-            usage: '.weather <city name>',
+            description: 'Info cuaca untuk lokasi manapun',
+            usage: '.weather <nama kota>',
             category: 'utility',
             cooldown: 3000
         });
@@ -24,7 +24,7 @@ class WeatherCommand extends CommandBase {
 
         if (!args[0]) {
             return await this.reply(sock, from, msg, 
-                '🌤️ *Weather Information*\n\nUsage: .weather <city>\n\nExamples:\n• .weather London\n• .weather Jakarta\n• .weather New York');
+                '🌤️ *Info Cuaca*\n\n📝 Cara Pakai: .weather <kota>\n\n📌 Contoh:\n• .weather Jakarta\n• .weather Bandung\n• .weather Surabaya');
         }
 
         await this.react(sock, msg, '🌤️');
@@ -52,7 +52,7 @@ class WeatherCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, `❌ Could not fetch weather for "${location}". Please check the location name.`);
+            await this.reply(sock, from, msg, `❌ Tidak bisa mengambil data cuaca untuk "${location}". Periksa nama lokasinya.`);
         }
     }
 
@@ -77,18 +77,18 @@ class WeatherCommand extends CommandBase {
             const emoji = this.getWeatherEmoji(weatherDesc);
 
             const info = 
-`${emoji} *Weather Report*
+`${emoji} *Laporan Cuaca*
 
-📍 Location: ${locationName}, ${country}
-🌡️ Temperature: ${temp}°C (feels like ${feelsLike}°C)
-☁️ Condition: ${weatherDesc}
-💧 Humidity: ${humidity}%
-💨 Wind: ${windSpeed} km/h ${windDir}
-📊 Pressure: ${pressure} mb
-👁️ Visibility: ${visibility} km
-☀️ UV Index: ${uvIndex}
+📍 Lokasi: ${locationName}, ${country}
+🌡️ Suhu: ${temp}°C (terasa ${feelsLike}°C)
+☁️ Kondisi: ${weatherDesc}
+💧 Kelembaban: ${humidity}%
+💨 Angin: ${windSpeed} km/h ${windDir}
+📊 Tekanan: ${pressure} mb
+👁️ Visibilitas: ${visibility} km
+☀️ Indeks UV: ${uvIndex}
 
-${fromCache ? '📦 (cached)' : '🔄 Live data'}`;
+${fromCache ? '📦 _(dari cache)_' : '🔄 _Data langsung_'}`;
 
             await this.reply(sock, from, msg, info);
             await this.react(sock, msg, '✅');

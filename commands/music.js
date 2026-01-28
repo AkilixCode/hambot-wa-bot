@@ -14,9 +14,9 @@ class MusicCommand extends CommandBase {
     constructor() {
         super({
             name: 'music',
-            aliases: ['song', 'mp3', 'audio'],
-            description: 'Search and download music from YouTube',
-            usage: '.music <song name>',
+            aliases: ['song', 'mp3', 'audio', 'lagu'],
+            description: 'Cari dan download musik dari YouTube',
+            usage: '.music <nama lagu>',
             category: 'media',
             cooldown: 5000,
             isHeavy: true
@@ -47,7 +47,7 @@ class MusicCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, '🎵 What song do you want?\n\nExample: .music About You The 1975');
+            return await this.reply(sock, from, msg, '🎵 Mau lagu apa nih?\n\nContoh: .music About You The 1975');
         }
 
         await this.react(sock, msg, '🔍');
@@ -85,7 +85,7 @@ class MusicCommand extends CommandBase {
             );
 
             if (!validVideo) {
-                return await this.reply(sock, from, msg, '❌ Song is too long or not found. Try a different song.');
+                return await this.reply(sock, from, msg, '❌ Lagu terlalu panjang atau tidak ditemukan. Coba lagu lain ya!');
             }
 
             // Step 2: Download audio using "Let it Be" method
@@ -142,13 +142,13 @@ class MusicCommand extends CommandBase {
             this.logError(error, context);
             
             // Friendly error messages
-            let errorMsg = '❌ Failed to download music.';
+            let errorMsg = '❌ Gagal download musik.';
             if (error.message.includes('too large') || error.message.includes('>200MB')) {
                 errorMsg = '📦 Waduh, filenya kegedean bro (>200MB)! Coba lagu yang lebih pendek ya 😅';
             } else if (error.message.includes('Sign in') || error.message.includes('bot')) {
-                errorMsg = '⚠️ YouTube blocking detected. Please try again later or contact admin.';
+                errorMsg = '⚠️ YouTube sedang blocking. Coba lagi nanti atau hubungi admin.';
             } else if (error.message.includes('No video')) {
-                errorMsg = '❌ Song not found. Try a different search term.';
+                errorMsg = '❌ Lagu tidak ditemukan. Coba kata kunci lain.';
             }
             
             await this.reply(sock, from, msg, errorMsg);
