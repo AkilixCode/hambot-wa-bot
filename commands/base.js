@@ -34,7 +34,7 @@ class CommandBase {
 
         // Check if group required
         if (this.requiresGroup && !isGroup) {
-            return { valid: false, error: '❌ This command is only for groups!' };
+            return { valid: false, error: '❌ Perintah ini hanya untuk grup!' };
         }
 
         // Check if admin required (implement your admin check logic)
@@ -48,7 +48,7 @@ class CommandBase {
             const hasQuoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
             
             if (!hasImage && !hasQuoted) {
-                return { valid: false, error: '❌ This command requires an image!' };
+                return { valid: false, error: '❌ Perintah ini membutuhkan gambar!' };
             }
         }
 

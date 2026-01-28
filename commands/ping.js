@@ -13,7 +13,7 @@ class PingCommand extends CommandBase {
         super({
             name: 'ping',
             aliases: ['p', 'status'],
-            description: 'Check bot response time and system status',
+            description: 'Cek waktu respon dan status sistem',
             usage: '.ping',
             category: 'system',
             cooldown: 3000
@@ -43,25 +43,25 @@ class PingCommand extends CommandBase {
             const uptimeFormatted = this.formatUptime(uptime);
 
             const response = 
-`💻 *SYSTEM STATUS*
+`💻 *STATUS SISTEM*
 
-🖥️ **System Info**
+🖥️ **Info Sistem**
 • Host: ${os.hostname()}
 • OS: ${os.type()} ${os.arch()}
 • CPU: ${cpus[0].model.substring(0, 40)}...
 • Cores: ${cpus.length}
 
-📊 **Memory Usage**
+📊 **Penggunaan Memori**
 • Bot: ${formatSize(mem)}
-• System: ${formatSize(totalMem - freeMem)} / ${formatSize(totalMem)}
-• Free: ${formatSize(freeMem)}
+• Sistem: ${formatSize(totalMem - freeMem)} / ${formatSize(totalMem)}
+• Tersedia: ${formatSize(freeMem)}
 
-⚡ **Performance**
-• Latency: ${latency}ms
+⚡ **Performa**
+• Latensi: ${latency}ms
 • Uptime: ${uptimeFormatted}
 
-💾 **Cache Stats**
-• Size: ${cacheStats.size} entries
+💾 **Stats Cache**
+• Ukuran: ${cacheStats.size} entri
 • Hit Rate: ${cacheStats.hitRate}
 • Hits: ${cacheStats.hits} | Misses: ${cacheStats.misses}`;
 
@@ -70,7 +70,7 @@ class PingCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to get system status.');
+            await this.reply(sock, from, msg, '❌ Gagal mengambil status sistem.');
         }
     }
 

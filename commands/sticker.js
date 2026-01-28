@@ -12,8 +12,8 @@ class StickerCommand extends CommandBase {
         super({
             name: 'sticker',
             aliases: ['s', 'stiker', 'stik'],
-            description: 'Convert image to sticker',
-            usage: '.sticker (send with image or reply to image)',
+            description: 'Ubah gambar menjadi stiker',
+            usage: '.sticker (kirim dengan gambar atau reply gambar)',
             category: 'tools',
             cooldown: 3000,
             isHeavy: false,
@@ -33,7 +33,7 @@ class StickerCommand extends CommandBase {
 
             const imageMessage = isImg || isQuoted;
             if (!imageMessage) {
-                return await this.reply(sock, from, msg, '❌ Please send or reply to an image!');
+                return await this.reply(sock, from, msg, '❌ Kirim atau reply gambar dulu!');
             }
 
             // Download image
@@ -54,7 +54,7 @@ class StickerCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to create sticker. Make sure the image is valid.');
+            await this.reply(sock, from, msg, '❌ Gagal membuat stiker. Pastikan gambarnya valid.');
         }
     }
 }

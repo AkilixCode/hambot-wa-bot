@@ -1,6 +1,6 @@
 /**
  * Translate Command
- * Translate text between languages
+ * Terjemahkan teks ke bahasa lain
  */
 
 const CommandBase = require('./base');
@@ -10,9 +10,9 @@ class TranslateCommand extends CommandBase {
     constructor() {
         super({
             name: 'translate',
-            aliases: ['tr', 'trans'],
-            description: 'Translate text to another language',
-            usage: '.translate <lang> <text>',
+            aliases: ['tr', 'trans', 'terjemah'],
+            description: 'Terjemahkan teks ke bahasa lain',
+            usage: '.translate <kode bahasa> <teks>',
             category: 'utility',
             cooldown: 3000
         });
@@ -23,23 +23,23 @@ class TranslateCommand extends CommandBase {
 
         if (!args[0] || !args[1]) {
             return await this.reply(sock, from, msg, 
-`🌐 *Translator*
+`🌐 *Penerjemah*
 
-Usage: .translate <language> <text>
+📝 Cara Pakai: .translate <bahasa> <teks>
 
-Language codes:
+🌍 Kode Bahasa:
 • en - English
-• id - Indonesian
-• es - Spanish
-• fr - French
-• de - German
-• ja - Japanese
-• ko - Korean
-• zh - Chinese
-• ar - Arabic
-• hi - Hindi
+• id - Indonesia
+• es - Español
+• fr - Français
+• de - Deutsch
+• ja - 日本語
+• ko - 한국어
+• zh - 中文
+• ar - العربية
+• hi - हिंदी
 
-Example: .translate id Hello World`);
+📌 Contoh: .translate id Hello World`);
         }
 
         await this.react(sock, msg, '🌐');
@@ -51,12 +51,12 @@ Example: .translate id Hello World`);
             const translated = await fungsiTranslate(text, targetLang);
 
             const response = 
-`🌐 *Translation*
+`🌐 *Hasil Terjemahan*
 
-📝 Original:
+📝 Asli:
 ${text}
 
-🔄 Translated (${targetLang}):
+🔄 Terjemahan (${targetLang}):
 ${translated}`;
 
             await this.reply(sock, from, msg, response);
@@ -64,7 +64,7 @@ ${translated}`;
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Translation failed. Check language code.');
+            await this.reply(sock, from, msg, '❌ Terjemahan gagal. Periksa kode bahasa.');
         }
     }
 }

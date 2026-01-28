@@ -84,7 +84,7 @@ module.exports = async (sock, m) => {
             security.trackSuspiciousActivity(sender, 'malicious_pattern');
             
             return await sock.sendMessage(from, { 
-                text: '⚠️ Your message contains suspicious patterns and was blocked for security reasons.' 
+                text: '⚠️ Pesanmu mengandung pola mencurigakan dan diblokir karena alasan keamanan.' 
             }, { quoted: msg });
         }
 
@@ -114,7 +114,7 @@ module.exports = async (sock, m) => {
             });
             
             return await sock.sendMessage(from, { 
-                text: `⚠️ Security: ${argsValidation.reason}` 
+                text: `⚠️ Keamanan: ${argsValidation.reason}` 
             }, { quoted: msg });
         }
 
@@ -128,7 +128,7 @@ module.exports = async (sock, m) => {
             });
             
             return await sock.sendMessage(from, { 
-                text: `🔒 Access Denied: ${permission.reason}` 
+                text: `🔒 Akses Ditolak: ${permission.reason}` 
             }, { quoted: msg });
         }
 
@@ -137,7 +137,7 @@ module.exports = async (sock, m) => {
         if (!rateLimit.allowed) {
             security.trackSuspiciousActivity(sender, 'rate_limit_exceeded');
             return sock.sendMessage(from, { 
-                text: `⏳ Rate limit exceeded. Try again in ${rateLimit.retryAfter} seconds.` 
+                text: `⏳ Batas request tercapai. Coba lagi dalam ${rateLimit.retryAfter} detik.` 
             }, { quoted: msg });
         }
 
@@ -153,7 +153,7 @@ module.exports = async (sock, m) => {
         if (isHeavyCommand) {
             if (activeProcesses >= config.performance.maxProcesses) {
                 return sock.sendMessage(from, { 
-                    text: `⚠️ Server busy (${activeProcesses}/${config.performance.maxProcesses}). Please wait...` 
+                    text: `⚠️ Server sibuk (${activeProcesses}/${config.performance.maxProcesses}). Mohon tunggu...` 
                 }, { quoted: msg });
             }
             activeProcesses++;
@@ -189,7 +189,7 @@ module.exports = async (sock, m) => {
             const from = m.messages[0]?.key?.remoteJid;
             if (from) {
                 await sock.sendMessage(from, { 
-                    text: '❌ An error occurred while processing your command.' 
+                    text: '❌ Terjadi kesalahan saat memproses perintahmu.' 
                 }, { quoted: m.messages[0] });
             }
         } catch (sendError) {
