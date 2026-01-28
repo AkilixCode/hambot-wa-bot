@@ -132,18 +132,19 @@ class DNSCommand extends CommandBase {
                 sections.push('');
             }
 
-            // CNAME Record
-            if (results.cname) {
+            // CNAME Record (dns.resolveCname returns an array)
+            if (results.cname && results.cname.length > 0) {
                 sections.push('┌──────────────────────────────┐');
                 sections.push('│ 🔗 *CNAME Record:*');
                 sections.push('├──────────────────────────────');
-                sections.push(`│ ▸ ${results.cname}`);
+                sections.push(`│ ▸ ${results.cname[0]}`);
                 sections.push('└──────────────────────────────┘');
                 sections.push('');
             }
 
             // Check if any records found
-            if (!results.a && !results.aaaa && !results.mx && !results.ns && !results.txt && !results.cname) {
+            const hasCname = results.cname && results.cname.length > 0;
+            if (!results.a && !results.aaaa && !results.mx && !results.ns && !results.txt && !hasCname) {
                 sections.push('❌ Tidak ada DNS record yang ditemukan.');
             }
 

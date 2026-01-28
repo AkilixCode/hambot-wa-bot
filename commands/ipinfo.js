@@ -55,7 +55,8 @@ class IPInfoCommand extends CommandBase {
         }
 
         try {
-            // Use ip-api.com (free, no API key required)
+            // Use ip-api.com - Note: free tier only supports HTTP
+            // For production with sensitive data, consider using ipinfo.io or ipdata.co
             const { data } = await httpClient.get(
                 `http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`,
                 { timeout: 10000 }

@@ -34,15 +34,15 @@ class MenuCommand extends CommandBase {
         const menuSections = [];
 
         // Header dengan dekorasi estetik
-        menuSections.push('╔════════════════════════════╗');
+        menuSections.push('╔══════════════════════════╗');
         menuSections.push(`║  🤖 *${config.bot.name.toUpperCase()}* 🤖  ║`);
-        menuSections.push('╚════════════════════════════╝');
+        menuSections.push('╚══════════════════════════╝');
         menuSections.push('');
-        menuSections.push('┌─────────────────────────────┐');
-        menuSections.push('│  _Halo! Selamat datang!_  │');
-        menuSections.push('│  _Berikut daftar perintah_  │');
-        menuSections.push('│  _yang tersedia:_           │');
-        menuSections.push('└─────────────────────────────┘');
+        menuSections.push('┌──────────────────────────┐');
+        menuSections.push('│ _Halo! Selamat datang!_');
+        menuSections.push('│ _Berikut daftar perintah_');
+        menuSections.push('│ _yang tersedia:_');
+        menuSections.push('└──────────────────────────┘');
         menuSections.push('');
 
         // Daftar perintah per kategori
@@ -62,7 +62,7 @@ class MenuCommand extends CommandBase {
                 }
             }
             menuSections.push('│');
-            menuSections.push('╰────────────────────');
+            menuSections.push('╰──────────────────────────');
             menuSections.push('');
         }
 
@@ -95,9 +95,9 @@ class MenuCommand extends CommandBase {
         const categoryName = this.getCategoryNameID(category.toLowerCase());
         const sections = [];
         
-        sections.push('╔════════════════════════════╗');
+        sections.push('╔══════════════════════════╗');
         sections.push(`║ ${this.getCategoryEmoji(category)} *${categoryName.toUpperCase()}*`);
-        sections.push('╚════════════════════════════╝');
+        sections.push('╚══════════════════════════╝');
         sections.push('');
 
         for (const cmd of commands) {
@@ -111,7 +111,7 @@ class MenuCommand extends CommandBase {
             if (cmd.aliases.length > 0) {
                 sections.push(`│ 🔄 Alias: ${cmd.aliases.join(', ')}`);
             }
-            sections.push('╰────────────────────');
+            sections.push('╰──────────────────────────');
             sections.push('');
         }
 

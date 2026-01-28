@@ -30,8 +30,8 @@ class SubnetCommand extends CommandBase {
                 '• `.subnet 10.0.0.0/8`\n' +
                 '• `.subnet 172.16.0.0/16`\n\n' +
                 '📊 *CIDR Umum:*\n' +
-                '• /8  = 16.777.214 host (Kelas A)\n' +
-                '• /16 = 65.534 host (Kelas B)\n' +
+                '• /8  = 16,777,214 host (Kelas A)\n' +
+                '• /16 = 65,534 host (Kelas B)\n' +
                 '• /24 = 254 host (Kelas C)\n' +
                 '• /25 = 126 host\n' +
                 '• /26 = 62 host\n' +
@@ -132,7 +132,16 @@ class SubnetCommand extends CommandBase {
 
         // Calculate usable range
         const totalAddresses = Math.pow(2, 32 - cidr);
-        const totalHosts = Math.max(0, totalAddresses - 2);
+        let totalHosts;
+        
+        // Special cases for /31 and /32
+        if (cidr === 32) {
+            totalHosts = 1; // Single host
+        } else if (cidr === 31) {
+            totalHosts = 2; // Point-to-point (RFC 3021)
+        } else {
+            totalHosts = Math.max(0, totalAddresses - 2);
+        }
         
         let firstHost = 'N/A';
         let lastHost = 'N/A';

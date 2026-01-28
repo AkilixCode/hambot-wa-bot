@@ -1,6 +1,6 @@
 /**
  * Say (TTS) Command
- * Text-to-Speech menggunakan ElevenLabs API v3 alpha
+ * Text-to-Speech menggunakan ElevenLabs API dengan model eleven_v3
  * Mendukung tag bahasa dan ekspresi
  */
 
@@ -126,9 +126,10 @@ class SayCommand extends CommandBase {
             }
 
             // Kirim sebagai voice note (ptt = push to talk)
+            // ElevenLabs returns MP3, WhatsApp can handle it
             await sock.sendMessage(from, {
                 audio: audioBuffer,
-                mimetype: 'audio/ogg; codecs=opus',
+                mimetype: 'audio/mpeg',
                 ptt: true // Ini yang membuat jadi voice note
             }, { quoted: msg });
 
@@ -160,14 +161,14 @@ class SayCommand extends CommandBase {
         const voiceId = config.apis.elevenlabs.voiceId;
         const apiKey = config.apis.elevenlabs.key;
 
-        // ElevenLabs API v3 alpha endpoint
+        // ElevenLabs API v1 endpoint with eleven_v3 model
         const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
         const settings = this.languageSettings[language] || this.languageSettings['id'];
 
         const requestBody = {
             text: text,
-            model_id: 'eleven_v3', // Model v3 alpha
+            model_id: 'eleven_v3', // Latest multilingual model
             voice_settings: {
                 stability: settings.stability,
                 similarity_boost: settings.similarity_boost,
