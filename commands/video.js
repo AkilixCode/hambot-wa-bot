@@ -9,6 +9,9 @@ const { generateFilename, cleanupFiles } = require('../utils/helpers');
 const fsPromises = require('fs').promises;
 const config = require('../config');
 
+// Video format selector: prefer mp4, fallback to best available
+const VIDEO_FORMAT_SELECTOR = 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best';
+
 class VideoCommand extends CommandBase {
     constructor() {
         super({
@@ -99,7 +102,7 @@ class VideoCommand extends CommandBase {
             const outputPath = `${filePrefix}.%(ext)s`;
             const downloadArgs = [
                 url,
-                '-f', 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',  // Prefer mp4, fallback to best
+                '-f', VIDEO_FORMAT_SELECTOR,
                 '--merge-output-format', 'mp4',  // Ensure output is mp4
                 '-o', outputPath,
                 '--max-filesize', '200M',        // Safety cap for 3GB data limit
@@ -121,7 +124,7 @@ class VideoCommand extends CommandBase {
                 // Check if file was too large
                 const anyFile = files.find(x => x.startsWith(filePrefix));
                 if (!anyFile) {
-                    throw new Error('Downloaded file not found. The file might be too large (>200MB). Try a shorter video! 📦');
+                    throw new Error('File too large or download failed');
                 }
                 throw new Error('Video download failed');
             }

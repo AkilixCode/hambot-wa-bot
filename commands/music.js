@@ -47,7 +47,7 @@ class MusicCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, '🎵 Mau lagu apa nih?\n\nContoh: .music About You The 1975\natau: .music <URL>');
+            return await this.reply(sock, from, msg, '🎵 Mau lagu apa nih?\n\nContoh: .music About You The 1975\natau: .music https://youtu.be/...');
         }
 
         await this.react(sock, msg, '🔍');
