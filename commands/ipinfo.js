@@ -80,34 +80,26 @@ class IPInfoCommand extends CommandBase {
 
     async sendIPInfo(sock, from, msg, data, fromCache) {
         const response = 
-`╔══════════════════════════════╗
-║  🌐 *INFORMASI ALAMAT IP*  ║
-╚══════════════════════════════╝
+`🌐 *INFORMASI ALAMAT IP*
 
-📥 *IP Address:* ${data.query}
+📥 *IP:* ${data.query}
 
-┌──────────────────────────────┐
-│ 🗺️ *Lokasi:*
-├──────────────────────────────
-│ 🏳️ Negara     : ${data.country} (${data.countryCode})
-│ 🏙️ Kota       : ${data.city || 'N/A'}
-│ 📍 Region     : ${data.regionName || 'N/A'} (${data.region || 'N/A'})
-│ 📮 Kode Pos   : ${data.zip || 'N/A'}
-│ 🌍 Koordinat  : ${data.lat}, ${data.lon}
-│ ⏰ Timezone   : ${data.timezone || 'N/A'}
-└──────────────────────────────┘
+🗺️ *Lokasi*
+• Negara: ${data.country} (${data.countryCode})
+• Kota: ${data.city || 'N/A'}
+• Region: ${data.regionName || 'N/A'}
+• Kode Pos: ${data.zip || 'N/A'}
+• Koordinat: ${data.lat}, ${data.lon}
+• Timezone: ${data.timezone || 'N/A'}
 
-┌──────────────────────────────┐
-│ 🏢 *Network Info:*
-├──────────────────────────────
-│ 📡 ISP        : ${data.isp || 'N/A'}
-│ 🏛️ Organisasi : ${data.org || 'N/A'}
-│ 🔢 ASN        : ${data.as || 'N/A'}
-└──────────────────────────────┘
+🏢 *Network*
+• ISP: ${data.isp || 'N/A'}
+• Organisasi: ${data.org || 'N/A'}
+• ASN: ${data.as || 'N/A'}
 
 ${fromCache ? '📦 _(dari cache)_' : '🔄 _Data langsung_'}
 
-💡 *Catatan:* Lokasi berdasarkan database GeoIP dan mungkin tidak 100% akurat.`;
+💡 _Lokasi berdasarkan GeoIP_`;
 
         await this.reply(sock, from, msg, response);
         await this.react(sock, msg, '✅');

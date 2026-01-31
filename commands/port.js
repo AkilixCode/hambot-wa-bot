@@ -92,46 +92,38 @@ class PortCommand extends CommandBase {
 
     async sendPortList(sock, from, msg) {
         const response = 
-`╔══════════════════════════════╗
-║  🔌 *REFERENSI PORT JARINGAN*  ║
-╚══════════════════════════════╝
+`🔌 *REFERENSI PORT JARINGAN*
 
 📝 *Cara Pakai:*
 • \`.port 22\` - Info port 22
 • \`.port ssh\` - Cari port SSH
 • \`.port http\` - Cari port HTTP
 
-┌──────────────────────────────┐
-│ 🌐 *PORT PALING UMUM:*
-├──────────────────────────────
-│ 20-21  │ FTP (Transfer File)
-│ 22     │ SSH (Remote Shell)
-│ 23     │ Telnet (Remote Login)
-│ 25     │ SMTP (Kirim Email)
-│ 53     │ DNS (Domain Name)
-│ 67-68  │ DHCP (IP Otomatis)
-│ 80     │ HTTP (Web)
-│ 110    │ POP3 (Email)
-│ 143    │ IMAP (Email)
-│ 443    │ HTTPS (Web Secure)
-│ 445    │ SMB (File Sharing)
-│ 3389   │ RDP (Remote Desktop)
-└──────────────────────────────┘
+🌐 *PORT PALING UMUM*
+• 20-21 - FTP (Transfer File)
+• 22 - SSH (Remote Shell)
+• 23 - Telnet (Remote Login)
+• 25 - SMTP (Kirim Email)
+• 53 - DNS (Domain Name)
+• 67-68 - DHCP (IP Otomatis)
+• 80 - HTTP (Web)
+• 110 - POP3 (Email)
+• 143 - IMAP (Email)
+• 443 - HTTPS (Web Secure)
+• 445 - SMB (File Sharing)
+• 3389 - RDP (Remote Desktop)
 
-┌──────────────────────────────┐
-│ 🗄️ *DATABASE PORTS:*
-├──────────────────────────────
-│ 1433   │ MS SQL Server
-│ 3306   │ MySQL
-│ 5432   │ PostgreSQL
-│ 6379   │ Redis
-│ 27017  │ MongoDB
-└──────────────────────────────┘
+🗄️ *DATABASE PORTS*
+• 1433 - MS SQL Server
+• 3306 - MySQL
+• 5432 - PostgreSQL
+• 6379 - Redis
+• 27017 - MongoDB
 
 💡 *Tips:*
 • Port 0-1023: Well-known ports
-• Port 1024-49151: Registered ports
-• Port 49152-65535: Dynamic/private`;
+• Port 1024-49151: Registered
+• Port 49152-65535: Dynamic`;
 
         await this.reply(sock, from, msg, response);
         await this.react(sock, msg, '✅');
@@ -154,16 +146,12 @@ class PortCommand extends CommandBase {
         }
 
         const response = 
-`╔══════════════════════════════╗
-║  🔌 *INFO PORT ${portNum}*  ║
-╚══════════════════════════════╝
+`🔌 *INFO PORT ${portNum}*
 
-┌──────────────────────────────┐
-│ 🏷️ Nama      : ${portInfo.name}
-│ 🔢 Port      : ${portNum}
-│ 📡 Protokol  : ${portInfo.protocol}
-│ 📝 Deskripsi : ${portInfo.desc}
-└──────────────────────────────┘
+• Nama: ${portInfo.name}
+• Port: ${portNum}
+• Protokol: ${portInfo.protocol}
+• Deskripsi: ${portInfo.desc}
 
 💡 *Kategori:* ${portNum <= 1023 ? 'Well-known Port' : 'Registered Port'}`;
 
@@ -190,16 +178,13 @@ class PortCommand extends CommandBase {
         }
 
         const sections = [];
-        sections.push('╔══════════════════════════════╗');
-        sections.push(`║  🔍 *HASIL PENCARIAN: ${query.toUpperCase()}*  ║`);
-        sections.push('╚══════════════════════════════╝');
+        sections.push(`🔍 *HASIL PENCARIAN: ${query.toUpperCase()}*`);
         sections.push('');
 
         for (const result of results.slice(0, 10)) {
-            sections.push(`┌──────────────────────────────┐`);
-            sections.push(`│ 🔌 *Port ${result.port}* - ${result.name}`);
-            sections.push(`│ 📡 ${result.protocol} | ${result.desc}`);
-            sections.push(`└──────────────────────────────┘`);
+            sections.push(`🔌 *Port ${result.port}* - ${result.name}`);
+            sections.push(`📡 ${result.protocol} | ${result.desc}`);
+            sections.push('');
         }
 
         if (results.length > 10) {

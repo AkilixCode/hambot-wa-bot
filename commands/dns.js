@@ -58,87 +58,67 @@ class DNSCommand extends CommandBase {
             const results = await this.performLookup(domain);
             
             const sections = [];
-            sections.push('╔══════════════════════════════╗');
-            sections.push('║  🔍 *HASIL DNS LOOKUP*  ║');
-            sections.push('╚══════════════════════════════╝');
+            sections.push('🔍 *HASIL DNS LOOKUP*');
             sections.push('');
             sections.push(`📥 *Domain:* ${domain}`);
             sections.push('');
 
             // A Records (IPv4)
             if (results.a && results.a.length > 0) {
-                sections.push('┌──────────────────────────────┐');
-                sections.push('│ 📍 *A Record (IPv4):*');
-                sections.push('├──────────────────────────────');
+                sections.push('📍 *A Record (IPv4)*');
                 for (const ip of results.a) {
-                    sections.push(`│ ▸ ${ip}`);
+                    sections.push(`• ${ip}`);
                 }
-                sections.push('└──────────────────────────────┘');
                 sections.push('');
             }
 
             // AAAA Records (IPv6)
             if (results.aaaa && results.aaaa.length > 0) {
-                sections.push('┌──────────────────────────────┐');
-                sections.push('│ 🌐 *AAAA Record (IPv6):*');
-                sections.push('├──────────────────────────────');
+                sections.push('🌐 *AAAA Record (IPv6)*');
                 for (const ip of results.aaaa) {
-                    sections.push(`│ ▸ ${ip}`);
+                    sections.push(`• ${ip}`);
                 }
-                sections.push('└──────────────────────────────┘');
                 sections.push('');
             }
 
             // MX Records
             if (results.mx && results.mx.length > 0) {
-                sections.push('┌──────────────────────────────┐');
-                sections.push('│ 📧 *MX Record (Mail):*');
-                sections.push('├──────────────────────────────');
+                sections.push('📧 *MX Record (Mail)*');
                 for (const mx of results.mx.sort((a, b) => a.priority - b.priority)) {
-                    sections.push(`│ ▸ [${mx.priority}] ${mx.exchange}`);
+                    sections.push(`• [${mx.priority}] ${mx.exchange}`);
                 }
-                sections.push('└──────────────────────────────┘');
                 sections.push('');
             }
 
             // NS Records
             if (results.ns && results.ns.length > 0) {
-                sections.push('┌──────────────────────────────┐');
-                sections.push('│ 🖥️ *NS Record (Nameserver):*');
-                sections.push('├──────────────────────────────');
+                sections.push('🖥️ *NS Record (Nameserver)*');
                 for (const ns of results.ns) {
-                    sections.push(`│ ▸ ${ns}`);
+                    sections.push(`• ${ns}`);
                 }
-                sections.push('└──────────────────────────────┘');
                 sections.push('');
             }
 
             // TXT Records (show first 3)
             if (results.txt && results.txt.length > 0) {
-                sections.push('┌──────────────────────────────┐');
-                sections.push('│ 📝 *TXT Record:*');
-                sections.push('├──────────────────────────────');
+                sections.push('📝 *TXT Record*');
                 const txtToShow = results.txt.slice(0, 3);
                 for (const txt of txtToShow) {
                     const txtStr = txt.join('');
                     // Truncate long TXT records
                     const truncated = txtStr.length > 60 ? txtStr.substring(0, 57) + '...' : txtStr;
-                    sections.push(`│ ▸ ${truncated}`);
+                    sections.push(`• ${truncated}`);
                 }
                 if (results.txt.length > 3) {
-                    sections.push(`│ _...dan ${results.txt.length - 3} record lainnya_`);
+                    sections.push(`_...dan ${results.txt.length - 3} lainnya_`);
                 }
-                sections.push('└──────────────────────────────┘');
                 sections.push('');
             }
 
             // CNAME Record (dns.resolveCname returns an array)
             if (results.cname && results.cname.length > 0) {
-                sections.push('┌──────────────────────────────┐');
-                sections.push('│ 🔗 *CNAME Record:*');
-                sections.push('├──────────────────────────────');
-                sections.push(`│ ▸ ${results.cname[0]}`);
-                sections.push('└──────────────────────────────┘');
+                sections.push('🔗 *CNAME Record*');
+                sections.push(`• ${results.cname[0]}`);
                 sections.push('');
             }
 
