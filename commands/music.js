@@ -6,7 +6,7 @@
 
 const CommandBase = require('./base');
 const { spawn } = require('child_process');
-const { generateFilename, cleanupFiles } = require('../utils/helpers');
+const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers');
 const fsPromises = require('fs').promises;
 const config = require('../config');
 
@@ -59,7 +59,7 @@ class MusicCommand extends CommandBase {
         const proxyArgs = config.getYtDlpProxyArgs();
 
         // Check if input is a URL
-        const isUrl = /^https?:\/\//i.test(query);
+        const isUrl = isValidUrl(query);
 
         try {
             let videoUrl;

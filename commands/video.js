@@ -5,7 +5,7 @@
 
 const CommandBase = require('./base');
 const { spawn } = require('child_process');
-const { generateFilename, cleanupFiles } = require('../utils/helpers');
+const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers');
 const fsPromises = require('fs').promises;
 const config = require('../config');
 
@@ -54,8 +54,15 @@ class VideoCommand extends CommandBase {
 
         // Validate URL
         const url = args[0];
-        if (!/^https?:\/\//i.test(url)) {
+        if (!isValidUrl(url)) {
             return await this.reply(sock, from, msg, '❌ URL tidak valid! Harus dimulai dengan http:// atau https://');
+        }
+
+        // Additional URL structure validation
+        try {
+            new URL(url);
+        } catch (e) {
+            return await this.reply(sock, from, msg, '❌ Format URL tidak valid! Pastikan URL lengkap dan benar.');
         }
 
         await this.react(sock, msg, '⏳');
