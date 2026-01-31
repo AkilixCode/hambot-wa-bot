@@ -22,6 +22,9 @@ class SecurityManager {
             /\0/g
         ];
 
+        // Whitelist patterns are now handled by stripExpressionTags() and stripLanguageTags()
+        // methods which remove safe patterns before malicious pattern detection
+
         // Rate limit tracking for security events
         this.securityEvents = new Map();
         
@@ -33,6 +36,13 @@ class SecurityManager {
         
         // Suspicious activity tracking
         this.suspiciousActivity = new Map();
+
+        // Runtime security feature toggles (can be changed by owner via .security command)
+        this.runtimeSettings = {
+            chatFilterEnabled: true,  // Can be toggled at runtime
+            rateLimitEnabled: true,   // Can be toggled at runtime
+            autoBlockEnabled: true    // Auto-block on suspicious activity
+        };
     }
 
     /**
@@ -59,17 +69,53 @@ class SecurityManager {
     }
 
     /**
+     * Check if input contains valid expression tags
+     * Expression tags like [screaming], [whispering] are safe for TTS
+     * @param {string} input - Input to check
+     * @returns {string} - Input with expression tags removed (for further checking)
+     */
+    stripExpressionTags(input) {
+        if (!input) return input;
+        // Remove valid expression tags (only word characters and spaces inside brackets)
+        // Pattern: [word] or [multiple words]
+        return input.replace(/\[[\w\s]+\]/g, '');
+    }
+
+    /**
+     * Check if input contains valid language tags
+     * Language tags like <en>, <id> are safe for TTS
+     * @param {string} input - Input to check
+     * @returns {string} - Input with language tags removed
+     */
+    stripLanguageTags(input) {
+        if (!input) return input;
+        // Remove valid language tags: <xx> where xx is 2 lowercase letters
+        return input.replace(/<[a-z]{2}>/gi, '');
+    }
+
+    /**
      * Check for malicious patterns in input
+     * Respects whitelisted patterns (e.g., TTS expression tags, language tags)
      */
     detectMaliciousPatterns(input) {
         if (!input) return { isMalicious: false };
 
+        // First, strip out safe patterns (expression tags and language tags)
+        // These look like injection but are actually safe for TTS commands
+        let sanitizedInput = this.stripExpressionTags(input);
+        sanitizedInput = this.stripLanguageTags(sanitizedInput);
+
         for (const pattern of this.blacklistedPatterns) {
-            if (pattern.test(input)) {
+            // Reset lastIndex for global patterns before testing
+            pattern.lastIndex = 0;
+            
+            if (pattern.test(sanitizedInput)) {
+                const matched = sanitizedInput.match(pattern);
+                
                 return {
                     isMalicious: true,
                     pattern: pattern.toString(),
-                    matched: input.match(pattern)
+                    matched: matched
                 };
             }
         }
@@ -292,12 +338,95 @@ class SecurityManager {
             blockedUsers: this.blockedUsers.size,
             suspiciousActivityTracked: this.suspiciousActivity.size,
             securityEvents: this.securityEvents.size,
+            runtimeSettings: { ...this.runtimeSettings },
             recentBlocks: Array.from(this.blockedUsers.entries()).map(([id, info]) => ({
                 userId: id.split('@')[0],
                 reason: info.reason,
                 expiresIn: Math.max(0, info.until - Date.now())
             }))
         };
+    }
+
+    /**
+     * Toggle a runtime security feature
+     * @param {string} feature - Feature name: chatFilter, rateLimit, autoBlock
+     * @param {boolean} enabled - Enable or disable
+     * @returns {boolean} - New state
+     */
+    toggleFeature(feature, enabled) {
+        const featureMap = {
+            'chatFilter': 'chatFilterEnabled',
+            'rateLimit': 'rateLimitEnabled',
+            'autoBlock': 'autoBlockEnabled'
+        };
+
+        const settingKey = featureMap[feature];
+        if (!settingKey) {
+            return null;
+        }
+
+        this.runtimeSettings[settingKey] = enabled;
+        logger.info(`Security feature toggled`, { feature, enabled });
+        return this.runtimeSettings[settingKey];
+    }
+
+    /**
+     * Check if a runtime feature is enabled
+     * @param {string} feature - Feature name
+     * @returns {boolean}
+     */
+    isFeatureEnabled(feature) {
+        const featureMap = {
+            'chatFilter': 'chatFilterEnabled',
+            'rateLimit': 'rateLimitEnabled',
+            'autoBlock': 'autoBlockEnabled'
+        };
+
+        const settingKey = featureMap[feature];
+        if (!settingKey) {
+            return true; // Default to enabled for unknown features
+        }
+
+        return this.runtimeSettings[settingKey];
+    }
+
+    /**
+     * Unblock a specific user
+     * @param {string} userId - User ID to unblock
+     * @returns {boolean} - True if user was unblocked
+     */
+    unblockUser(userId) {
+        if (this.blockedUsers.has(userId)) {
+            this.blockedUsers.delete(userId);
+            logger.info(`User manually unblocked`, { userId: userId.split('@')[0] });
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Clear all blocked users
+     * @returns {number} - Number of users unblocked
+     */
+    clearAllBlocks() {
+        const count = this.blockedUsers.size;
+        this.blockedUsers.clear();
+        logger.info(`All user blocks cleared`, { count });
+        return count;
+    }
+
+    /**
+     * Get list of all blocked users
+     * @returns {Array}
+     */
+    getBlockedUsers() {
+        return Array.from(this.blockedUsers.entries()).map(([id, info]) => ({
+            userId: id,
+            userIdShort: id.split('@')[0],
+            reason: info.reason,
+            until: info.until,
+            expiresIn: Math.max(0, info.until - Date.now())
+        }));
     }
 
     /**
