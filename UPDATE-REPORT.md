@@ -1,8 +1,212 @@
 # HamBot Update Report
 
 **Date:** January 31, 2025  
-**Version:** 2.2.0  
+**Version:** 2.3.0  
 **Author:** GitHub Copilot AI
+
+---
+
+## 📋 Summary of Changes (v2.3.0)
+
+This update adds:
+1. **New Brat Sticker Command** - Create minimalist "Brat" style stickers with bold black text on white background
+2. **Static sticker support** (`.brat <text>`)
+3. **Animated sticker support** (`.bratvid <text>`) with flashing/jitter effect
+4. **Canvas library integration** - Added `canvas` package for image generation
+
+---
+
+## 🔄 Detailed Changes (v2.3.0)
+
+### 1. New Brat Sticker Command (`commands/brat.js`)
+
+**What is "Brat" Style?**
+A minimalist design style with:
+- **Background:** Solid Pure White (#FFFFFF)
+- **Text Font:** Thick, bold, sans-serif font (Arial Black, Impact, Helvetica Neue Bold)
+- **Text Color:** Solid Pure Black (#000000)
+- **Layout:** Text centered horizontally and vertically, filling most of the canvas
+
+**Features:**
+
+| Command | Description |
+|---------|-------------|
+| `.brat <text>` | Creates a static WebP sticker with bold text |
+| `.bratvid <text>` | Creates an animated WebP sticker with jitter effect |
+
+**Technical Implementation:**
+
+1. **Static Sticker (`.brat`)**
+   - Uses `canvas` library to generate 512x512 PNG image
+   - Implements automatic text wrapping for long texts
+   - Dynamically calculates optimal font size to fit content
+   - Converts to WebP using `sharp` library
+
+2. **Animated Sticker (`.bratvid`)**
+   - Generates 6 frames with jitter/offset effect
+   - Uses `ffmpeg` to create animated WebP at 10fps
+   - Infinite loop for continuous animation
+   - Automatic cleanup of temporary frame files
+
+**Code Structure:**
+```javascript
+class BratCommand extends CommandBase {
+    constructor() {
+        super({
+            name: 'brat',
+            aliases: ['bratvid'],
+            category: 'tools',
+            isHeavy: true,
+            cooldown: 3000
+        });
+    }
+
+    // Key methods:
+    // - createStaticSticker() - Generate static WebP sticker
+    // - createAnimatedSticker() - Generate animated WebP with jitter
+    // - createBratCanvas() - Core canvas rendering with text
+    // - wrapText() - Handle long text wrapping
+    // - calculateOptimalFontSize() - Fit text to canvas
+    // - createAnimatedWebP() - Use ffmpeg for animation
+}
+```
+
+**Canvas Settings:**
+- Canvas Size: 512x512 pixels
+- Background Color: #FFFFFF (pure white)
+- Text Color: #000000 (pure black)
+- Padding: 30 pixels
+- Line Spacing: 1.1x font size
+- Max Text Length: 200 characters
+- Animation Framerate: 10 fps
+
+**Jitter Effect Pattern (for animation):**
+```javascript
+// Defined as class property for easy modification
+this.jitterPatterns = [
+    { x: 0, y: 0 },
+    { x: 3, y: -2 },
+    { x: -3, y: 3 },
+    { x: 2, y: -3 },
+    { x: -2, y: 2 },
+    { x: 3, y: 3 }
+];
+// frameCount is derived from jitterPatterns.length
+```
+
+### 2. New Dependency: `canvas` Package
+
+**Purpose:** Server-side canvas rendering for image generation.
+
+**Installation:**
+```bash
+npm install canvas@3.2.1
+```
+
+**Package.json Update:**
+```json
+{
+    "dependencies": {
+        "canvas": "^3.2.1"
+    }
+}
+```
+
+**Note:** The `canvas` package requires native dependencies (Cairo, Pango, etc.) which are typically pre-installed on most Linux servers. If not available, install with:
+```bash
+# Ubuntu/Debian
+sudo apt-get install build-essential libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+```
+
+### 3. FFmpeg Integration
+
+**Purpose:** Create animated WebP stickers from multiple PNG frames.
+
+**FFmpeg Command Used:**
+```bash
+ffmpeg -y -framerate 10 -i frame_%03d.png \
+    -vf 'scale=512:512:flags=lanczos' \
+    -loop 0 \
+    -c:v libwebp \
+    -lossless 0 \
+    -compression_level 4 \
+    -q:v 80 \
+    -preset default \
+    output.webp
+```
+
+**Parameters Explained:**
+- `-framerate 10`: 10 frames per second (smooth animation)
+- `-loop 0`: Infinite loop
+- `-c:v libwebp`: WebP video codec
+- `-lossless 0`: Lossy compression for smaller file size
+- `-q:v 80`: Quality level (0-100)
+
+---
+
+## 📁 Files Modified (v2.3.0)
+
+| File | Type | Changes |
+|------|------|---------|
+| `commands/brat.js` | **NEW** | Brat-style sticker command with static and animated support |
+| `package.json` | Modified | Added `canvas@3.2.1` dependency |
+| `UPDATE-REPORT.md` | Modified | Added v2.3.0 documentation |
+
+---
+
+## ⚠️ Suggestions for Future AI Sessions (v2.3.0)
+
+### Things to Avoid:
+
+1. **Don't forget to install native dependencies for Canvas** - The `canvas` package requires Cairo, Pango, and other native libraries. If you get compilation errors, install the prerequisites first.
+
+2. **Don't spawn FFmpeg directly without error handling** - Always wrap FFmpeg calls in try-catch and provide user-friendly error messages.
+
+3. **Don't forget to cleanup temporary files** - When generating multiple frames for animation, always use `cleanupFiles()` in a `finally` block.
+
+4. **Don't use very long text without validation** - The command limits text to 200 characters to ensure readable output.
+
+5. **Don't forget the file pattern format** - FFmpeg requires frame files to follow a pattern like `frame_%03d.png` (zero-padded numbers).
+
+### Things to Keep in Mind:
+
+1. **Canvas font availability** - The code uses fallback fonts (`Arial Black`, `Impact`, `Helvetica Neue`, `Arial`). Not all fonts may be available on all systems.
+
+2. **FFmpeg WebP support** - Ensure FFmpeg is compiled with `--enable-libwebp` for animated WebP output.
+
+3. **Jitter effect is subtle** - The animation uses small pixel offsets (2-3px) for a chaotic effect without being too jarring.
+
+4. **Heavy command flag** - The `isHeavy: true` flag ensures proper queue management for resource-intensive operations.
+
+5. **Dynamic font sizing** - The code automatically reduces font size from 120px to fit text within the canvas, with a minimum of 24px.
+
+6. **Text wrapping algorithm** - Uses word-by-word measurement to wrap text to multiple lines. Single long words are not split.
+
+### Testing the Command:
+
+```
+# Static sticker tests
+.brat hello world
+.brat This is a longer text that will wrap to multiple lines
+.brat BRAT
+
+# Animated sticker tests
+.bratvid BRAT
+.bratvid hello world
+
+# Edge cases
+.brat   (no text - shows usage)
+.brat <very long text over 200 chars>  (should show error)
+```
+
+### Future Improvements to Consider:
+
+1. **Custom colors** - Allow users to specify background/text colors via arguments
+2. **Font selection** - Let users choose from available system fonts
+3. **Animation speed** - Allow customizing the framerate (5-15 fps)
+4. **Shake intensity** - Let users control the jitter amount
+5. **Gradient backgrounds** - Support gradient backgrounds instead of solid white
+6. **Text effects** - Add options like shadow, outline, or glow effects
 
 ---
 
