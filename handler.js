@@ -72,20 +72,22 @@ module.exports = async (sock, m) => {
         const commandName = textBody.split(' ')[0].toLowerCase().slice(config.bot.prefix.length);
         const args = textBody.trim().split(/ +/).slice(1);
 
-        // SECURITY: Detect malicious patterns
-        const maliciousCheck = security.detectMaliciousPatterns(textBody);
-        if (maliciousCheck.isMalicious) {
-            security.logSecurityEvent('malicious_pattern_detected', {
-                userId: sender,
-                command: commandName,
-                pattern: maliciousCheck.pattern
-            });
-            
-            security.trackSuspiciousActivity(sender, 'malicious_pattern');
-            
-            return await sock.sendMessage(from, { 
-                text: '⚠️ Pesanmu mengandung pola mencurigakan dan diblokir karena alasan keamanan.' 
-            }, { quoted: msg });
+        // SECURITY: Detect malicious patterns (only if chat filter is enabled)
+        if (config.security.chatFilterEnabled) {
+            const maliciousCheck = security.detectMaliciousPatterns(textBody);
+            if (maliciousCheck.isMalicious) {
+                security.logSecurityEvent('malicious_pattern_detected', {
+                    userId: sender,
+                    command: commandName,
+                    pattern: maliciousCheck.pattern
+                });
+                
+                security.trackSuspiciousActivity(sender, 'malicious_pattern');
+                
+                return await sock.sendMessage(from, { 
+                    text: '⚠️ Pesanmu mengandung pola mencurigakan dan diblokir karena alasan keamanan.' 
+                }, { quoted: msg });
+            }
         }
 
         // Get command from registry

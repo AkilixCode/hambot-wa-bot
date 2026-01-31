@@ -48,6 +48,20 @@ class Config {
             silent: process.env.LOG_SILENT === 'true'
         };
 
+        // Security settings
+        // Chat security: filters user input for malicious patterns
+        // Server security (rate limiting, blocking) is always active
+        this.security = {
+            // Enable/disable chat content filtering (malicious pattern detection)
+            // When false, users can type anything without being flagged
+            // Server-side protections (rate limiting, user blocking) remain active
+            chatFilterEnabled: process.env.SECURITY_CHAT_FILTER !== 'false',
+            // Whitelist patterns that bypass security (e.g., expression tags for TTS)
+            whitelistPatterns: [
+                /^\[(.*?)\]$/,  // Expression tags like [screaming], [whispering]
+            ]
+        };
+
         // Proxy configuration for yt-dlp, axios, puppeteer and other services
         // Supports HTTP, HTTPS, and SOCKS5 proxies (e.g., Tailscale + Every Proxy)
         this.proxy = {
