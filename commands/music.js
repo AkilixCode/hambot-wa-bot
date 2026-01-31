@@ -186,7 +186,7 @@ class MusicCommand extends CommandBase {
                 errorMsg = '⚠️ YouTube sedang blocking. Coba lagi nanti atau hubungi admin.';
             } else if (error.message.includes('No video')) {
                 errorMsg = '❌ Lagu tidak ditemukan. Coba kata kunci lain.';
-            } else if (error.message.includes('timed out') || error.message.includes('timeout') || error.message.includes('TransportError')) {
+            } else if (error.message.includes('timeout') || error.message.includes('TransportError')) {
                 errorMsg = '⏱️ Koneksi ke YouTube timeout. Coba lagi nanti!';
             } else if (error.message.includes('Unable to download') || error.message.includes('Connection refused')) {
                 errorMsg = '🌐 Koneksi gagal. Coba lagi nanti!';
