@@ -248,16 +248,19 @@ class SecurityCommand extends CommandBase {
         }
 
         // Execute PM2 stop
+        // Get PM2 process name from env or default to 'hambot'
+        const pm2ProcessName = process.env.PM2_PROCESS_NAME || 'hambot';
+        
         await this.reply(sock, from, msg, 
             '🛑 *Stopping bot process...*\n\n' +
-            'Goodbye! Use `pm2 start hambot` to restart.');
+            `Goodbye! Use \`pm2 start ${pm2ProcessName}\` to restart.`);
 
         // Give time for the message to send
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         // Try PM2 stop first, then fallback to process.exit
         try {
-            const pm2Stop = spawn('pm2', ['stop', 'hambot'], {
+            const pm2Stop = spawn('pm2', ['stop', pm2ProcessName], {
                 detached: true,
                 stdio: 'ignore'
             });
@@ -289,7 +292,7 @@ class SecurityCommand extends CommandBase {
                 `Valid features: ${validFeatures.join(', ')}`);
         }
 
-        const result = security.toggleFeature(normalizedFeature, false);
+        security.toggleFeature(normalizedFeature, false);
         
         await this.reply(sock, from, msg, 
             `⚙️ *Security Feature Updated*\n\n` +
@@ -320,7 +323,7 @@ class SecurityCommand extends CommandBase {
                 `Valid features: ${validFeatures.join(', ')}`);
         }
 
-        const result = security.toggleFeature(normalizedFeature, true);
+        security.toggleFeature(normalizedFeature, true);
         
         await this.reply(sock, from, msg, 
             `⚙️ *Security Feature Updated*\n\n` +

@@ -22,14 +22,8 @@ class SecurityManager {
             /\0/g
         ];
 
-        // Whitelist patterns (e.g., expression tags for TTS that look like injection)
-        // These patterns are safe and should not trigger security alerts
-        this.whitelistedPatterns = [
-            // Expression tags for TTS: [screaming], [whispering], [laughing], etc.
-            /^\[[\w\s]+\]$/,
-            // Expression tags embedded in text
-            /\[[\w\s]+\]/g
-        ];
+        // Whitelist patterns are now handled by stripExpressionTags() and stripLanguageTags()
+        // methods which remove safe patterns before malicious pattern detection
 
         // Rate limit tracking for security events
         this.securityEvents = new Map();
@@ -112,12 +106,10 @@ class SecurityManager {
         sanitizedInput = this.stripLanguageTags(sanitizedInput);
 
         for (const pattern of this.blacklistedPatterns) {
-            // Reset lastIndex for global patterns
+            // Reset lastIndex for global patterns before testing
             pattern.lastIndex = 0;
             
             if (pattern.test(sanitizedInput)) {
-                // Reset lastIndex again for match
-                pattern.lastIndex = 0;
                 const matched = sanitizedInput.match(pattern);
                 
                 return {
