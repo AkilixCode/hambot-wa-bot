@@ -159,6 +159,13 @@ async function cleanupFiles(prefix) {
     }
 }
 
+/**
+ * Check if string is a valid URL
+ */
+function isValidUrl(string) {
+    return /^https?:\/\//i.test(string);
+}
+
 module.exports = {
     spawnPromise,
     sleep,
@@ -170,5 +177,6 @@ module.exports = {
     getValidPosterUrl,
     sanitizeInput,
     generateFilename,
-    cleanupFiles
+    cleanupFiles,
+    isValidUrl
 };

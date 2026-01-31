@@ -273,7 +273,7 @@ class SecurityManager {
         }
 
         // Admin-only commands for groups
-        const adminOnlyInGroups = ['tagall'];
+        const adminOnlyInGroups = [];
         if (isGroup && adminOnlyInGroups.includes(command) && !isAdmin) {
             return {
                 allowed: false,

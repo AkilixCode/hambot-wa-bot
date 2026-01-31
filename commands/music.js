@@ -6,7 +6,7 @@
 
 const CommandBase = require('./base');
 const { spawn } = require('child_process');
-const { generateFilename, cleanupFiles } = require('../utils/helpers');
+const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers');
 const fsPromises = require('fs').promises;
 const config = require('../config');
 
@@ -47,7 +47,7 @@ class MusicCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, '🎵 Mau lagu apa nih?\n\nContoh: .music About You The 1975');
+            return await this.reply(sock, from, msg, '🎵 Mau lagu apa nih?\n\nContoh: .music About You The 1975\natau: .music https://youtu.be/...');
         }
 
         await this.react(sock, msg, '🔍');
@@ -58,41 +58,79 @@ class MusicCommand extends CommandBase {
         // Build proxy args from config - uses getYtDlpProxyArgs method
         const proxyArgs = config.getYtDlpProxyArgs();
 
+        // Check if input is a URL
+        const isUrl = isValidUrl(query);
+
         try {
-            // Step 1: Search for videos and check duration
-            await this.react(sock, msg, '🎵');
+            let videoUrl;
+            let videoTitle = 'Audio';
 
-            const searchArgs = [
-                `ytsearch5:${query}`,
-                '--dump-json',
-                '--no-playlist',
-                '--flat-playlist',
-                '--extractor-args', 'youtube:player_client=android',
-                '--force-ipv4',
-                ...proxyArgs
-            ];
+            if (isUrl) {
+                // If URL provided, use it directly
+                await this.react(sock, msg, '🎵');
+                videoUrl = query;
+                
+                // Try to get video info
+                try {
+                    const infoArgs = [
+                        videoUrl,
+                        '--dump-json',
+                        '--no-playlist',
+                        '--extractor-args', 'youtube:player_client=android',
+                        '--force-ipv4',
+                        ...proxyArgs
+                    ];
+                    const infoResult = await this.spawnYtDlp(infoArgs);
+                    const videoInfo = JSON.parse(infoResult.trim().split('\n')[0]);
+                    
+                    if (videoInfo.duration && videoInfo.duration > config.media.maxDuration) {
+                        return await this.reply(sock, from, msg, '❌ Lagu terlalu panjang. Coba lagu yang lebih pendek ya!');
+                    }
+                    
+                    videoTitle = videoInfo.title || 'Audio';
+                } catch (infoError) {
+                    // If info extraction fails, continue with download
+                    this.logError(infoError, context);
+                }
+            } else {
+                // Step 1: Search for videos and check duration
+                await this.react(sock, msg, '🎵');
 
-            const searchResult = await this.spawnYtDlp(searchArgs);
+                const searchArgs = [
+                    `ytsearch5:${query}`,
+                    '--dump-json',
+                    '--no-playlist',
+                    '--flat-playlist',
+                    '--extractor-args', 'youtube:player_client=android',
+                    '--force-ipv4',
+                    ...proxyArgs
+                ];
 
-            const videos = searchResult.trim().split('\n').map(line => {
-                try { return JSON.parse(line); } 
-                catch { return null; }
-            }).filter(v => v !== null);
+                const searchResult = await this.spawnYtDlp(searchArgs);
 
-            // Find video with duration < max duration
-            const validVideo = videos.find(v => 
-                v.duration && v.duration < config.media.maxDuration
-            );
+                const videos = searchResult.trim().split('\n').map(line => {
+                    try { return JSON.parse(line); } 
+                    catch { return null; }
+                }).filter(v => v !== null);
 
-            if (!validVideo) {
-                return await this.reply(sock, from, msg, '❌ Lagu terlalu panjang atau tidak ditemukan. Coba lagu lain ya!');
+                // Find video with duration < max duration
+                const validVideo = videos.find(v => 
+                    v.duration && v.duration < config.media.maxDuration
+                );
+
+                if (!validVideo) {
+                    return await this.reply(sock, from, msg, '❌ Lagu terlalu panjang atau tidak ditemukan. Coba lagu lain ya!');
+                }
+
+                videoUrl = `https://youtu.be/${validVideo.id}`;
+                videoTitle = validVideo.title;
             }
 
             // Step 2: Download audio using "Let it Be" method
             // Let yt-dlp download whatever stream is best, then convert to mp3
             const outputPath = `${filePrefix}.%(ext)s`;
             const downloadArgs = [
-                `https://youtu.be/${validVideo.id}`,
+                videoUrl,
                 '-x',                          // Extract audio
                 '--audio-format', 'mp3',       // Auto-convert to mp3
                 '--audio-quality', '0',        // Best quality
@@ -133,7 +171,7 @@ class MusicCommand extends CommandBase {
             await sock.sendMessage(from, {
                 audio: audioBuffer,
                 mimetype: 'audio/mp4',
-                caption: `🎵 ${validVideo.title}`
+                caption: `🎵 ${videoTitle}`
             }, { quoted: msg });
 
             await this.react(sock, msg, '✅');
