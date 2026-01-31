@@ -170,8 +170,7 @@ class MusicCommand extends CommandBase {
             const audioBuffer = await fsPromises.readFile(audioFile);
             await sock.sendMessage(from, {
                 audio: audioBuffer,
-                mimetype: 'audio/mp4',
-                caption: `🎵 ${videoTitle}`
+                mimetype: 'audio/mpeg'
             }, { quoted: msg });
 
             await this.react(sock, msg, '✅');
