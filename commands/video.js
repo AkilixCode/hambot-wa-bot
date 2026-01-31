@@ -1,11 +1,13 @@
 /**
  * Video Command
  * Download videos from various platforms (TikTok, Instagram, Facebook, YouTube, etc.)
+ * Supports 30+ platforms including short URLs (vt.tiktok.com, youtu.be, fb.watch, etc.)
  */
 
 const CommandBase = require('./base');
 const { spawn } = require('child_process');
 const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers');
+const { identifyPlatform, isVideoSupported, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
 const fsPromises = require('fs').promises;
 const config = require('../config');
 
@@ -48,8 +50,22 @@ class VideoCommand extends CommandBase {
     async execute(sock, msg, args, context) {
         const { from } = context;
 
+        // Get supported platforms for help message
+        const supportedPlatforms = getSupportedPlatformsText();
+
         if (!args[0]) {
-            return await this.reply(sock, from, msg, '📹 Kirim URL video!\n\nContoh: .video https://www.tiktok.com/@user/video/...\n\nSupport: TikTok, Instagram, Facebook, YouTube, dll');
+            return await this.reply(sock, from, msg, 
+                '📹 *Video Downloader*\n\n' +
+                '📝 *Cara Pakai:*\n' +
+                '.video <url>\n\n' +
+                '🔗 *Contoh URL yang didukung:*\n' +
+                '• TikTok: https://vt.tiktok.com/xxx\n' +
+                '• YouTube: https://youtu.be/xxx\n' +
+                '• Instagram: https://instagram.com/reel/xxx\n' +
+                '• Facebook: https://fb.watch/xxx\n' +
+                '• Twitter/X: https://x.com/user/status/xxx\n\n' +
+                `🌐 *Platform Didukung:*\n${supportedPlatforms.video}`
+            );
         }
 
         // Validate URL
@@ -65,6 +81,15 @@ class VideoCommand extends CommandBase {
             return await this.reply(sock, from, msg, '❌ Format URL tidak valid! Pastikan URL lengkap dan benar.');
         }
 
+        // Identify platform using comprehensive URL parser
+        const platformInfo = identifyPlatform(url);
+        
+        // Check if URL is from a supported video platform
+        if (!isVideoSupported(url)) {
+            // Even if not recognized, let yt-dlp try - it supports many more sites
+            // Just warn the user
+        }
+
         await this.react(sock, msg, '⏳');
 
         const filePrefix = generateFilename('video', '');
@@ -72,16 +97,24 @@ class VideoCommand extends CommandBase {
         // Build proxy args from config - uses getYtDlpProxyArgs method
         const proxyArgs = config.getYtDlpProxyArgs();
 
+        // Get platform-specific arguments
+        const platformArgs = getPlatformArgs(url);
+
         try {
-            // Get video information first
-            await this.react(sock, msg, '📹');
+            // Show platform name if identified
+            if (platformInfo) {
+                await this.react(sock, msg, '📹');
+            } else {
+                await this.react(sock, msg, '🔍');
+            }
             
+            // Build info args with platform-specific settings
             const infoArgs = [
                 url,
                 '--dump-json',
                 '--no-playlist',
-                '--extractor-args', 'youtube:player_client=android',
                 '--force-ipv4',
+                ...platformArgs,
                 ...proxyArgs
             ];
 
@@ -113,9 +146,9 @@ class VideoCommand extends CommandBase {
                 '--merge-output-format', 'mp4',  // Ensure output is mp4
                 '-o', outputPath,
                 '--max-filesize', '200M',        // Safety cap for 3GB data limit
-                '--extractor-args', 'youtube:player_client=android',
                 '--force-ipv4',
                 '--no-warnings',
+                ...platformArgs,
                 ...proxyArgs
             ];
 

@@ -1,7 +1,7 @@
 /**
  * Say (TTS) Command
- * Text-to-Speech menggunakan ElevenLabs API dengan model eleven_v3
- * Mendukung tag bahasa dan ekspresi
+ * Text-to-Speech menggunakan ElevenLabs API dengan model eleven_multilingual_v2
+ * Mendukung tag bahasa (expression tags tidak didukung di model free tier)
  */
 
 const CommandBase = require('./base');
@@ -17,7 +17,7 @@ class SayCommand extends CommandBase {
             name: 'say',
             aliases: ['tts', 'speak', 'bicara'],
             description: 'Mengubah teks menjadi suara menggunakan AI',
-            usage: '.say <teks> atau .say <en> <teks> atau .say [berteriak] <teks>',
+            usage: '.say <teks> atau .say <en> <teks>',
             category: 'media',
             cooldown: 5000,
             isHeavy: true
@@ -42,12 +42,13 @@ class SayCommand extends CommandBase {
 
     /**
      * Parse input untuk mendapatkan bahasa dan teks
+     * Expression tags removed as they are not supported in free tier models
      * @param {string[]} args - Argumen command
-     * @returns {Object} - { language, text, expressions }
+     * @returns {Object} - { language, text }
      */
     parseInput(args) {
         if (!args || args.length === 0) {
-            return { language: 'id', text: '', expressions: [] };
+            return { language: 'id', text: '' };
         }
 
         const fullText = args.join(' ');
@@ -65,18 +66,11 @@ class SayCommand extends CommandBase {
             }
         }
 
-        // Ekstrak ekspresi tags seperti [screaming], [whispering], dll
-        const expressionPattern = /\[(.*?)\]/g;
-        const expressions = [];
-        let match;
-        while ((match = expressionPattern.exec(textWithoutLang)) !== null) {
-            expressions.push(match[1]);
-        }
+        // Remove expression tags [xxx] as they are not supported in free tier
+        // This prevents users from trying to use unsupported features
+        const text = textWithoutLang.replace(/\[.*?\]/g, '').trim();
 
-        // Teks final (biarkan expression tags di dalam teks untuk ElevenLabs)
-        const text = textWithoutLang.trim();
-
-        return { language, text, expressions };
+        return { language, text };
     }
 
     async execute(sock, msg, args, context) {
@@ -98,18 +92,23 @@ class SayCommand extends CommandBase {
                 '📝 *Cara Pakai:*\n' +
                 '• `.say halo semuanya` - Bicara dalam Bahasa Indonesia\n' +
                 '• `.say <en> hello everyone` - Bicara dalam Bahasa Inggris\n' +
-                '• `.say [berteriak] tolong!` - Dengan ekspresi\n' +
-                '• `.say <en> [whispering] be quiet` - Kombinasi\n\n' +
+                '• `.say <ja> こんにちは` - Bicara dalam Bahasa Jepang\n\n' +
                 '🌐 *Tag Bahasa:*\n' +
                 '`<id>` Indonesia (default)\n' +
                 '`<en>` English\n' +
                 '`<es>` Español\n' +
                 '`<ja>` 日本語\n' +
                 '`<ko>` 한국어\n' +
-                '`<zh>` 中文\n\n' +
-                '🎭 *Tag Ekspresi:*\n' +
-                '`[berteriak]` `[berbisik]` `[marah]`\n' +
-                '`[screaming]` `[whispering]` `[laughing]`');
+                '`<zh>` 中文\n' +
+                '`<fr>` Français\n' +
+                '`<de>` Deutsch\n' +
+                '`<pt>` Português\n' +
+                '`<ru>` Русский\n' +
+                '`<ar>` العربية\n' +
+                '`<hi>` हिन्दी\n\n' +
+                '📋 *Catatan:*\n' +
+                '• Maksimal 500 karakter\n' +
+                '• Output sebagai voice note WhatsApp');
         }
 
         // Batas karakter
@@ -201,7 +200,8 @@ class SayCommand extends CommandBase {
     }
 
     /**
-     * Generate speech using ElevenLabs API v3 alpha
+     * Generate speech using ElevenLabs API
+     * Uses eleven_multilingual_v2 model which is available for free tier users
      * @param {string} text - Text to convert
      * @param {string} language - Language code
      * @returns {Buffer} - Audio buffer
@@ -210,26 +210,21 @@ class SayCommand extends CommandBase {
         const voiceId = config.apis.elevenlabs.voiceId;
         const apiKey = config.apis.elevenlabs.key;
 
-        // ElevenLabs API v1 endpoint with eleven_v3 model
+        // ElevenLabs API v1 endpoint
         const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
         const settings = this.languageSettings[language] || this.languageSettings['id'];
 
+        // Using eleven_multilingual_v2 which is available for free tier
+        // eleven_v3 requires paid subscription
         const requestBody = {
             text: text,
-            model_id: 'eleven_v3', // Latest multilingual model
+            model_id: 'eleven_multilingual_v2',
             voice_settings: {
                 stability: settings.stability,
-                similarity_boost: settings.similarity_boost,
-                style: 0.5,
-                use_speaker_boost: true
+                similarity_boost: settings.similarity_boost
             }
         };
-
-        // Add language hint for better pronunciation
-        if (language && language !== 'en') {
-            requestBody.language_code = language;
-        }
 
         const response = await httpClient.post(url, requestBody, {
             headers: {
