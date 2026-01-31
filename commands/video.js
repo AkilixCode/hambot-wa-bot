@@ -166,6 +166,10 @@ class VideoCommand extends CommandBase {
                 errorMsg = '🔒 Video ini private atau restricted.';
             } else if (error.message.includes('Not available') || error.message.includes('removed')) {
                 errorMsg = '❌ Video tidak tersedia atau sudah dihapus.';
+            } else if (error.message.includes('timeout') || error.message.includes('TransportError')) {
+                errorMsg = '⏱️ Koneksi timeout. Coba lagi nanti!';
+            } else if (error.message.includes('Unable to download') || error.message.includes('Connection refused')) {
+                errorMsg = '🌐 Koneksi gagal. Coba lagi nanti!';
             }
             
             await this.reply(sock, from, msg, errorMsg);
