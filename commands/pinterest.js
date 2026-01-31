@@ -6,6 +6,7 @@
 const CommandBase = require('./base');
 const { getRandomUA, sleep } = require('../utils/helpers');
 const browserManager = require('../utils/browser-manager');
+const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 
 class PinterestCommand extends CommandBase {
@@ -19,6 +20,9 @@ class PinterestCommand extends CommandBase {
             cooldown: 5000,
             isHeavy: true
         });
+        
+        // Track which images have been sent for each query to ensure variety
+        this.sentImagesMap = new Map();
     }
 
     async execute(sock, msg, args, context) {
@@ -32,57 +36,92 @@ class PinterestCommand extends CommandBase {
 
         const query = args.join(' ');
         const cacheKey = `pinterest:${query.toLowerCase()}`;
-
-        // Check cache
-        const cached = cache.get(cacheKey);
-        if (cached && Array.isArray(cached) && cached.length > 0) {
-            return await this.sendResults(sock, from, msg, cached, query, true);
-        }
+        const sentKey = `pinterest_sent:${query.toLowerCase()}`;
 
         let page = null;
 
         try {
-            // Create new page
-            page = await browserManager.newPage();
-            await page.setUserAgent(getRandomUA());
+            // Get all scraped URLs from cache (full pool of images)
+            let allScrapedUrls = cache.get(cacheKey);
+            
+            if (!allScrapedUrls || !Array.isArray(allScrapedUrls) || allScrapedUrls.length === 0) {
+                // Need to scrape fresh images
+                page = await browserManager.newPage();
+                await page.setUserAgent(getRandomUA());
 
-            const targetUrl = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
-            await page.goto(targetUrl, { 
-                waitUntil: 'networkidle2', 
-                timeout: 60000 
-            });
+                const targetUrl = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
+                await page.goto(targetUrl, { 
+                    waitUntil: 'networkidle2', 
+                    timeout: 60000 
+                });
 
-            // Scroll to load more images
-            await page.evaluate(async () => {
-                window.scrollBy(0, 800);
-            });
-            await sleep(2000);
+                // Scroll multiple times to load more images for better variety
+                for (let i = 0; i < 3; i++) {
+                    await page.evaluate(() => {
+                        window.scrollBy(0, 1000);
+                    });
+                    await sleep(1500);
+                }
 
-            // Scrape image URLs
-            const scrapedUrls = await page.evaluate(() => {
-                return Array.from(document.querySelectorAll('img'))
-                    .filter(img => img.src.includes('236x') && img.naturalWidth > 150)
-                    .map(img => img.src.replace(/236x/, 'originals'))
-                    .slice(0, 10); // Get up to 10 images
-            });
+                // Scrape image URLs - get more images for better randomization
+                allScrapedUrls = await page.evaluate(() => {
+                    const urls = new Set();
+                    const images = document.querySelectorAll('img');
+                    
+                    for (const img of images) {
+                        // Pinterest uses 236x for thumbnails, we want originals
+                        if (img.src && img.src.includes('236x') && img.naturalWidth > 100) {
+                            // Convert thumbnail URL to original size
+                            const originalUrl = img.src.replace(/236x/, 'originals');
+                            urls.add(originalUrl);
+                        }
+                        // Also check for 474x (medium size) images
+                        if (img.src && img.src.includes('474x') && img.naturalWidth > 100) {
+                            const originalUrl = img.src.replace(/474x/, 'originals');
+                            urls.add(originalUrl);
+                        }
+                    }
+                    
+                    return Array.from(urls);
+                });
 
-            if (scrapedUrls.length === 0) {
-                return await this.reply(sock, from, msg, '❌ No images found. Try a different search term.');
+                if (allScrapedUrls.length === 0) {
+                    return await this.reply(sock, from, msg, '❌ No images found. Try a different search term.');
+                }
+
+                // Cache all scraped URLs for 30 minutes (pool of images)
+                cache.set(cacheKey, allScrapedUrls, 1800000);
+                
+                // Reset sent images tracking for this query
+                cache.delete(sentKey);
             }
 
-            // Random selection of 3 images
-            const results = scrapedUrls
-                .sort(() => 0.5 - Math.random())
-                .slice(0, 3);
+            // Get previously sent images for this query
+            let sentImages = cache.get(sentKey) || [];
+            
+            // Filter out already sent images to get different ones
+            let availableUrls = allScrapedUrls.filter(url => !sentImages.includes(url));
+            
+            // If we've sent all images, reset and start over
+            if (availableUrls.length < 5) {
+                sentImages = [];
+                availableUrls = allScrapedUrls;
+                cache.delete(sentKey);
+            }
 
-            // Cache results for 10 minutes
-            cache.set(cacheKey, results, 600000);
+            // Randomly select 5 images from available pool
+            const shuffled = availableUrls.sort(() => 0.5 - Math.random());
+            const results = shuffled.slice(0, 5);
 
-            await this.sendResults(sock, from, msg, results, query, false);
+            // Track these images as sent
+            const newSentImages = [...sentImages, ...results];
+            cache.set(sentKey, newSentImages, 1800000);
+
+            await this.sendResults(sock, from, msg, results, query);
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, `❌ Failed to fetch images. Error: ${error.message}`);
+            await this.reply(sock, from, msg, '❌ Failed to fetch images. Please try again later.');
         } finally {
             if (page) {
                 await browserManager.closePage(page);
@@ -90,23 +129,67 @@ class PinterestCommand extends CommandBase {
         }
     }
 
-    async sendResults(sock, from, msg, results, query, fromCache) {
+    /**
+     * Download image as buffer
+     * @param {string} url - Image URL
+     * @returns {Promise<Buffer|null>} - Image buffer or null on failure
+     */
+    async downloadImage(url) {
         try {
-            for (const url of results) {
-                const caption = fromCache 
-                    ? `📌 ${query} (cached)` 
-                    : `📌 ${query}`;
-                    
-                await sock.sendMessage(from, { 
-                    image: { url: url }, 
-                    caption 
-                }, { quoted: msg });
-            }
-
-            await this.react(sock, msg, '✅');
+            const response = await httpClient.get(url, {
+                responseType: 'arraybuffer',
+                timeout: 15000,
+                headers: {
+                    'User-Agent': getRandomUA(),
+                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+                    'Referer': 'https://www.pinterest.com/'
+                }
+            });
+            return Buffer.from(response.data);
         } catch (error) {
-            this.logError(error, { context: 'send-results' });
-            throw error;
+            return null;
+        }
+    }
+
+    async sendResults(sock, from, msg, results, query) {
+        let successCount = 0;
+        
+        for (const url of results) {
+            try {
+                // Download image as buffer to avoid URL fetch issues
+                const imageBuffer = await this.downloadImage(url);
+                
+                if (imageBuffer && imageBuffer.length > 0) {
+                    await sock.sendMessage(from, { 
+                        image: imageBuffer,
+                        caption: `📌 ${query}`
+                    }, { quoted: msg });
+                    successCount++;
+                }
+            } catch (error) {
+                // Try fallback: use 736x size instead of originals
+                try {
+                    const fallbackUrl = url.replace('/originals/', '/736x/');
+                    const fallbackBuffer = await this.downloadImage(fallbackUrl);
+                    
+                    if (fallbackBuffer && fallbackBuffer.length > 0) {
+                        await sock.sendMessage(from, { 
+                            image: fallbackBuffer,
+                            caption: `📌 ${query}`
+                        }, { quoted: msg });
+                        successCount++;
+                    }
+                } catch (fallbackError) {
+                    // Skip this image silently
+                    this.logError(fallbackError, { context: 'pinterest-fallback' });
+                }
+            }
+        }
+
+        if (successCount > 0) {
+            await this.react(sock, msg, '✅');
+        } else {
+            await this.reply(sock, from, msg, '❌ Could not download images. Please try a different search term.');
         }
     }
 }

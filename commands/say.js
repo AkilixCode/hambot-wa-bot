@@ -7,6 +7,9 @@
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
 const config = require('../config');
+const { spawn } = require('child_process');
+const { generateFilename, cleanupFiles } = require('../utils/helpers');
+const fsPromises = require('fs').promises;
 
 class SayCommand extends CommandBase {
     constructor() {
@@ -117,6 +120,8 @@ class SayCommand extends CommandBase {
 
         await this.react(sock, msg, '🎤');
 
+        const filePrefix = generateFilename('tts', '');
+
         try {
             // Panggil ElevenLabs API
             const audioBuffer = await this.generateSpeech(text, language);
@@ -125,11 +130,24 @@ class SayCommand extends CommandBase {
                 throw new Error('Audio kosong dari API');
             }
 
+            // Convert MP3 to OGG Opus for WhatsApp voice note compatibility
+            const mp3Path = `${filePrefix}.mp3`;
+            const oggPath = `${filePrefix}.ogg`;
+            
+            // Write MP3 to file
+            await fsPromises.writeFile(mp3Path, audioBuffer);
+            
+            // Convert to OGG Opus using ffmpeg
+            await this.convertToOggOpus(mp3Path, oggPath);
+            
+            // Read converted file
+            const oggBuffer = await fsPromises.readFile(oggPath);
+
             // Kirim sebagai voice note (ptt = push to talk)
-            // ElevenLabs returns MP3, WhatsApp can handle it
+            // Using OGG Opus format for proper WhatsApp voice note playback
             await sock.sendMessage(from, {
-                audio: audioBuffer,
-                mimetype: 'audio/mpeg',
+                audio: oggBuffer,
+                mimetype: 'audio/ogg; codecs=opus',
                 ptt: true // Ini yang membuat jadi voice note
             }, { quoted: msg });
 
@@ -148,7 +166,38 @@ class SayCommand extends CommandBase {
             }
             
             await this.reply(sock, from, msg, errorMsg);
+        } finally {
+            // Cleanup temporary files
+            await cleanupFiles(filePrefix);
         }
+    }
+
+    /**
+     * Convert MP3 to OGG Opus format for WhatsApp voice notes
+     * @param {string} inputPath - Input MP3 file path
+     * @param {string} outputPath - Output OGG file path
+     * @returns {Promise<void>}
+     */
+    convertToOggOpus(inputPath, outputPath) {
+        return new Promise((resolve, reject) => {
+            const proc = spawn('ffmpeg', [
+                '-i', inputPath,
+                '-c:a', 'libopus',
+                '-b:a', '64k',
+                '-vbr', 'on',
+                '-compression_level', '10',
+                '-y',
+                outputPath
+            ]);
+            
+            let stderr = '';
+            proc.stderr.on('data', (data) => stderr += data);
+            proc.on('close', (code) => {
+                if (code === 0) resolve();
+                else reject(new Error(`ffmpeg failed: ${stderr}`));
+            });
+            proc.on('error', (err) => reject(err));
+        });
     }
 
     /**
