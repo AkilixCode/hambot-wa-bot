@@ -20,9 +20,6 @@ class PinterestCommand extends CommandBase {
             cooldown: 5000,
             isHeavy: true
         });
-        
-        // Track which images have been sent for each query to ensure variety
-        this.sentImagesMap = new Map();
     }
 
     async execute(sock, msg, args, context) {
@@ -109,8 +106,12 @@ class PinterestCommand extends CommandBase {
                 cache.delete(sentKey);
             }
 
-            // Randomly select 5 images from available pool
-            const shuffled = availableUrls.sort(() => 0.5 - Math.random());
+            // Randomly select 5 images from available pool using Fisher-Yates shuffle
+            const shuffled = [...availableUrls];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
             const results = shuffled.slice(0, 5);
 
             // Track these images as sent
@@ -153,6 +154,7 @@ class PinterestCommand extends CommandBase {
 
     async sendResults(sock, from, msg, results, query) {
         let successCount = 0;
+        const totalRequested = results.length;
         
         for (const url of results) {
             try {
@@ -186,8 +188,13 @@ class PinterestCommand extends CommandBase {
             }
         }
 
-        if (successCount > 0) {
+        if (successCount === totalRequested) {
             await this.react(sock, msg, '✅');
+        } else if (successCount > 0) {
+            await this.react(sock, msg, '✅');
+            if (successCount < totalRequested) {
+                await this.reply(sock, from, msg, `📌 Sent ${successCount} of ${totalRequested} images (some failed to download)`);
+            }
         } else {
             await this.reply(sock, from, msg, '❌ Could not download images. Please try a different search term.');
         }
