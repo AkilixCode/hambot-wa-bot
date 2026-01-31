@@ -644,7 +644,7 @@ class MenuCommand extends CommandBase {
                 sections.push(`  ${example}`);
             }
             if (guide.examples.length > 5) {
-                sections.push(`  ...dan ${guide.examples.length - 5} lagi`);
+                sections.push(`  ...dan ${guide.examples.length - 5} contoh lagi`);
             }
             sections.push('');
             
