@@ -1,12 +1,14 @@
 /**
  * Music Command
- * Search and download music from YouTube
+ * Search and download music from YouTube and other platforms
  * Uses python3 -m yt_dlp with proxy and android client strategy
+ * Supports 30+ platforms including short URLs
  */
 
 const CommandBase = require('./base');
 const { spawn } = require('child_process');
 const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers');
+const { identifyPlatform, isAudioSupported, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
 const fsPromises = require('fs').promises;
 const config = require('../config');
 
@@ -46,8 +48,22 @@ class MusicCommand extends CommandBase {
     async execute(sock, msg, args, context) {
         const { from } = context;
 
+        // Get supported platforms for help message
+        const supportedPlatforms = getSupportedPlatformsText();
+
         if (!args[0]) {
-            return await this.reply(sock, from, msg, '🎵 Mau lagu apa nih?\n\nContoh: .music About You The 1975\natau: .music https://youtu.be/...');
+            return await this.reply(sock, from, msg, 
+                '🎵 *Music Downloader*\n\n' +
+                '📝 *Cara Pakai:*\n' +
+                '• `.music <nama lagu>` - Cari dan download\n' +
+                '• `.music <url>` - Download dari URL langsung\n\n' +
+                '🔗 *Contoh:*\n' +
+                '• .music About You The 1975\n' +
+                '• .music https://youtu.be/xxx\n' +
+                '• .music https://soundcloud.com/artist/track\n' +
+                '• .music https://open.spotify.com/track/xxx\n\n' +
+                `🌐 *Platform Audio Didukung:*\n${supportedPlatforms.audio}`
+            );
         }
 
         await this.react(sock, msg, '🔍');
@@ -60,6 +76,14 @@ class MusicCommand extends CommandBase {
 
         // Check if input is a URL
         const isUrl = isValidUrl(query);
+        
+        // Get platform info and args if URL
+        let platformInfo = null;
+        let platformArgs = [];
+        if (isUrl) {
+            platformInfo = identifyPlatform(query);
+            platformArgs = getPlatformArgs(query);
+        }
 
         try {
             let videoUrl;
@@ -67,17 +91,19 @@ class MusicCommand extends CommandBase {
 
             if (isUrl) {
                 // If URL provided, use it directly
-                await this.react(sock, msg, '🎵');
+                if (platformInfo) {
+                    await this.react(sock, msg, '🎵');
+                }
                 videoUrl = query;
                 
-                // Try to get video info
+                // Try to get video info with platform-specific args
                 try {
                     const infoArgs = [
                         videoUrl,
                         '--dump-json',
                         '--no-playlist',
-                        '--extractor-args', 'youtube:player_client=android',
                         '--force-ipv4',
+                        ...platformArgs,
                         ...proxyArgs
                     ];
                     const infoResult = await this.spawnYtDlp(infoArgs);
@@ -129,6 +155,11 @@ class MusicCommand extends CommandBase {
             // Step 2: Download audio using "Let it Be" method
             // Let yt-dlp download whatever stream is best, then convert to mp3
             const outputPath = `${filePrefix}.%(ext)s`;
+            
+            // Build download args - use platform-specific args if available (for URLs)
+            // For search queries, use YouTube-specific args
+            const downloadPlatformArgs = isUrl ? platformArgs : ['--extractor-args', 'youtube:player_client=android'];
+            
             const downloadArgs = [
                 videoUrl,
                 '-x',                          // Extract audio
@@ -136,9 +167,9 @@ class MusicCommand extends CommandBase {
                 '--audio-quality', '0',        // Best quality
                 '-o', outputPath,
                 '--max-filesize', '200M',      // Safety cap for 3GB data limit
-                '--extractor-args', 'youtube:player_client=android',
                 '--force-ipv4',
                 '--no-warnings',
+                ...downloadPlatformArgs,
                 ...proxyArgs
             ];
 
