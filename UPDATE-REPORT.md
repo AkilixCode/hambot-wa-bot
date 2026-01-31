@@ -1,18 +1,247 @@
 # HamBot Update Report
 
 **Date:** January 31, 2025  
-**Version:** 2.1.0  
+**Version:** 2.2.0  
 **Author:** GitHub Copilot AI
 
 ---
 
-## 📋 Summary of Changes
+## 📋 Summary of Changes (v2.2.0)
 
-This update introduces comprehensive URL support for video/music downloads, enhanced menu help system, and fixes for ElevenLabs TTS compatibility with free tier accounts.
+This update focuses on:
+1. **Mobile-friendly formatting** - Removed all ASCII art and box-drawing characters from command outputs
+2. **New spam command** - Owner-only spam command with safety mechanisms
+3. **Universal emoji support** - Replaced fancy Unicode with simple, widely-supported emojis
 
 ---
 
-## 🔄 Detailed Changes
+## 🔄 Detailed Changes (v2.2.0)
+
+### 1. Removed ASCII Art and Box-Drawing Characters
+
+**Problem:** ASCII art and box-drawing characters (─, │, ┌, ┐, └, ┘, ═, ║, ╔, ╚, ╭, ╰, ━, ▸, etc.) don't render properly on all devices, especially mobile phones and some WhatsApp clients.
+
+**Solution:** Replaced all decorative borders with clean, minimal formatting using:
+- `*bold*` for headers
+- Bullet points (`•` or `-`) for lists
+- Simple emojis (1-2 per section max)
+- Short lines (max 35-40 characters)
+
+**Files Updated:**
+
+| File | Changes |
+|------|---------|
+| `commands/dns.js` | Removed box borders, simplified output |
+| `commands/ipinfo.js` | Removed box borders, cleaner layout |
+| `commands/netinfo.js` | Complete rewrite of all 10 topic outputs |
+| `commands/port.js` | Removed tables, simplified lists |
+| `commands/subnet.js` | Removed box borders, cleaner output |
+
+**Before (Example - DNS):**
+```
+╔══════════════════════════════╗
+║  🔍 *HASIL DNS LOOKUP*  ║
+╚══════════════════════════════╝
+
+┌──────────────────────────────┐
+│ 📍 *A Record (IPv4):*
+├──────────────────────────────
+│ ▸ 142.250.190.78
+└──────────────────────────────┘
+```
+
+**After (Example - DNS):**
+```
+🔍 *HASIL DNS LOOKUP*
+
+📥 *Domain:* google.com
+
+📍 *A Record (IPv4)*
+• 142.250.190.78
+```
+
+### 2. New Spam Command (`commands/spam.js`)
+
+**Purpose:** Owner-only prank spam command with comprehensive safety features.
+
+**Features:**
+- **Owner Only:** Restricted to bot owner (set via `OWNER_NUMBER` env variable)
+- **Max Limit:** Hardcoded maximum of 50 messages per command
+- **Random Delay:** 1.5-3 seconds between messages (mimics human behavior)
+- **Stop on Error:** Immediately stops if any message fails
+- **Phone Number Parsing:** Supports multiple formats:
+  - @mention
+  - Local format: 081234567890
+  - International: 6281234567890
+  - With country code: +6281234567890
+
+**Usage:**
+```
+.spam <target> <amount> <message>
+
+Examples:
+.spam @mention 10 Hello!
+.spam 081234567890 5 Test message
+.spam 6281234567890 20 Hi there
+```
+
+**Safety Mechanisms:**
+1. **Owner Check:** Only works for owner (OWNER_NUMBER env var)
+2. **Max Limit:** If user requests 100 messages, limited to 50
+3. **Random Delay:** `randomDelay(1500, 3000)` ms between sends
+4. **Error Stop:** Loop breaks on first failure
+5. **Feedback:** Shows progress and completion status
+
+**Code Structure:**
+```javascript
+class SpamCommand extends CommandBase {
+    constructor() {
+        super({
+            name: 'spam',
+            category: 'fun',
+            isHeavy: true,
+            cooldown: 10000
+        });
+        this.MAX_LIMIT = 50;
+    }
+
+    randomDelay(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    parseTarget(input) {
+        // Convert phone number to JID
+    }
+
+    isOwner(sender) {
+        // Check if sender is owner
+    }
+
+    async execute(sock, msg, args, context) {
+        // Main logic with safety checks
+    }
+}
+```
+
+---
+
+## 📁 Files Modified (v2.2.0)
+
+| File | Type | Changes |
+|------|------|---------|
+| `commands/dns.js` | Modified | Removed ASCII art, simplified output |
+| `commands/ipinfo.js` | Modified | Removed ASCII art, cleaner layout |
+| `commands/netinfo.js` | Modified | Complete rewrite of all outputs |
+| `commands/port.js` | Modified | Removed tables, simplified lists |
+| `commands/subnet.js` | Modified | Removed ASCII art, cleaner output |
+| `commands/spam.js` | **NEW** | Owner-only spam with safety features |
+| `UPDATE-REPORT.md` | Modified | Added v2.2.0 documentation |
+
+---
+
+## ⚠️ Suggestions for Future AI Sessions
+
+### Things to Avoid:
+
+1. **Don't use ASCII art or box-drawing characters** - They don't render properly on mobile devices. Avoid these characters:
+   - Box drawing: `─`, `│`, `┌`, `┐`, `└`, `┘`, `═`, `║`, `╔`, `╗`, `╚`, `╝`, `╭`, `╰`, `━`
+   - Fancy symbols: `▸`, `▶`, `►`, `◆`, `◇`, `◈`
+
+2. **Don't use static delays in spam/bulk operations** - Use `randomDelay(min, max)` to mimic human behavior and avoid bans.
+
+3. **Don't create spam commands without owner check** - Always restrict dangerous commands to owner only.
+
+4. **Don't forget to add env variable documentation** - The spam command requires `OWNER_NUMBER` to be set.
+
+5. **Don't use `eleven_v3` model** - It's not available for free tier ElevenLabs accounts. Use `eleven_multilingual_v2` instead.
+
+6. **Don't hardcode platform-specific logic in commands** - Use the centralized `url-parser.js` utility for all URL handling.
+
+### Things to Keep in Mind:
+
+1. **Mobile-first formatting** - WhatsApp is primarily mobile. Keep lines short (max 35-40 chars) and avoid complex layouts.
+
+2. **Simple emojis only** - Use basic emojis like 📍, 🔍, ✅, ❌. Avoid emoji combinations or rare Unicode symbols.
+
+3. **Spam command safety** - The spam command has multiple safety layers:
+   - Owner-only access
+   - Max 50 messages limit
+   - Random 1.5-3s delay
+   - Stop on first error
+
+4. **Owner number format** - Set `OWNER_NUMBER=6281234567890` (without + or spaces) in `.env`.
+
+5. **Command output guidelines:**
+   - Use `*bold*` for headers
+   - Use `•` for bullet points
+   - Max 1-2 emojis per section
+   - No decorative borders
+   - Keep lines short
+
+6. **URL Parser is extensible** - Add new platforms to `PLATFORMS` object in `url-parser.js`.
+
+7. **Platform-specific arguments matter** - Some platforms need special handling:
+   - YouTube: `--extractor-args youtube:player_client=android`
+   - TikTok: `--extractor-args tiktok:api_hostname=...`
+
+### Environment Variables to Document:
+
+```env
+# Spam command (new in v2.2.0)
+OWNER_NUMBER=6281234567890  # Bot owner's phone number (without +)
+```
+
+### Future Improvements to Consider:
+
+1. **Spam target validation** - Check if target number exists on WhatsApp before spamming.
+
+2. **Spam scheduling** - Allow scheduling spam at specific times.
+
+3. **Spam templates** - Pre-defined message templates for common pranks.
+
+4. **Rate limiting per user** - Implement per-user rate limits for spam command.
+
+5. **Admin roles** - Allow multiple admins, not just owner.
+
+6. **Output format settings** - Allow users to choose between compact/detailed output.
+
+---
+
+## 🧪 Testing Recommendations
+
+### ASCII Art Removal Tests:
+```
+# Test each command to verify clean output
+.dns google.com
+.ipinfo 8.8.8.8
+.subnet 192.168.1.0/24
+.port 22
+.port ssh
+.netinfo osi
+.netinfo tcpip
+.netinfo subnetting
+```
+
+### Spam Command Tests:
+```
+# Test without owner (should fail)
+.spam 081234567890 5 Test
+
+# Test with owner (set OWNER_NUMBER first)
+.spam 081234567890 3 Hello!
+
+# Test limit enforcement
+.spam 081234567890 100 Test  # Should limit to 50
+
+# Test invalid inputs
+.spam invalid 5 Test
+.spam 081234567890 abc Test
+.spam 081234567890 5
+```
+
+---
+
+## 📋 Previous Changes (v2.1.0)
 
 ### 1. New URL Parser Utility (`utils/url-parser.js`)
 
@@ -24,294 +253,27 @@ This update introduces comprehensive URL support for video/music downloads, enha
 - Platform-specific yt-dlp argument generation
 - Human-readable platform name extraction
 
-**Supported Platforms:**
-
-| Platform | Short URLs Supported | Type |
-|----------|---------------------|------|
-| TikTok | `vt.tiktok.com`, `vm.tiktok.com` | Video |
-| YouTube | `youtu.be` | Both |
-| Instagram | `instagr.am` | Video |
-| Facebook | `fb.watch`, `fb.gg` | Video |
-| Twitter/X | `t.co` | Video |
-| Reddit | `redd.it`, `v.redd.it` | Video |
-| Twitch | `clips.twitch.tv` | Video |
-| Vimeo | - | Video |
-| Dailymotion | `dai.ly` | Video |
-| Pinterest | `pin.it` | Video |
-| LinkedIn | - | Video |
-| Tumblr | - | Video |
-| Snapchat | `t.snapchat.com` | Video |
-| SoundCloud | `soundcloud.app.goo.gl`, `on.soundcloud.com` | Audio |
-| Spotify | `spotify.link` | Audio |
-| Bilibili | `b23.tv` | Video |
-| VK | `vk.cc` | Video |
-| Douyin | `v.douyin.com` | Video |
-| Threads | - | Video |
-| Kick | - | Video |
-| Rumble | - | Video |
-| Odysee | - | Video |
-| Bandcamp | - | Audio |
-| Mixcloud | - | Audio |
-| Coub | - | Video |
-| TED | - | Video |
-| Streamable | - | Video |
-| Loom | - | Video |
-| Imgur | - | Video |
-| Gfycat | - | Video |
-| And more... | | |
-
-**Key Functions:**
-```javascript
-// Identify platform from URL
-const info = identifyPlatform('https://vt.tiktok.com/ZSaXwy6PG/');
-// Returns: { platform: 'tiktok', name: 'TikTok', type: 'video', isShortUrl: true }
-
-// Check if URL supports video download
-const canDownloadVideo = isVideoSupported(url);
-
-// Get platform-specific yt-dlp arguments
-const args = getPlatformArgs(url);
-```
-
----
-
 ### 2. Updated Video Command (`commands/video.js`)
 
-**Changes:**
 - Integrated URL parser for comprehensive platform detection
 - Added platform-specific yt-dlp arguments for better compatibility
 - Enhanced help message showing supported platforms
-- Improved error handling with platform context
-
-**Before:**
-```javascript
-// Only supported standard URLs
-// Hardcoded YouTube-specific arguments
-```
-
-**After:**
-```javascript
-// Supports 30+ platforms including short URLs
-// Dynamic platform-specific arguments
-// Better help messages with examples
-```
-
-**Example Usage:**
-```
-.video https://vt.tiktok.com/ZSaXwy6PG/  ✅ Now works!
-.video https://vm.tiktok.com/xxxxx/      ✅ Now works!
-.video https://fb.watch/xxxxx/           ✅ Now works!
-.video https://youtu.be/xxxxx            ✅ Works as before
-```
-
----
 
 ### 3. Updated Music Command (`commands/music.js`)
 
-**Changes:**
 - Integrated URL parser for multi-platform audio extraction
 - Platform-specific handling for audio sources
-- Enhanced help message showing supported audio platforms
-- Dynamic platform detection for direct URL downloads
-
-**Supported Audio Platforms:**
-- YouTube (search + direct URL)
-- SoundCloud
-- Spotify (metadata-based)
-- Bandcamp
-- Mixcloud
-- Any video platform (audio extraction)
-
----
 
 ### 4. Enhanced Menu Command (`commands/menu.js`)
 
-**New Features:**
 - **Command-specific help:** `.menu <command>` now shows detailed help
 - **Comprehensive usage guides** for each command
-- **Examples** for proper command usage
-- **Platform lists** for media commands
-- **Notes and tips** for each command
-
-**Usage:**
-```
-.menu           → Shows full menu
-.menu media     → Shows media category commands
-.menu video     → Shows detailed video command help with examples
-.menu music     → Shows detailed music command help
-```
-
-**Example Output for `.menu video`:**
-```
-╔══════════════════════════╗
-║ 📹 Video Downloader
-╚══════════════════════════╝
-
-📝 *Deskripsi:*
-Download video dari berbagai platform...
-
-💡 *Cara Pakai:*
-  .video <url>
-
-📌 *Contoh:*
-  .video https://vt.tiktok.com/ZSaXwy6PG/
-  .video https://youtu.be/dQw4w9WgXcQ
-  ...
-
-🌐 *Platform Didukung:*
-TikTok, YouTube, Instagram, Facebook...
-
-📋 *Catatan:*
-• Mendukung URL pendek seperti vt.tiktok.com
-• Maksimal ukuran file 200MB
-...
-```
-
----
 
 ### 5. Fixed ElevenLabs TTS (`commands/say.js`)
 
-**Problem:** `eleven_v3` model is not available for free tier users.
-
-**Changes:**
-1. Changed model from `eleven_v3` to `eleven_multilingual_v2`
-2. Removed expression tags support (`[screaming]`, `[whispering]`, etc.)
-3. Kept language tag support (`<en>`, `<id>`, `<ja>`, etc.)
-4. Simplified voice settings for free tier compatibility
-5. Updated help message to reflect new capabilities
-
-**Before:**
-```javascript
-model_id: 'eleven_v3',
-voice_settings: {
-    stability: 0.5,
-    similarity_boost: 0.75,
-    style: 0.5,
-    use_speaker_boost: true
-}
-```
-
-**After:**
-```javascript
-model_id: 'eleven_multilingual_v2',
-voice_settings: {
-    stability: 0.5,
-    similarity_boost: 0.75
-}
-```
-
-**Supported Languages:**
-- `<id>` Indonesian (default)
-- `<en>` English
-- `<es>` Spanish
-- `<ja>` Japanese
-- `<ko>` Korean
-- `<zh>` Chinese
-- `<fr>` French
-- `<de>` German
-- `<pt>` Portuguese
-- `<ru>` Russian
-- `<ar>` Arabic
-- `<hi>` Hindi
-
----
-
-## 📁 Files Modified
-
-| File | Changes |
-|------|---------|
-| `utils/url-parser.js` | **NEW** - Comprehensive URL parser |
-| `commands/video.js` | Updated with URL parser integration |
-| `commands/music.js` | Updated with URL parser integration |
-| `commands/menu.js` | Added command-specific help system |
-| `commands/say.js` | Fixed for free tier compatibility |
-| `UPDATE-REPORT.md` | **NEW** - This documentation |
-
----
-
-## ⚠️ Suggestions for Future AI Sessions
-
-### Things to Avoid:
-
-1. **Don't use `eleven_v3` model** - It's not available for free tier ElevenLabs accounts. Use `eleven_multilingual_v2` instead.
-
-2. **Don't hardcode platform-specific logic in commands** - Use the centralized `url-parser.js` utility for all URL handling.
-
-3. **Don't assume all TikTok URLs are the same** - TikTok has multiple URL formats:
-   - `tiktok.com/@user/video/123`
-   - `vt.tiktok.com/xxx`
-   - `vm.tiktok.com/xxx`
-   - `m.tiktok.com/...`
-
-4. **Don't forget to update menu guides** - When adding new commands, add detailed guides in `menu.js` → `buildCommandGuides()`.
-
-5. **Don't remove proxy configuration** - Always use `config.getYtDlpProxyArgs()` for yt-dlp commands.
-
-### Things to Keep in Mind:
-
-1. **URL Parser is extensible** - Add new platforms to `PLATFORMS` object in `url-parser.js`.
-
-2. **yt-dlp supports 1000+ sites** - Even if a URL isn't recognized by our parser, yt-dlp might still work. The parser just provides better UX and platform-specific args.
-
-3. **Platform-specific arguments matter** - Some platforms need special handling:
-   - YouTube: `--extractor-args youtube:player_client=android`
-   - TikTok: `--extractor-args tiktok:api_hostname=...`
-
-4. **Test with actual URLs** - Short URLs often redirect, so test with real URLs to ensure proper handling.
-
-5. **ElevenLabs models**:
-   - Free tier: `eleven_multilingual_v2`, `eleven_monolingual_v1`
-   - Paid tier: `eleven_v3`, `eleven_turbo_v2_5`
-
-6. **Menu command structure** - The menu now supports three modes:
-   - `.menu` - Full menu
-   - `.menu <category>` - Category listing
-   - `.menu <command>` - Detailed command help
-
-7. **Expression tags removed** - The `[screaming]`, `[whispering]` style tags were specific to `eleven_v3` and don't work on free tier models.
-
-### Future Improvements to Consider:
-
-1. **Add URL resolution** - Implement HTTP HEAD request to resolve short URLs before passing to yt-dlp (for better platform detection).
-
-2. **Caching for platform detection** - Cache resolved URLs to avoid repeated lookups.
-
-3. **Progress notifications** - Add download progress updates for large files.
-
-4. **Quality selection** - Allow users to select video quality (360p, 720p, 1080p).
-
-5. **Playlist support** - Add option to download playlists (currently disabled with `--no-playlist`).
-
-6. **Rate limit per platform** - Implement different rate limits for different platforms.
-
----
-
-## 🧪 Testing Recommendations
-
-### URL Parser Tests:
-```javascript
-// Test various TikTok URLs
-identifyPlatform('https://vt.tiktok.com/ZSaXwy6PG/'); // Should return tiktok
-identifyPlatform('https://vm.tiktok.com/xxxxx/');     // Should return tiktok
-identifyPlatform('https://www.tiktok.com/@user/video/123'); // Should return tiktok
-
-// Test YouTube URLs
-identifyPlatform('https://youtu.be/dQw4w9WgXcQ');    // Should return youtube
-identifyPlatform('https://youtube.com/shorts/xxx');   // Should return youtube
-
-// Test Facebook URLs
-identifyPlatform('https://fb.watch/xxxxx/');          // Should return facebook
-identifyPlatform('https://facebook.com/reel/123');    // Should return facebook
-```
-
-### Command Tests:
-```
-.video https://vt.tiktok.com/ZSaXwy6PG/
-.music https://soundcloud.com/artist/track
-.menu video
-.menu music
-.say <en> Hello world
-```
+- Changed model from `eleven_v3` to `eleven_multilingual_v2`
+- Removed expression tags support
+- Simplified voice settings for free tier compatibility
 
 ---
 

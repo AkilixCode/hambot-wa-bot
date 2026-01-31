@@ -52,25 +52,20 @@ class SubnetCommand extends CommandBase {
             }
 
             const response = 
-`╔══════════════════════════════╗
-║  🖥️ *HASIL KALKULASI SUBNET*  ║
-╚══════════════════════════════╝
+`🖥️ *HASIL KALKULASI SUBNET*
 
 📥 *Input:* ${input}
 
-┌──────────────────────────────┐
-│ 📊 *Informasi Network:*
-├──────────────────────────────
-│ 🌐 Network Address : ${result.network}
-│ 📡 Broadcast       : ${result.broadcast}
-│ 🎭 Subnet Mask     : ${result.subnetMask}
-│ 🔢 Wildcard Mask   : ${result.wildcardMask}
-│ 📊 CIDR Notation   : /${result.cidr}
-│ 🏠 Usable IP Range : ${result.firstHost} - ${result.lastHost}
-│ 👥 Total Hosts     : ${result.totalHosts.toLocaleString()}
-│ 🏷️ Kelas IP        : ${result.ipClass}
-│ 🔒 Jenis           : ${result.ipType}
-└──────────────────────────────┘
+📊 *Informasi Network*
+• Network: ${result.network}
+• Broadcast: ${result.broadcast}
+• Subnet Mask: ${result.subnetMask}
+• Wildcard: ${result.wildcardMask}
+• CIDR: /${result.cidr}
+• Usable Range: ${result.firstHost} - ${result.lastHost}
+• Total Hosts: ${result.totalHosts.toLocaleString()}
+• Kelas IP: ${result.ipClass}
+• Jenis: ${result.ipType}
 
 💡 *Rumus:*
 • Total IP = 2^(32-${result.cidr}) = ${result.totalAddresses.toLocaleString()}
