@@ -572,16 +572,11 @@ class MenuCommand extends CommandBase {
         const categories = commandRegistry.getCategories();
         const menuSections = [];
 
-        // Header with aesthetic decoration
-        menuSections.push('╔══════════════════════════╗');
-        menuSections.push(`║  🤖 *${config.bot.name.toUpperCase()}* 🤖  ║`);
-        menuSections.push('╚══════════════════════════╝');
+        // Header - simple and mobile-friendly
+        menuSections.push(`🤖 *${config.bot.name}*`);
         menuSections.push('');
-        menuSections.push('┌──────────────────────────┐');
-        menuSections.push('│ _Halo! Selamat datang!_');
-        menuSections.push('│ _Berikut daftar perintah_');
-        menuSections.push('│ _yang tersedia:_');
-        menuSections.push('└──────────────────────────┘');
+        menuSections.push('Halo! Selamat datang!');
+        menuSections.push('Berikut daftar perintah:');
         menuSections.push('');
 
         // Commands per category
@@ -590,32 +585,27 @@ class MenuCommand extends CommandBase {
             if (commands.length === 0) continue;
 
             const categoryName = this.getCategoryNameID(category);
-            menuSections.push(`╭──「 ${this.getCategoryEmoji(category)} *${categoryName}* 」`);
-            menuSections.push('│');
+            menuSections.push(`${this.getCategoryEmoji(category)} *${categoryName}*`);
             
             for (const cmd of commands) {
-                const aliases = cmd.aliases.length > 0 ? ` _(${cmd.aliases.join(', ')})_` : '';
-                menuSections.push(`│ ▸ *${config.bot.prefix}${cmd.name}*${aliases}`);
+                const aliases = cmd.aliases.length > 0 ? ` (${cmd.aliases.join(', ')})` : '';
+                menuSections.push(`• *${config.bot.prefix}${cmd.name}*${aliases}`);
                 if (cmd.description) {
-                    menuSections.push(`│    └ ${this.translateDescription(cmd.description)}`);
+                    menuSections.push(`  ${this.translateDescription(cmd.description)}`);
                 }
             }
-            menuSections.push('│');
-            menuSections.push('╰──────────────────────────');
             menuSections.push('');
         }
 
-        // Footer with tips
-        menuSections.push('┌──────────────────────────┐');
-        menuSections.push('│ 💡 *Tips:*');
-        menuSections.push(`│ Ketik ${config.bot.prefix}menu <perintah>`);
-        menuSections.push('│ untuk melihat detail perintah');
-        menuSections.push('│');
-        menuSections.push('│ 📌 *Contoh:*');
-        menuSections.push(`│ ▸ ${config.bot.prefix}menu video`);
-        menuSections.push(`│ ▸ ${config.bot.prefix}menu music`);
-        menuSections.push(`│ ▸ ${config.bot.prefix}menu media`);
-        menuSections.push('└──────────────────────────┘');
+        // Footer with tips - simple format
+        menuSections.push('💡 *Tips*');
+        menuSections.push(`Ketik ${config.bot.prefix}menu <perintah>`);
+        menuSections.push('untuk detail perintah');
+        menuSections.push('');
+        menuSections.push('📌 *Contoh:*');
+        menuSections.push(`• ${config.bot.prefix}menu video`);
+        menuSections.push(`• ${config.bot.prefix}menu music`);
+        menuSections.push(`• ${config.bot.prefix}menu media`);
         menuSections.push('');
         menuSections.push(`© 2025 ${config.bot.owner} ⚡`);
 
@@ -631,52 +621,50 @@ class MenuCommand extends CommandBase {
         const sections = [];
         const guide = this.commandGuides[command.name];
         
-        // Header
+        // Header - simple format
         if (guide) {
-            sections.push('╔══════════════════════════╗');
-            sections.push(`║ ${guide.title}`);
-            sections.push('╚══════════════════════════╝');
+            sections.push(`${guide.title}`);
             sections.push('');
             
             // Description
-            sections.push(`📝 *Deskripsi:*`);
+            sections.push(`📝 *Deskripsi*`);
             sections.push(guide.description);
             sections.push('');
             
             // Usage
-            sections.push('💡 *Cara Pakai:*');
+            sections.push('💡 *Cara Pakai*');
             for (const usage of guide.usage) {
                 sections.push(`  ${usage}`);
             }
             sections.push('');
             
             // Examples
-            sections.push('📌 *Contoh:*');
+            sections.push('📌 *Contoh*');
             for (const example of guide.examples.slice(0, 5)) {
                 sections.push(`  ${example}`);
             }
             if (guide.examples.length > 5) {
-                sections.push(`  _...dan ${guide.examples.length - 5} contoh lainnya_`);
+                sections.push(`  ...dan ${guide.examples.length - 5} lagi`);
             }
             sections.push('');
             
             // Platforms (if applicable)
             if (guide.platforms) {
-                sections.push('🌐 *Platform Didukung:*');
+                sections.push('🌐 *Platform*');
                 sections.push(guide.platforms);
                 sections.push('');
             }
             
             // Languages (if applicable)
             if (guide.languages) {
-                sections.push('🗣️ *Bahasa Didukung:*');
+                sections.push('🗣️ *Bahasa*');
                 sections.push(guide.languages);
                 sections.push('');
             }
             
             // Notes
             if (guide.notes && guide.notes.length > 0) {
-                sections.push('📋 *Catatan:*');
+                sections.push('📋 *Catatan*');
                 for (const note of guide.notes) {
                     sections.push(note);
                 }
@@ -684,19 +672,17 @@ class MenuCommand extends CommandBase {
             }
         } else {
             // Fallback for commands without detailed guide
-            sections.push('╔══════════════════════════╗');
-            sections.push(`║ 📌 *${config.bot.prefix}${command.name.toUpperCase()}*`);
-            sections.push('╚══════════════════════════╝');
+            sections.push(`📌 *${config.bot.prefix}${command.name.toUpperCase()}*`);
             sections.push('');
             
             if (command.description) {
-                sections.push(`📝 *Deskripsi:*`);
+                sections.push(`📝 *Deskripsi*`);
                 sections.push(this.translateDescription(command.description));
                 sections.push('');
             }
             
             if (command.usage) {
-                sections.push('💡 *Cara Pakai:*');
+                sections.push('💡 *Cara Pakai*');
                 sections.push(`  ${command.usage}`);
                 sections.push('');
             }
@@ -704,13 +690,13 @@ class MenuCommand extends CommandBase {
         
         // Aliases
         if (command.aliases && command.aliases.length > 0) {
-            sections.push('🔄 *Alias:*');
+            sections.push('🔄 *Alias*');
             sections.push(`  ${command.aliases.map(a => config.bot.prefix + a).join(', ')}`);
             sections.push('');
         }
         
         // Category
-        sections.push('📁 *Kategori:*');
+        sections.push('📁 *Kategori*');
         sections.push(`  ${this.getCategoryEmoji(command.category)} ${this.getCategoryNameID(command.category)}`);
         
         await this.reply(sock, from, msg, sections.join('\n'));
@@ -726,27 +712,25 @@ class MenuCommand extends CommandBase {
         const categoryName = this.getCategoryNameID(category.toLowerCase());
         const sections = [];
         
-        sections.push('╔══════════════════════════╗');
-        sections.push(`║ ${this.getCategoryEmoji(category)} *${categoryName.toUpperCase()}*`);
-        sections.push('╚══════════════════════════╝');
+        sections.push(`${this.getCategoryEmoji(category)} *${categoryName.toUpperCase()}*`);
         sections.push('');
 
         for (const cmd of commands) {
-            sections.push(`╭──「 *${config.bot.prefix}${cmd.name}* 」`);
+            sections.push(`*${config.bot.prefix}${cmd.name}*`);
             if (cmd.description) {
-                sections.push(`│ 📝 ${this.translateDescription(cmd.description)}`);
+                sections.push(`📝 ${this.translateDescription(cmd.description)}`);
             }
             if (cmd.usage) {
-                sections.push(`│ 💡 Cara pakai: ${cmd.usage}`);
+                sections.push(`💡 ${cmd.usage}`);
             }
             if (cmd.aliases.length > 0) {
-                sections.push(`│ 🔄 Alias: ${cmd.aliases.join(', ')}`);
+                sections.push(`🔄 ${cmd.aliases.join(', ')}`);
             }
-            sections.push('╰──────────────────────────');
             sections.push('');
         }
         
-        sections.push(`💡 Ketik ${config.bot.prefix}menu <perintah> untuk detail lengkap`);
+        sections.push(`💡 Ketik ${config.bot.prefix}menu <perintah>`);
+        sections.push('untuk detail lengkap');
 
         await this.reply(sock, from, msg, sections.join('\n'));
     }
