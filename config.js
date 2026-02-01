@@ -173,7 +173,7 @@ class Config {
     }
 
     /**
-     * Normalize owner ID to number@s.whatsapp.net format
+     * Normalize owner ID to accept both @s.whatsapp.net and @lid formats
      * Ensures consistent format across the application
      * @param {string} ownerId - Raw owner ID from env
      * @returns {string|null} Normalized owner ID
@@ -184,25 +184,12 @@ class Config {
         // Remove any whitespace
         let normalized = ownerId.trim();
         
-        // If already in correct format, return as-is
-        if (normalized.endsWith('@s.whatsapp.net')) {
-            // Extract number and re-normalize
-            const number = normalized.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-            return number ? `${number}@s.whatsapp.net` : null;
+        // Accept both @s.whatsapp.net and @lid formats directly
+        if (normalized.endsWith('@s.whatsapp.net') || normalized.endsWith('@lid')) {
+            return normalized;
         }
         
-        // If it's @lid format, we need to convert - but we can't 
-        // since @lid is a different identifier system
-        // Log warning if @lid format detected
-        // Note: Using console.warn here instead of logger to avoid circular dependency
-        // (logger requires config, config can't require logger)
-        if (normalized.endsWith('@lid')) {
-            console.warn('⚠️ WARNING: BOT_OWNER_ID uses @lid format which is not supported.');
-            console.warn('⚠️ Please use number@s.whatsapp.net format (e.g., 6281234567890@s.whatsapp.net)');
-            return null;
-        }
-        
-        // Otherwise, assume it's a phone number - normalize and add suffix
+        // Otherwise, assume it's a phone number - normalize and add @s.whatsapp.net suffix
         const number = normalized.replace(/\D/g, '');
         if (!number) return null;
         
@@ -217,28 +204,35 @@ class Config {
     isOwner(senderId) {
         if (!this.bot.ownerId || !senderId) return false;
         
-        // Normalize sender to @s.whatsapp.net format for comparison
-        let normalizedSender = senderId;
-        
-        // If sender uses @lid format, extract and try to match number
-        if (senderId.endsWith('@lid')) {
-            // Cannot reliably match @lid to @s.whatsapp.net
-            // This is a WhatsApp limitation - @lid is an internal ID
-            return false;
+        // Direct match (works for both @lid and @s.whatsapp.net)
+        if (senderId === this.bot.ownerId) {
+            return true;
         }
         
-        // If sender is in participant format (group), extract JID
-        if (senderId.includes(':')) {
-            normalizedSender = senderId.split(':')[0] + '@s.whatsapp.net';
+        // If owner uses @s.whatsapp.net format, try to normalize sender
+        if (this.bot.ownerId.endsWith('@s.whatsapp.net')) {
+            let normalizedSender = senderId;
+            
+            // If sender uses @lid format, cannot match with @s.whatsapp.net
+            if (senderId.endsWith('@lid')) {
+                return false;
+            }
+            
+            // If sender is in participant format (group), extract JID
+            if (senderId.includes(':')) {
+                normalizedSender = senderId.split(':')[0] + '@s.whatsapp.net';
+            }
+            
+            // Ensure @s.whatsapp.net suffix
+            if (!normalizedSender.endsWith('@s.whatsapp.net')) {
+                const number = normalizedSender.replace(/\D/g, '');
+                normalizedSender = `${number}@s.whatsapp.net`;
+            }
+            
+            return normalizedSender === this.bot.ownerId;
         }
         
-        // Ensure @s.whatsapp.net suffix
-        if (!normalizedSender.endsWith('@s.whatsapp.net')) {
-            const number = normalizedSender.replace(/\D/g, '');
-            normalizedSender = `${number}@s.whatsapp.net`;
-        }
-        
-        return normalizedSender === this.bot.ownerId;
+        return false;
     }
 
     /**

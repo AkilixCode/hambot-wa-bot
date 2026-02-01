@@ -1,8 +1,199 @@
 # HamBot Update Report
 
 **Date:** February 1, 2025  
-**Version:** 2.4.0  
+**Version:** 2.4.1  
 **Author:** GitHub Copilot AI
+
+---
+
+## 📋 Ringkasan Perubahan (v2.4.1)
+
+Update ini memperbaiki masalah `BOT_OWNER_ID` dengan WhatsApp Linked ID format (@lid):
+
+1. **Dukungan Format @lid** - Bot sekarang menerima owner ID dalam format `@lid` atau `@s.whatsapp.net`
+2. **Matching Langsung** - Pengecekan owner menggunakan direct matching untuk kedua format
+3. **Dokumentasi Lengkap** - `.env.example` diperbarui dengan contoh kedua format
+
+---
+
+## 🔄 Perubahan Detail (v2.4.1)
+
+### 1. Dukungan Format Linked ID (@lid)
+
+**Masalah:**
+WhatsApp kini menggunakan format `@lid` (Linked ID) untuk privasi pengguna, terutama di grup. Bot tidak bisa mengenali owner ketika sender menggunakan format `@lid` karena kode sebelumnya menolak format ini.
+
+Contoh dari log:
+```
+sender: "12345678901234@lid"
+```
+
+**Solusi:**
+Memperbarui `config.js` untuk menerima dan mencocokkan kedua format:
+
+#### Update `_normalizeOwnerId()` Method
+
+```javascript
+_normalizeOwnerId(ownerId) {
+    if (!ownerId) return null;
+    
+    let normalized = ownerId.trim();
+    
+    // Accept both @s.whatsapp.net and @lid formats directly
+    if (normalized.endsWith('@s.whatsapp.net') || normalized.endsWith('@lid')) {
+        return normalized;
+    }
+    
+    // Assume phone number - normalize and add @s.whatsapp.net suffix
+    const number = normalized.replace(/\D/g, '');
+    if (!number) return null;
+    
+    return `${number}@s.whatsapp.net`;
+}
+```
+
+**Perubahan Kunci:**
+- Tidak lagi menolak format `@lid` dengan warning
+- Menerima `@lid` sebagai format valid bersama `@s.whatsapp.net`
+- Format nomor telepon tetap di-normalize ke `@s.whatsapp.net`
+
+#### Update `isOwner()` Method
+
+```javascript
+isOwner(senderId) {
+    if (!this.bot.ownerId || !senderId) return false;
+    
+    // Direct match (works for both @lid and @s.whatsapp.net)
+    if (senderId === this.bot.ownerId) {
+        return true;
+    }
+    
+    // If owner uses @s.whatsapp.net format, try to normalize sender
+    if (this.bot.ownerId.endsWith('@s.whatsapp.net')) {
+        let normalizedSender = senderId;
+        
+        // If sender uses @lid format, cannot match with @s.whatsapp.net
+        if (senderId.endsWith('@lid')) {
+            return false;
+        }
+        
+        // If sender is in participant format (group), extract JID
+        if (senderId.includes(':')) {
+            normalizedSender = senderId.split(':')[0] + '@s.whatsapp.net';
+        }
+        
+        // Ensure @s.whatsapp.net suffix
+        if (!normalizedSender.endsWith('@s.whatsapp.net')) {
+            const number = normalizedSender.replace(/\D/g, '');
+            normalizedSender = `${number}@s.whatsapp.net`;
+        }
+        
+        return normalizedSender === this.bot.ownerId;
+    }
+    
+    return false;
+}
+```
+
+**Perubahan Kunci:**
+- Tambahan direct matching sebagai pengecekan pertama (mendukung `@lid`)
+- Jika owner menggunakan `@s.whatsapp.net`, sender `@lid` tidak bisa match (sistem WhatsApp)
+- Jika owner menggunakan `@lid`, hanya sender dengan `@lid` yang sama bisa match
+
+### 2. Dokumentasi Format di .env.example
+
+**Sebelum:**
+```env
+# FORMAT WAJIB: nomor@s.whatsapp.net
+# REQUIRED FORMAT: number@s.whatsapp.net
+# Contoh/Example: 6281234567890@s.whatsapp.net
+BOT_OWNER_ID=
+```
+
+**Sesudah:**
+```env
+# FORMAT: nomor@s.whatsapp.net ATAU linkedid@lid
+# FORMAT: number@s.whatsapp.net OR linkedid@lid
+# Contoh/Example: 
+#   6281234567890@s.whatsapp.net (format nomor)
+#   12345678901234@lid (format Linked ID)
+# Cek log bot untuk melihat sender ID asli Anda
+# Check bot logs to see your actual sender ID
+BOT_OWNER_ID=
+```
+
+**Catatan Penting:**
+- User harus memeriksa log bot untuk melihat format sender ID mereka
+- Jika sender menggunakan `@lid`, set owner ID dengan format `@lid`
+- Jika sender menggunakan `@s.whatsapp.net`, set owner ID dengan format `@s.whatsapp.net`
+
+### 3. Cara Menggunakan
+
+**Opsi 1: Format Nomor Telepon (Traditional)**
+```env
+BOT_OWNER_ID=6281234567890@s.whatsapp.net
+```
+
+**Opsi 2: Format Linked ID (Privacy Mode)**
+```env
+BOT_OWNER_ID=12345678901234@lid
+```
+
+**Cara Menemukan Owner ID Anda:**
+1. Kirim perintah seperti `.security status` ke bot
+2. Lihat log bot untuk melihat sender ID Anda:
+   ```
+   "sender":"12345678901234@lid"
+   ```
+3. Copy dan paste ID tersebut ke `.env`:
+   ```env
+   BOT_OWNER_ID=12345678901234@lid
+   ```
+
+---
+
+## 📁 File yang Dimodifikasi (v2.4.1)
+
+| File | Tipe | Perubahan |
+|------|------|-----------|
+| `config.js` | Modified | Updated `_normalizeOwnerId()` to accept `@lid` format |
+| `config.js` | Modified | Updated `isOwner()` with direct matching for both formats |
+| `.env.example` | Modified | Documented `@lid` format support with examples |
+| `UPDATE-REPORT.md` | Modified | Documented v2.4.1 changes |
+
+---
+
+## ⚠️ Saran untuk Sesi AI Berikutnya (v2.4.1)
+
+### Hal yang Harus Diingat:
+
+1. **Format Owner ID yang Valid:**
+   ```
+   ✅ BOT_OWNER_ID=6281234567890@s.whatsapp.net (traditional)
+   ✅ BOT_OWNER_ID=12345678901234@lid (privacy mode)
+   ❌ BOT_OWNER_ID=6281234567890 (harus ada suffix)
+   ```
+
+2. **Matching Behavior:**
+   - `@lid` owner hanya match dengan `@lid` sender yang sama
+   - `@s.whatsapp.net` owner bisa match dengan berbagai format sender (kecuali `@lid`)
+   - Direct match selalu diutamakan sebelum normalisasi
+
+3. **User Instructions:**
+   - Selalu sarankan user untuk memeriksa log bot untuk melihat format sender ID mereka
+   - Log menampilkan sender ID lengkap: `"sender":"xxxxx@lid"` atau `"sender":"xxxxx@s.whatsapp.net"`
+
+4. **Testing Commands:**
+   ```
+   .security status  # Test owner-only command
+   .spam 081234567890 1 test  # Test another owner-only command
+   ```
+
+### Hal yang Harus Dihindari:
+
+1. **Jangan asumsikan format** - User bisa menggunakan format apapun, biarkan mereka memeriksa log
+2. **Jangan konversi antara @lid dan @s.whatsapp.net** - Ini adalah sistem ID yang berbeda dan tidak bisa dikonversi
+3. **Jangan hapus normalisasi nomor telepon** - Format nomor telepon tanpa suffix masih harus didukung untuk backward compatibility
 
 ---
 
