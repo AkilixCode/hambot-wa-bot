@@ -23,7 +23,7 @@ class BratCommand extends CommandBase {
 
         // 1. REGISTER FONT
         try {
-            const fontPath = path.join(process.cwd(), 'assets', 'fonts', 'arialnarrow.ttf');
+            const fontPath = path.join(process.cwd(), 'fonts', 'arialnarrow.ttf');
             if (fs.existsSync(fontPath)) {
                 registerFont(fontPath, { family: 'BratFont' });
             } else {
