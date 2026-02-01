@@ -194,6 +194,8 @@ class Config {
         // If it's @lid format, we need to convert - but we can't 
         // since @lid is a different identifier system
         // Log warning if @lid format detected
+        // Note: Using console.warn here instead of logger to avoid circular dependency
+        // (logger requires config, config can't require logger)
         if (normalized.endsWith('@lid')) {
             console.warn('⚠️ WARNING: BOT_OWNER_ID uses @lid format which is not supported.');
             console.warn('⚠️ Please use number@s.whatsapp.net format (e.g., 6281234567890@s.whatsapp.net)');
@@ -260,6 +262,7 @@ class Config {
         }
 
         if (!this.bot.ownerId) {
+            // Note: Using console.warn here instead of logger to avoid circular dependency
             console.warn('⚠️ PERINGATAN: BOT_OWNER_ID tidak dikonfigurasi. Perintah owner-only tidak akan berfungsi.');
         }
 

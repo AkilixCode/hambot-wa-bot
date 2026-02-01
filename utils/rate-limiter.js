@@ -12,7 +12,9 @@ class RateLimiter {
         this.requests = new Map();
         
         // Interval cleanup lebih panjang untuk efisiensi (2 menit)
-        const cleanupInterval = parseInt(process.env.RATE_LIMITER_CLEANUP_INTERVAL) || 120000;
+        // Validasi untuk memastikan interval positif
+        const envInterval = parseInt(process.env.RATE_LIMITER_CLEANUP_INTERVAL);
+        const cleanupInterval = (envInterval && envInterval > 0) ? envInterval : 120000;
         this.cleanupInterval = setInterval(() => this.cleanup(), cleanupInterval);
         
         // Batas maksimal pengguna yang dilacak untuk mencegah kebocoran memori

@@ -17,7 +17,9 @@ class Cache {
         };
         
         // Interval cleanup lebih panjang untuk efisiensi memori (5 menit)
-        const cleanupInterval = parseInt(process.env.CACHE_CLEANUP_INTERVAL) || 300000;
+        // Validasi untuk memastikan interval positif
+        const envInterval = parseInt(process.env.CACHE_CLEANUP_INTERVAL);
+        const cleanupInterval = (envInterval && envInterval > 0) ? envInterval : 300000;
         this.cleanupInterval = setInterval(() => this.cleanup(), cleanupInterval);
         
         // Batas maksimal entri untuk mencegah kebocoran memori

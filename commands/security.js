@@ -179,7 +179,8 @@ class SecurityCommand extends CommandBase {
         await this.reply(sock, from, msg, 
             '🔄 *Me-restart proses bot...*\n\n' +
             `Proses PM2: ${pm2ProcessName}\n` +
-            'Bot akan kembali dalam beberapa detik.');
+            'Bot akan kembali dalam beberapa detik.\n' +
+            '_Catatan: Pastikan PM2 dikonfigurasi dengan auto-restart._');
 
         // Give time for the message to send
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -193,7 +194,9 @@ class SecurityCommand extends CommandBase {
             pm2Restart.unref();
         } catch (error) {
             // If PM2 fails, try graceful restart via process exit
-            // PM2 should auto-restart the process
+            // Note: This assumes PM2 is configured with auto-restart enabled
+            // If not using PM2, the process will simply exit
+            this.logError(error, { context: 'pm2-restart-fallback' });
             process.exit(0);
         }
     }
