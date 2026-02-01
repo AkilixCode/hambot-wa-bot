@@ -242,36 +242,38 @@ _Transmission Control Protocol/Internet Protocol_
     getSubnettingGuide() {
         return `📊 *PANDUAN SUBNETTING LENGKAP*
 
-🔢 *Tabel CIDR Lengkap*
-┌──────┬──────────────────┬──────────────┐
-│ CIDR │ Subnet Mask      │ Total Host   │
-├──────┼──────────────────┼──────────────┤
-│ /8   │ 255.0.0.0        │ 16,777,214   │
-│ /9   │ 255.128.0.0      │ 8,388,606    │
-│ /10  │ 255.192.0.0      │ 4,194,302    │
-│ /11  │ 255.224.0.0      │ 2,097,150    │
-│ /12  │ 255.240.0.0      │ 1,048,574    │
-│ /13  │ 255.248.0.0      │ 524,286      │
-│ /14  │ 255.252.0.0      │ 262,142      │
-│ /15  │ 255.254.0.0      │ 131,070      │
-│ /16  │ 255.255.0.0      │ 65,534       │
-│ /17  │ 255.255.128.0    │ 32,766       │
-│ /18  │ 255.255.192.0    │ 16,382       │
-│ /19  │ 255.255.224.0    │ 8,190        │
-│ /20  │ 255.255.240.0    │ 4,094        │
-│ /21  │ 255.255.248.0    │ 2,046        │
-│ /22  │ 255.255.252.0    │ 1,022        │
-│ /23  │ 255.255.254.0    │ 510          │
-│ /24  │ 255.255.255.0    │ 254          │
-│ /25  │ 255.255.255.128  │ 126          │
-│ /26  │ 255.255.255.192  │ 62           │
-│ /27  │ 255.255.255.224  │ 30           │
-│ /28  │ 255.255.255.240  │ 14           │
-│ /29  │ 255.255.255.248  │ 6            │
-│ /30  │ 255.255.255.252  │ 2            │
-│ /31  │ 255.255.255.254  │ 2 (P2P)      │
-│ /32  │ 255.255.255.255  │ 1            │
-└──────┴──────────────────┴──────────────┘
+🔢 *Tabel CIDR*
+
+📌 *Class A (/8-/15)*
+• /8 → 255.0.0.0 → 16.7 juta host
+• /9 → 255.128.0.0 → 8.3 juta host
+• /10 → 255.192.0.0 → 4.1 juta host
+• /11 → 255.224.0.0 → 2 juta host
+• /12 → 255.240.0.0 → 1 juta host
+• /13 → 255.248.0.0 → 524K host
+• /14 → 255.252.0.0 → 262K host
+• /15 → 255.254.0.0 → 131K host
+
+📌 *Class B (/16-/23)*
+• /16 → 255.255.0.0 → 65,534 host
+• /17 → 255.255.128.0 → 32,766 host
+• /18 → 255.255.192.0 → 16,382 host
+• /19 → 255.255.224.0 → 8,190 host
+• /20 → 255.255.240.0 → 4,094 host
+• /21 → 255.255.248.0 → 2,046 host
+• /22 → 255.255.252.0 → 1,022 host
+• /23 → 255.255.254.0 → 510 host
+
+📌 *Class C (/24-/32)*
+• /24 → 255.255.255.0 → 254 host
+• /25 → 255.255.255.128 → 126 host
+• /26 → 255.255.255.192 → 62 host
+• /27 → 255.255.255.224 → 30 host
+• /28 → 255.255.255.240 → 14 host
+• /29 → 255.255.255.248 → 6 host
+• /30 → 255.255.255.252 → 2 host
+• /31 → 255.255.255.254 → 2 (P2P)
+• /32 → 255.255.255.255 → 1 host
 
 📝 *Rumus Penting:*
 • Total IP = 2^(32-CIDR)
@@ -303,17 +305,14 @@ Teknik membagi subnet dengan ukuran berbeda sesuai kebutuhan untuk menghemat IP.
         return `🔌 *JENIS KABEL JARINGAN LENGKAP*
 
 📡 *UTP (Unshielded Twisted Pair)*
-┌──────┬─────────┬────────┬─────────────┐
-│ Cat  │ Speed   │ Jarak  │ Bandwidth   │
-├──────┼─────────┼────────┼─────────────┤
-│ Cat3 │ 10Mbps  │ 100m   │ 16 MHz      │
-│ Cat5 │ 100Mbps │ 100m   │ 100 MHz     │
-│ Cat5e│ 1Gbps   │ 100m   │ 100 MHz     │
-│ Cat6 │ 10Gbps  │ 55m    │ 250 MHz     │
-│ Cat6a│ 10Gbps  │ 100m   │ 500 MHz     │
-│ Cat7 │ 10Gbps  │ 100m   │ 600 MHz     │
-│ Cat8 │ 40Gbps  │ 30m    │ 2000 MHz    │
-└──────┴─────────┴────────┴─────────────┘
+
+🔹 *Cat3* → 10Mbps, 100m, 16MHz
+🔹 *Cat5* → 100Mbps, 100m, 100MHz
+🔹 *Cat5e* → 1Gbps, 100m, 100MHz
+🔹 *Cat6* → 10Gbps, 55m, 250MHz
+🔹 *Cat6a* → 10Gbps, 100m, 500MHz
+🔹 *Cat7* → 10Gbps, 100m, 600MHz
+🔹 *Cat8* → 40Gbps, 30m, 2GHz
 
 🔗 *Susunan Kabel T568A:*
 1. Putih-Hijau
@@ -369,15 +368,27 @@ Teknik membagi subnet dengan ukuran berbeda sesuai kebutuhan untuk menghemat IP.
         return `🏷️ *KELAS IP ADDRESS LENGKAP*
 
 📊 *Klasifikasi IP (Classful)*
-┌───────┬───────────┬─────┬──────────────┬─────────────┐
-│ Class │ Range     │CIDR │ Host/Network │ Penggunaan  │
-├───────┼───────────┼─────┼──────────────┼─────────────┤
-│ A     │ 1-126     │ /8  │ 16,777,214   │ Organisasi  │
-│ B     │ 128-191   │ /16 │ 65,534       │ Perusahaan  │
-│ C     │ 192-223   │ /24 │ 254          │ Kecil/SOHO  │
-│ D     │ 224-239   │ -   │ N/A          │ Multicast   │
-│ E     │ 240-255   │ -   │ N/A          │ Experimental│
-└───────┴───────────┴─────┴──────────────┴─────────────┘
+
+🔷 *Class A* (1-126)
+   • CIDR: /8
+   • Host: 16,777,214
+   • Untuk: Organisasi besar
+
+🔷 *Class B* (128-191)
+   • CIDR: /16
+   • Host: 65,534
+   • Untuk: Perusahaan menengah
+
+🔷 *Class C* (192-223)
+   • CIDR: /24
+   • Host: 254
+   • Untuk: Jaringan kecil/SOHO
+
+🔷 *Class D* (224-239)
+   • Untuk: Multicast
+
+🔷 *Class E* (240-255)
+   • Untuk: Experimental
 
 🔒 *IP Private (RFC 1918)*
 Tidak bisa diakses langsung dari internet:
@@ -548,18 +559,38 @@ Kombinasi dari beberapa topologi untuk fleksibilitas dan skalabilitas.
         return `📶 *STANDAR WiFi LENGKAP*
 
 📊 *Evolusi WiFi*
-┌────────┬──────────┬─────────┬──────────┬──────┐
-│ WiFi   │ IEEE     │ Maks    │ Frekuensi│ Tahun│
-├────────┼──────────┼─────────┼──────────┼──────┤
-│ WiFi 1 │ 802.11b  │ 11Mbps  │ 2.4GHz   │ 1999 │
-│ WiFi 2 │ 802.11a  │ 54Mbps  │ 5GHz     │ 1999 │
-│ WiFi 3 │ 802.11g  │ 54Mbps  │ 2.4GHz   │ 2003 │
-│ WiFi 4 │ 802.11n  │ 600Mbps │ 2.4/5GHz │ 2009 │
-│ WiFi 5 │ 802.11ac │ 6.9Gbps │ 5GHz     │ 2014 │
-│ WiFi 6 │ 802.11ax │ 9.6Gbps │ 2.4/5GHz │ 2019 │
-│ WiFi 6E│ 802.11ax │ 9.6Gbps │ 6GHz     │ 2021 │
-│ WiFi 7 │ 802.11be │ 46Gbps  │ 2.4/5/6  │ 2024 │
-└────────┴──────────┴─────────┴──────────┴──────┘
+
+📻 *WiFi 1* (802.11b)
+   • Max: 11Mbps @ 2.4GHz
+   • Tahun: 1999
+
+📻 *WiFi 2* (802.11a)
+   • Max: 54Mbps @ 5GHz
+   • Tahun: 1999
+
+📻 *WiFi 3* (802.11g)
+   • Max: 54Mbps @ 2.4GHz
+   • Tahun: 2003
+
+📻 *WiFi 4* (802.11n)
+   • Max: 600Mbps @ 2.4/5GHz
+   • Tahun: 2009
+
+📻 *WiFi 5* (802.11ac)
+   • Max: 6.9Gbps @ 5GHz
+   • Tahun: 2014
+
+📻 *WiFi 6* (802.11ax)
+   • Max: 9.6Gbps @ 2.4/5GHz
+   • Tahun: 2019
+
+📻 *WiFi 6E* (802.11ax)
+   • Max: 9.6Gbps @ 6GHz
+   • Tahun: 2021
+
+📻 *WiFi 7* (802.11be)
+   • Max: 46Gbps @ 2.4/5/6GHz
+   • Tahun: 2024
 
 📡 *Perbandingan Frekuensi:*
 • *2.4 GHz:*
@@ -629,18 +660,15 @@ Nilai: 128   64   32   16   8    4    2    1
   11111111.11111111.11111111.11000000
 
 🧮 *Konversi Heksadesimal:*
-┌─────┬─────┬─────┬─────┐
-│ Dec │ Hex │ Dec │ Hex │
-├─────┼─────┼─────┼─────┤
-│ 0   │ 0   │ 8   │ 8   │
-│ 1   │ 1   │ 9   │ 9   │
-│ 2   │ 2   │ 10  │ A   │
-│ 3   │ 3   │ 11  │ B   │
-│ 4   │ 4   │ 12  │ C   │
-│ 5   │ 5   │ 13  │ D   │
-│ 6   │ 6   │ 14  │ E   │
-│ 7   │ 7   │ 15  │ F   │
-└─────┴─────┴─────┴─────┘
+
+0 = 0 | 8 = 8
+1 = 1 | 9 = 9
+2 = 2 | 10 = A
+3 = 3 | 11 = B
+4 = 4 | 12 = C
+5 = 5 | 13 = D
+6 = 6 | 14 = E
+7 = 7 | 15 = F
 
 📌 *Contoh IP ke Hex:*
 192 = C0 (12×16+0)
@@ -771,19 +799,16 @@ AA:BB:CC:DD:EE:FF
   - Policy-based
 
 📊 *Administrative Distance:*
-┌─────────────────┬─────┐
-│ Source          │ AD  │
-├─────────────────┼─────┤
-│ Connected       │ 0   │
-│ Static          │ 1   │
-│ EIGRP Summary   │ 5   │
-│ eBGP            │ 20  │
-│ EIGRP           │ 90  │
-│ OSPF            │ 110 │
-│ IS-IS           │ 115 │
-│ RIP             │ 120 │
-│ iBGP            │ 200 │
-└─────────────────┴─────┘
+
+🔹 Connected → AD: 0
+🔹 Static → AD: 1
+🔹 EIGRP Summary → AD: 5
+🔹 eBGP → AD: 20
+🔹 EIGRP → AD: 90
+🔹 OSPF → AD: 110
+🔹 IS-IS → AD: 115
+🔹 RIP → AD: 120
+🔹 iBGP → AD: 200
 
 💡 *Tip:* AD lebih kecil = prioritas lebih tinggi`;
     }
@@ -1275,17 +1300,27 @@ Contoh:
 • Multiple hosts, nearest response
 
 📊 *IPv6 vs IPv4:*
-┌─────────────┬──────────────┬──────────────┐
-│ Feature     │ IPv4         │ IPv6         │
-├─────────────┼──────────────┼──────────────┤
-│ Address     │ 32-bit       │ 128-bit      │
-│ Format      │ Decimal      │ Hexadecimal  │
-│ Header      │ Variable     │ Fixed 40B    │
-│ NAT         │ Required     │ Not needed   │
-│ IPSec       │ Optional     │ Mandatory    │
-│ Broadcast   │ Yes          │ No (multicast│
-│ DHCP        │ DHCPv4       │ DHCPv6/SLAAC │
-└─────────────┴──────────────┴──────────────┘
+
+🔹 *Address*
+   IPv4: 32-bit | IPv6: 128-bit
+
+🔹 *Format*
+   IPv4: Decimal | IPv6: Hexadecimal
+
+🔹 *Header*
+   IPv4: Variable | IPv6: Fixed 40B
+
+🔹 *NAT*
+   IPv4: Required | IPv6: Not needed
+
+🔹 *IPSec*
+   IPv4: Optional | IPv6: Mandatory
+
+🔹 *Broadcast*
+   IPv4: Yes | IPv6: No (multicast)
+
+🔹 *DHCP*
+   IPv4: DHCPv4 | IPv6: DHCPv6/SLAAC
 
 📡 *Auto-Configuration:*
 • SLAAC: Stateless Auto-Config
