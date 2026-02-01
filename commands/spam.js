@@ -27,6 +27,19 @@ class SpamCommand extends CommandBase {
         // Batas maksimal pesan per perintah
         this.MAX_LIMIT = 50;
         
+        // Maximum retry failures before stopping
+        this.MAX_RETRY_FAILURES = 3;
+        
+        // Fatigue coefficient - slows down messages over time (0.3 = 30% slower by end)
+        this.FATIGUE_COEFFICIENT = 0.3;
+        
+        // Chance of longer thinking pause (10%)
+        this.THINKING_PAUSE_CHANCE = 0.1;
+        
+        // Phone number length constraints
+        this.MIN_PHONE_LENGTH = 10;
+        this.MAX_PHONE_LENGTH = 15;
+        
         // Human-like typing behavior patterns
         this.typingPatterns = [
             { typing: 500, pause: 200 },   // Quick typer
@@ -57,13 +70,13 @@ class SpamCommand extends CommandBase {
         // Base delay between 1.5 and 3.5 seconds
         let baseDelay = this.randomDelay(1500, 3500);
         
-        // Occasionally add longer "thinking" pauses (10% chance)
-        if (Math.random() < 0.1) {
+        // Occasionally add longer "thinking" pauses
+        if (Math.random() < this.THINKING_PAUSE_CHANCE) {
             baseDelay += this.randomDelay(2000, 5000);
         }
         
         // Slow down slightly as messages progress (fatigue simulation)
-        const fatigueMultiplier = 1 + (messageIndex / totalMessages) * 0.3;
+        const fatigueMultiplier = 1 + (messageIndex / totalMessages) * this.FATIGUE_COEFFICIENT;
         baseDelay = Math.floor(baseDelay * fatigueMultiplier);
         
         // Random variation in typing speed
@@ -134,13 +147,13 @@ class SpamCommand extends CommandBase {
         if (number.startsWith('0')) {
             // Konversi 0812xxx ke 62812xxx
             number = '62' + number.substring(1);
-        } else if (!number.startsWith('62') && number.length >= 10 && number.length <= 12) {
-            // Asumsikan Indonesia jika tidak ada kode negara
+        } else if (!number.startsWith('62') && number.length >= this.MIN_PHONE_LENGTH) {
+            // Asumsikan Indonesia jika tidak ada kode negara dan panjang valid
             number = '62' + number;
         }
 
         // Validasi panjang (nomor biasanya 10-15 digit)
-        if (number.length < 10 || number.length > 15) {
+        if (number.length < this.MIN_PHONE_LENGTH || number.length > this.MAX_PHONE_LENGTH) {
             return null;
         }
 
@@ -259,7 +272,7 @@ class SpamCommand extends CommandBase {
                 this.logError(error, context);
                 
                 // Jika sudah ada beberapa sukses, coba lanjutkan dengan delay lebih lama
-                if (successCount > 0 && failCount < 3) {
+                if (successCount > 0 && failCount < this.MAX_RETRY_FAILURES) {
                     // Wait longer and retry
                     await sleep(this.randomDelay(5000, 10000));
                     continue;

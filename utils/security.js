@@ -293,7 +293,9 @@ class SecurityManager {
         const primaryId = normalizedIds[0] || userId;
         
         // CRITICAL: Never allow blocking the owner
-        if (config.isOwner(userId)) {
+        // Check original userId first
+        const isOriginalOwner = config.isOwner(userId);
+        if (isOriginalOwner) {
             logger.warn(`Attempted to block owner - rejected`, { userId });
             return { success: false, reason: 'Tidak dapat memblokir owner bot' };
         }
