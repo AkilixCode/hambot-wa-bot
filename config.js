@@ -14,7 +14,10 @@ class Config {
             browser: ['HamBot', 'Chrome', '1.0.0'],
             // Private mode: ignore private messages when true
             onlyGroupMode: process.env.ONLY_GROUP_MODE === 'true',
-            // Owner ID in format: number@s.whatsapp.net
+            // Owner IDs - supports both private (@s.whatsapp.net) and group (@lid) formats
+            // Can be comma-separated for dual ID support: "id1@s.whatsapp.net,id2@lid"
+            ownerIds: this._normalizeOwnerIds(process.env.BOT_OWNER_ID),
+            // Legacy single ID for backward compatibility
             ownerId: this._normalizeOwnerId(process.env.BOT_OWNER_ID),
             // Owner-only commands list from env
             ownerOnlyCommands: (process.env.OWNER_ONLY_COMMANDS || 'security,spam').split(',').map(c => c.trim().toLowerCase()).filter(c => c)
@@ -173,12 +176,39 @@ class Config {
     }
 
     /**
-     * Normalize owner ID to accept both @s.whatsapp.net and @lid formats
-     * Ensures consistent format across the application
+     * Normalize single owner ID to accept both @s.whatsapp.net and @lid formats
      * @param {string} ownerId - Raw owner ID from env
-     * @returns {string|null} Normalized owner ID
+     * @returns {string|null} Normalized owner ID (first ID if comma-separated)
      */
     _normalizeOwnerId(ownerId) {
+        if (!ownerId) return null;
+        
+        // If comma-separated, return the first one
+        const firstId = ownerId.split(',')[0];
+        return this._normalizeSingleOwnerId(firstId);
+    }
+
+    /**
+     * Normalize multiple owner IDs (comma-separated)
+     * Supports both @s.whatsapp.net (private chat) and @lid (group chat) formats
+     * @param {string} ownerIdStr - Comma-separated owner IDs from env
+     * @returns {string[]} Array of normalized owner IDs
+     */
+    _normalizeOwnerIds(ownerIdStr) {
+        if (!ownerIdStr) return [];
+        
+        return ownerIdStr
+            .split(',')
+            .map(id => this._normalizeSingleOwnerId(id.trim()))
+            .filter(id => id !== null);
+    }
+
+    /**
+     * Normalize a single owner ID
+     * @param {string} ownerId - Single owner ID
+     * @returns {string|null} Normalized owner ID
+     */
+    _normalizeSingleOwnerId(ownerId) {
         if (!ownerId) return null;
         
         // Remove any whitespace
@@ -198,19 +228,42 @@ class Config {
 
     /**
      * Check if a sender is the bot owner
+     * Supports multiple owner IDs (for private and group chat formats)
      * @param {string} senderId - Sender JID
      * @returns {boolean}
      */
     isOwner(senderId) {
-        if (!this.bot.ownerId || !senderId) return false;
+        if (!senderId) return false;
+        
+        // Check against all owner IDs
+        const ownerIds = this.bot.ownerIds;
+        if (!ownerIds || ownerIds.length === 0) return false;
+        
+        for (const ownerId of ownerIds) {
+            if (this._matchesOwnerId(senderId, ownerId)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Check if sender matches a specific owner ID
+     * @param {string} senderId - Sender JID
+     * @param {string} ownerId - Owner ID to check against
+     * @returns {boolean}
+     */
+    _matchesOwnerId(senderId, ownerId) {
+        if (!ownerId || !senderId) return false;
         
         // Direct match (works for both @lid and @s.whatsapp.net)
-        if (senderId === this.bot.ownerId) {
+        if (senderId === ownerId) {
             return true;
         }
         
         // If owner uses @s.whatsapp.net format, try to normalize sender
-        if (this.bot.ownerId.endsWith('@s.whatsapp.net')) {
+        if (ownerId.endsWith('@s.whatsapp.net')) {
             let normalizedSender = senderId;
             
             // If sender uses @lid format, cannot match with @s.whatsapp.net
@@ -229,10 +282,18 @@ class Config {
                 normalizedSender = `${number}@s.whatsapp.net`;
             }
             
-            return normalizedSender === this.bot.ownerId;
+            return normalizedSender === ownerId;
         }
         
         return false;
+    }
+
+    /**
+     * Get all owner IDs (for protection checks)
+     * @returns {string[]}
+     */
+    getOwnerIds() {
+        return this.bot.ownerIds || [];
     }
 
     /**
@@ -255,7 +316,7 @@ class Config {
             errors.push('COOLDOWN_MS harus non-negatif');
         }
 
-        if (!this.bot.ownerId) {
+        if (!this.bot.ownerIds || this.bot.ownerIds.length === 0) {
             // Note: Using console.warn here instead of logger to avoid circular dependency
             console.warn('⚠️ PERINGATAN: BOT_OWNER_ID tidak dikonfigurasi. Perintah owner-only tidak akan berfungsi.');
         }

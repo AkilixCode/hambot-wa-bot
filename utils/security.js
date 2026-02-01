@@ -194,8 +194,34 @@ class SecurityManager {
 
     /**
      * Check if user is blocked
+     * Checks all possible ID formats for the user
      */
     isUserBlocked(userId) {
+        // Never block owner
+        if (config.isOwner(userId)) {
+            return false;
+        }
+        
+        // Check direct ID
+        if (this._isIdBlocked(userId)) {
+            return true;
+        }
+        
+        // Check normalized versions of the ID
+        const normalizedIds = this._normalizeUserIdForBlocking(userId);
+        for (const normalizedId of normalizedIds) {
+            if (this._isIdBlocked(normalizedId)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Internal check if a specific ID is blocked
+     */
+    _isIdBlocked(userId) {
         if (!this.blockedUsers.has(userId)) {
             return false;
         }
@@ -212,23 +238,135 @@ class SecurityManager {
     }
 
     /**
+     * Normalize user ID to all possible formats for blocking/lookup
+     * Returns array of possible ID formats
+     * @param {string} input - User ID or phone number
+     * @returns {string[]} Array of possible JID formats
+     */
+    _normalizeUserIdForBlocking(input) {
+        if (!input) return [];
+        
+        const results = [];
+        let cleanInput = input.trim();
+        
+        // If already has suffix, extract number part
+        let numberPart = cleanInput;
+        if (cleanInput.includes('@')) {
+            numberPart = cleanInput.split('@')[0];
+            // Also add the original format
+            results.push(cleanInput);
+        }
+        
+        // Clean the number part (remove non-digits)
+        const cleanNumber = numberPart.replace(/\D/g, '');
+        
+        if (cleanNumber) {
+            // Handle Indonesian format (0xxx -> 62xxx)
+            let normalizedNumber = cleanNumber;
+            if (cleanNumber.startsWith('0')) {
+                normalizedNumber = '62' + cleanNumber.substring(1);
+            }
+            
+            // Add @s.whatsapp.net format
+            results.push(`${normalizedNumber}@s.whatsapp.net`);
+            
+            // Also add with original number if different
+            if (cleanNumber !== normalizedNumber) {
+                results.push(`${cleanNumber}@s.whatsapp.net`);
+            }
+        }
+        
+        return [...new Set(results)]; // Remove duplicates
+    }
+
+    /**
      * Block user temporarily
+     * Protects owner from being blocked
+     * @param {string} userId - User ID to block
+     * @param {number} durationMs - Block duration in milliseconds
+     * @param {string} reason - Reason for blocking
+     * @returns {Object} Result of block attempt
      */
     blockUser(userId, durationMs = 3600000, reason = 'Security violation') {
+        // Normalize the user ID to get all possible formats
+        const normalizedIds = this._normalizeUserIdForBlocking(userId);
+        const primaryId = normalizedIds[0] || userId;
+        
+        // CRITICAL: Never allow blocking the owner
+        if (config.isOwner(userId)) {
+            logger.warn(`Attempted to block owner - rejected`, { userId });
+            return { success: false, reason: 'Tidak dapat memblokir owner bot' };
+        }
+        
+        // Also check all normalized IDs against owner
+        for (const normalizedId of normalizedIds) {
+            if (config.isOwner(normalizedId)) {
+                logger.warn(`Attempted to block owner (normalized) - rejected`, { userId, normalizedId });
+                return { success: false, reason: 'Tidak dapat memblokir owner bot' };
+            }
+        }
+        
         const until = Date.now() + durationMs;
-        this.blockedUsers.set(userId, { until, reason });
+        
+        // Block all normalized versions of the ID
+        for (const normalizedId of normalizedIds) {
+            this.blockedUsers.set(normalizedId, { until, reason, originalId: userId });
+        }
+        
+        // If no normalized IDs, block the original
+        if (normalizedIds.length === 0) {
+            this.blockedUsers.set(userId, { until, reason });
+        }
         
         logger.warn(`User blocked`, {
-            userId: userId.split('@')[0],
+            userId: primaryId.split('@')[0],
             duration: `${durationMs / 1000}s`,
-            reason
+            reason,
+            allBlockedIds: normalizedIds
         });
+        
+        return { success: true, blockedId: primaryId, allBlockedIds: normalizedIds };
+    }
+
+    /**
+     * Clear blocks for owner IDs on startup
+     * Safety fallback in case owner accidentally gets blocked
+     */
+    clearOwnerBlocks() {
+        const ownerIds = config.getOwnerIds();
+        let clearedCount = 0;
+        
+        for (const ownerId of ownerIds) {
+            if (this.blockedUsers.has(ownerId)) {
+                this.blockedUsers.delete(ownerId);
+                clearedCount++;
+                logger.info(`Cleared block for owner ID on startup`, { ownerId });
+            }
+            
+            // Also check normalized versions
+            const normalizedIds = this._normalizeUserIdForBlocking(ownerId);
+            for (const normalizedId of normalizedIds) {
+                if (this.blockedUsers.has(normalizedId)) {
+                    this.blockedUsers.delete(normalizedId);
+                    clearedCount++;
+                    logger.info(`Cleared block for normalized owner ID on startup`, { normalizedId });
+                }
+            }
+        }
+        
+        return clearedCount;
     }
 
     /**
      * Track suspicious activity
+     * Protected: Owner cannot be auto-blocked from suspicious activity
      */
     trackSuspiciousActivity(userId, activityType) {
+        // Don't track or auto-block owner
+        if (config.isOwner(userId)) {
+            return false;
+        }
+        
         if (!this.suspiciousActivity.has(userId)) {
             this.suspiciousActivity.set(userId, []);
         }
@@ -248,8 +386,8 @@ class SecurityManager {
         const recentActivities = activities.filter(a => Date.now() - a.timestamp < 60000);
         
         if (recentActivities.length > 20) {
-            this.blockUser(userId, 1800000, 'Excessive suspicious activity');
-            return true;
+            const result = this.blockUser(userId, 1800000, 'Excessive suspicious activity');
+            return result.success;
         }
 
         return false;
@@ -390,16 +528,36 @@ class SecurityManager {
 
     /**
      * Unblock a specific user
+     * Handles multiple ID formats
      * @param {string} userId - User ID to unblock
      * @returns {boolean} - True if user was unblocked
      */
     unblockUser(userId) {
+        let unblocked = false;
+        
+        // Try to unblock direct ID
         if (this.blockedUsers.has(userId)) {
             this.blockedUsers.delete(userId);
-            logger.info(`User manually unblocked`, { userId: userId.split('@')[0] });
-            return true;
+            unblocked = true;
         }
-        return false;
+        
+        // Also unblock all normalized versions
+        const normalizedIds = this._normalizeUserIdForBlocking(userId);
+        for (const normalizedId of normalizedIds) {
+            if (this.blockedUsers.has(normalizedId)) {
+                this.blockedUsers.delete(normalizedId);
+                unblocked = true;
+            }
+        }
+        
+        if (unblocked) {
+            logger.info(`User manually unblocked`, { 
+                userId: userId.split('@')[0],
+                allUnblockedIds: [userId, ...normalizedIds]
+            });
+        }
+        
+        return unblocked;
     }
 
     /**
