@@ -35,6 +35,57 @@ try {
     assert(false, 'Config: Validation failed');
 }
 
+// Test 1.1: Owner ID normalization
+try {
+    // Save original owner ID
+    const originalOwnerId = process.env.BOT_OWNER_ID;
+    
+    // Test @s.whatsapp.net format
+    process.env.BOT_OWNER_ID = '6281234567890@s.whatsapp.net';
+    const Config = require('./config');
+    const testConfig1 = new Config.constructor();
+    assert(testConfig1.bot.ownerId === '6281234567890@s.whatsapp.net', 
+           'Config: Owner ID accepts @s.whatsapp.net format');
+    
+    // Test @lid format
+    process.env.BOT_OWNER_ID = '12345678901234@lid';
+    const testConfig2 = new Config.constructor();
+    assert(testConfig2.bot.ownerId === '12345678901234@lid', 
+           'Config: Owner ID accepts @lid format');
+    
+    // Test plain number (should normalize to @s.whatsapp.net)
+    process.env.BOT_OWNER_ID = '6281234567890';
+    const testConfig3 = new Config.constructor();
+    assert(testConfig3.bot.ownerId === '6281234567890@s.whatsapp.net', 
+           'Config: Owner ID normalizes plain number to @s.whatsapp.net');
+    
+    // Test isOwner with @lid format (direct match)
+    const testConfig4 = new Config.constructor();
+    testConfig4.bot.ownerId = '12345678901234@lid';
+    assert(testConfig4.isOwner('12345678901234@lid') === true, 
+           'Config: isOwner matches @lid format (direct match)');
+    assert(testConfig4.isOwner('6281234567890@s.whatsapp.net') === false, 
+           'Config: isOwner rejects different format when owner uses @lid');
+    
+    // Test isOwner with @s.whatsapp.net format
+    const testConfig5 = new Config.constructor();
+    testConfig5.bot.ownerId = '6281234567890@s.whatsapp.net';
+    assert(testConfig5.isOwner('6281234567890@s.whatsapp.net') === true, 
+           'Config: isOwner matches @s.whatsapp.net format (direct match)');
+    assert(testConfig5.isOwner('12345678901234@lid') === false, 
+           'Config: isOwner rejects @lid when owner uses @s.whatsapp.net');
+    
+    // Restore original owner ID
+    if (originalOwnerId) {
+        process.env.BOT_OWNER_ID = originalOwnerId;
+    } else {
+        delete process.env.BOT_OWNER_ID;
+    }
+} catch (error) {
+    console.error(error);
+    assert(false, 'Config: Owner ID normalization tests failed');
+}
+
 // Test 2: Cache System
 try {
     cache.clear();
