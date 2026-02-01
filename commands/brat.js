@@ -27,7 +27,7 @@ class BratCommand extends CommandBase {
         // 1. REGISTER FONT (Pastikan file ada di folder assets/fonts)
         // Kita coba load font saat class di-inisialisasi
         try {
-            const fontPath = path.join(process.cwd(), 'assets', 'fonts', 'arialnarrow.ttf');
+            const fontPath = path.join(process.cwd(), 'fonts', 'arialnarrow.ttf');
             if (fs.existsSync(fontPath)) {
                 registerFont(fontPath, { family: 'BratFont' });
             } else {
