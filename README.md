@@ -1,47 +1,122 @@
-# HamBot - Advanced WhatsApp Bot
+# HamBot - Advanced WhatsApp Bot 🤖
 
-A powerful WhatsApp bot built with Baileys, featuring media downloads, AI text-to-speech, image generation, and more.
+Bot WhatsApp canggih yang dibangun dengan Baileys, dilengkapi dengan fitur download media, text-to-speech AI, referensi jaringan, dan banyak lagi. Semua dalam **Bahasa Indonesia**!
 
-## 🚀 Features
+## 🚀 Fitur Utama
 
 ### 🎵 Media Downloader
-- **Music Download** - Search and download songs from YouTube
-- **Video Download** - Download videos from various platforms
-- **Photo Download** - Fetch images from URLs
-- **Pinterest Search** - Find aesthetic images and inspiration
+- **Music Download** - Cari dan download lagu dari YouTube
+- **Video Download** - Download video dari berbagai platform (TikTok, Instagram, Facebook, dll)
+- **Pinterest Search** - Cari gambar estetik dan inspirasi
 
 ### 🛠️ Creative Tools
-- **Sticker Maker** - Convert images to WhatsApp stickers
-- **Image Converter** - Convert stickers back to images
-- **Text-to-Speech** - Generate voice messages with AI (ElevenLabs)
+- **Sticker Maker** - Ubah gambar jadi stiker WhatsApp
+- **Image Converter** - Ubah stiker kembali jadi gambar
+- **Text-to-Speech** - Buat voice message dengan AI (ElevenLabs)
+- **QR Generator** - Buat QR code dari teks
 
 ### 🎬 Entertainment & Info
-- **Movie Info** - Get ratings, synopsis, and details from OMDb
-- **Anime Info** - Fetch anime details from MyAnimeList
-- **Earthquake Alerts** - Real-time earthquake data from BMKG (Indonesia)
+- **Movie Info** - Dapatkan rating dan info film dari OMDb
+- **Gempa Info** - Data gempa real-time dari BMKG
+- **Cuaca** - Cek cuaca lokasi manapun
+- **Kutipan Inspirasional** - 300+ kutipan dalam Bahasa Indonesia
+- **Fakta Menarik** - 100+ fakta unik termasuk fakta Indonesia
+- **Meme Indonesia** - Meme dari subreddit r/indonesia
+
+### 🖥️ Teknikal & Networking
+- **Network Reference** - 20+ topik networking lengkap dalam Bahasa Indonesia:
+  - Model OSI 7 Layer & TCP/IP
+  - Panduan Subnetting lengkap
+  - Protokol Jaringan
+  - Routing & Gateway
+  - VLAN, NAT, DHCP, VPN
+  - IPv6, Firewall, ACL
+  - Troubleshooting Guide
+- **Subnet Calculator** - Hitung subnet dari IP/CIDR
+- **IP Info** - Lookup informasi alamat IP
+- **DNS Lookup** - Query DNS untuk domain
+- **Port Reference** - Database port umum
 
 ### 👥 Group Management
-- **Tag All** - Mention all group members
-- **Group Info** - View group statistics and metadata
-- **Spam Command** - Bulk messaging utility (use responsibly!)
+- **Tag All** - Mention semua member grup
+- **Group Info** - Lihat statistik dan metadata grup
 
 ### ⚡ Performance Features
-- **Smart Caching** - Automatic result caching for faster responses
-- **Rate Limiting** - Per-user request throttling
-- **Queue Management** - Handles concurrent operations efficiently
-- **Browser Pooling** - Reuses browser instances for scraping
-- **Memory Optimization** - Automatic cleanup and garbage collection
+- **Smart Caching** - Cache otomatis untuk respon lebih cepat
+- **Rate Limiting** - Throttling per-user untuk stabilitas
+- **Queue Management** - Handle operasi concurrent dengan efisien
+- **Browser Pooling** - Reuse browser instance untuk scraping
+- **Memory Optimization** - Cleanup dan garbage collection otomatis
 
-## 📋 Prerequisites
+## 📋 Daftar Perintah
 
-- Node.js 16+ 
-- npm or yarn
-- WhatsApp account
-- Internet connection
+### Umum
+| Perintah | Deskripsi |
+|----------|-----------|
+| `.menu` | Menampilkan daftar perintah |
+| `.menu <kategori>` | Lihat perintah dalam kategori |
+| `.menu <perintah>` | Lihat detail perintah |
+| `.ping` | Cek status bot |
 
-## 🔧 Installation
+### Media
+| Perintah | Deskripsi |
+|----------|-----------|
+| `.music <nama lagu>` | Download musik |
+| `.video <url>` | Download video |
+| `.pinterest <query>` | Cari gambar Pinterest |
+| `.sticker` | Ubah gambar jadi stiker |
+| `.toimg` | Ubah stiker jadi gambar |
 
-1. **Clone the repository**
+### Entertainment
+| Perintah | Deskripsi |
+|----------|-----------|
+| `.quote` | Kutipan inspirasional Indonesia |
+| `.fact` | Fakta menarik dalam Bahasa Indonesia |
+| `.meme` | Meme Indonesia dari Reddit |
+| `.rps` | Main batu gunting kertas |
+| `.dice` | Lempar dadu |
+| `.8ball` | Tanya bola ajaib |
+
+### Teknikal
+| Perintah | Deskripsi |
+|----------|-----------|
+| `.netinfo` | Referensi jaringan lengkap |
+| `.netinfo osi` | Model OSI 7 Layer |
+| `.netinfo subnetting` | Panduan subnet |
+| `.netinfo protokol` | Protokol jaringan |
+| `.netinfo routing` | Routing & gateway |
+| `.netinfo troubleshoot` | Troubleshooting guide |
+| `.subnet <IP/CIDR>` | Kalkulator subnet |
+| `.ipinfo <IP>` | Info alamat IP |
+| `.dns <domain>` | DNS lookup |
+| `.port <nomor>` | Info port jaringan |
+
+### Informasi
+| Perintah | Deskripsi |
+|----------|-----------|
+| `.movie <judul>` | Info film dari OMDb |
+| `.gempa` | Info gempa terbaru dari BMKG |
+| `.weather <lokasi>` | Info cuaca |
+| `.wiki <query>` | Cari di Wikipedia |
+| `.crypto <coin>` | Harga cryptocurrency |
+
+### Grup
+| Perintah | Deskripsi |
+|----------|-----------|
+| `.tagall` | Tag semua member |
+| `.info` | Info grup |
+
+## 🔧 Instalasi
+
+### Prasyarat
+- Node.js 16+
+- npm atau yarn
+- Akun WhatsApp
+- Koneksi internet
+
+### Langkah Instalasi
+
+1. **Clone repository**
 ```bash
 git clone https://github.com/AkilixCode/hambot-wa-bot.git
 cd hambot-wa-bot
@@ -52,47 +127,40 @@ cd hambot-wa-bot
 npm install
 ```
 
-3. **Install external dependencies**
-
-For music/video download features:
+3. **Install external tools** (untuk fitur media)
 ```bash
 # Install yt-dlp
-npm install -g yt-dlp
-# OR download from: https://github.com/yt-dlp/yt-dlp/releases
-```
+pip install yt-dlp
+# ATAU download dari: https://github.com/yt-dlp/yt-dlp/releases
 
-For sticker conversion:
-```bash
 # Install FFmpeg
 # Ubuntu/Debian:
 sudo apt install ffmpeg
-
 # macOS:
 brew install ffmpeg
-
-# Windows: Download from https://ffmpeg.org/download.html
+# Windows: Download dari https://ffmpeg.org/download.html
 ```
 
-4. **Configure environment**
+4. **Konfigurasi environment**
 ```bash
 cp .env.example .env
-# Edit .env with your API keys and settings
+# Edit .env dengan API keys dan settings kamu
 ```
 
-5. **Start the bot**
+5. **Jalankan bot**
 ```bash
 npm start
 ```
 
 6. **Scan QR Code**
-Open WhatsApp on your phone and scan the QR code that appears in the terminal.
+Buka WhatsApp di HP dan scan QR code yang muncul di terminal.
 
-## 📝 Configuration
+## 📝 Konfigurasi
 
-Edit the `.env` file to customize your bot:
+Edit file `.env` untuk kustomisasi:
 
 ```env
-# Bot Settings
+# Pengaturan Bot
 BOT_NAME=HamBot
 BOT_OWNER=YourName
 BOT_PREFIX=.
@@ -102,180 +170,108 @@ MAX_PROCESSES=3
 COOLDOWN_MS=2000
 RATE_LIMIT_MAX=10
 
-# API Keys
+# API Keys (Optional)
 ELEVENLABS_API_KEY=your_key
 OMDB_API_KEY=your_key
 ```
 
-### API Keys (Optional)
+### API Keys (Opsional)
 
-- **ElevenLabs**: For text-to-speech (.say command) - [Get Key](https://elevenlabs.io)
-- **OMDb**: For movie information (.movie command) - [Get Key](http://www.omdbapi.com/apikey.aspx)
+| API | Kegunaan | Link |
+|-----|----------|------|
+| ElevenLabs | Text-to-Speech (.say) | [Get Key](https://elevenlabs.io) |
+| OMDb | Info Film (.movie) | [Get Key](http://www.omdbapi.com/apikey.aspx) |
 
-## 🌐 Proxy Configuration
+## 🌐 Konfigurasi Proxy
 
-HamBot supports custom proxy setup for all internet-related features. This is useful when you want to route traffic through your own proxy server, such as a spare phone running Tailscale + Every Proxy.
+HamBot mendukung custom proxy untuk semua fitur internet. Berguna untuk routing traffic melalui proxy server, seperti HP dengan Tailscale + Every Proxy.
 
-### Supported Proxy Types
-- **HTTP** - Standard HTTP proxy
-- **HTTPS** - Secure HTTP proxy
-- **SOCKS5** - SOCKS5 proxy (recommended for Tailscale + Every Proxy)
-
-### Setup with Tailscale + Every Proxy (Mobile Proxy)
-
-1. **Install Tailscale** on both your phone and server
-2. **Install Every Proxy** app on your phone (available on Google Play)
-3. **Configure Every Proxy** as SOCKS5 proxy (port 1080) or HTTP proxy (port 8080)
-4. **Get your phone's Tailscale IP** (e.g., `100.64.0.2`)
-5. **Configure HamBot**:
+### Setup dengan Tailscale + Every Proxy
 
 ```env
 # Enable proxy globally
 PROXY_ENABLED=true
 
-# Set proxy type (http, https, or socks5)
+# Tipe proxy (http, https, atau socks5)
 PROXY_TYPE=socks5
 
-# Your phone's Tailscale IP
+# IP Tailscale HP kamu
 PROXY_HOST=100.64.0.2
 
-# Every Proxy port (1080 for SOCKS5, 8080 for HTTP)
+# Port Every Proxy (1080 untuk SOCKS5, 8080 untuk HTTP)
 PROXY_PORT=1080
 ```
 
-### Alternative: Full Proxy URL
-
-You can also use a full proxy URL instead of individual components:
-
-```env
-PROXY_ENABLED=true
-HB_PROXY_URL=socks5://100.64.0.2:1080
-```
-
-### Features Using Proxy
-
-When enabled, the proxy is used by:
-- 📹 **yt-dlp** (music and video downloads)
-- 🌐 **All HTTP requests** (APIs, weather, quotes, etc.)
-- 🖼️ **Puppeteer/Browser** (Pinterest scraping, etc.)
-- 🌍 **Translation services**
-- 📊 **All external API calls**
-
-## 🎮 Usage
-
-### Basic Commands
-
-```
-.menu                    - Show all commands
-.ping                    - Check bot status
-.sticker                 - Convert image to sticker
-.toimg                   - Convert sticker to image
-```
-
-### Media Commands
-
-```
-.music <song name>       - Download music
-.video <url>             - Download video
-.pinterest <query>       - Search Pinterest images
-```
-
-### Information Commands
-
-```
-.movie <title>           - Get movie information
-.anime <title>           - Get anime information
-.gempa                   - Latest earthquake info (Indonesia)
-```
-
-### Group Commands
-
-```
-.tagall                  - Mention all members
-.info                    - View group information
-```
-
-## 🏗️ Architecture
-
-The bot uses a modular command-based architecture:
+## 🏗️ Arsitektur
 
 ```
 hambot-wa-bot/
-├── index.js              # Bot initialization
-├── handler-new.js        # Message handler (new)
-├── config.js             # Configuration management
-├── commands/             # Command modules
+├── index.js              # Inisialisasi bot
+├── handler.js            # Message handler
+├── config.js             # Konfigurasi
+├── commands/             # Modul perintah
 │   ├── base.js           # Base command class
 │   ├── registry.js       # Command registry
-│   ├── ping.js           # Ping command
 │   ├── menu.js           # Menu command
-│   ├── sticker.js        # Sticker command
-│   └── pinterest.js      # Pinterest command
-└── utils/                # Utility modules
-    ├── cache.js          # Caching system
+│   ├── netinfo.js        # Network reference
+│   ├── quote.js          # Kutipan inspirasional
+│   ├── fact.js           # Fakta menarik
+│   └── ...               # Perintah lainnya
+└── utils/                # Modul utilitas
+    ├── cache.js          # Sistem caching
     ├── rate-limiter.js   # Rate limiting
-    ├── logger.js         # Logging system
-    ├── helpers.js        # Helper functions
-    └── browser-manager.js # Browser pooling
+    ├── logger.js         # Logging
+    └── helpers.js        # Helper functions
 ```
 
-### Key Features
+## 🔒 Keamanan
 
-- **Command Registry**: Automatic command loading and management
-- **Caching System**: In-memory cache with TTL and auto-cleanup
-- **Rate Limiter**: Sliding window rate limiting per user
-- **Browser Manager**: Singleton browser with page pooling
-- **Structured Logging**: Enhanced logging with context
-- **Error Handling**: Comprehensive error handling and recovery
-
-## 🔒 Security
-
-- Input sanitization and validation
-- Rate limiting to prevent abuse
-- Secure credential storage
-- No shell injection vulnerabilities
-- Automatic cleanup of temporary files
+- Sanitisasi dan validasi input
+- Rate limiting untuk mencegah abuse
+- Penyimpanan kredensial yang aman
+- Tidak ada kerentanan shell injection
+- Cleanup otomatis file temporary
 
 ## 🐛 Troubleshooting
 
-### Bot doesn't respond
-- Check if QR code is scanned correctly
-- Verify internet connection
-- Check console for errors
+### Bot tidak merespon
+- Pastikan QR code sudah di-scan dengan benar
+- Cek koneksi internet
+- Lihat console untuk error
 
-### Commands fail
-- Ensure external dependencies (yt-dlp, ffmpeg) are installed
-- Check API keys in .env file
-- Verify rate limits haven't been exceeded
+### Perintah gagal
+- Pastikan external dependencies (yt-dlp, ffmpeg) sudah terinstall
+- Cek API keys di file .env
+- Pastikan rate limit belum terlampaui
 
-### Memory issues
-- Reduce MAX_PROCESSES in .env
-- Restart the bot periodically
-- Check for memory leaks in logs
+### Masalah memory
+- Kurangi MAX_PROCESSES di .env
+- Restart bot secara berkala
+- Cek logs untuk memory leaks
 
 ## 📊 Performance
 
-- **Response Time**: < 100ms for cached responses
-- **Concurrency**: Handles multiple users simultaneously
-- **Memory Usage**: ~150MB baseline, scales with usage
-- **Cache Hit Rate**: 60-80% for repeated queries
+- **Response Time**: < 100ms untuk cached responses
+- **Concurrency**: Handle multiple users secara bersamaan
+- **Memory Usage**: ~150MB baseline
+- **Cache Hit Rate**: 60-80% untuk query berulang
 
-## 🤝 Contributing
+## 🤝 Kontribusi
 
-Contributions are welcome! Please:
+Kontribusi sangat diterima! Silakan:
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+1. Fork repository
+2. Buat feature branch
+3. Lakukan perubahan
+4. Submit pull request
 
-## 📄 License
+## 📄 Lisensi
 
 ISC License
 
 ## 👨‍💻 Author
 
-Created by ${config.bot.owner || 'Ilham'}
+Created by Ilham
 
 ## 🙏 Acknowledgments
 
@@ -286,7 +282,7 @@ Created by ${config.bot.owner || 'Ilham'}
 
 ## ⚠️ Disclaimer
 
-This bot is for educational purposes only. Use responsibly and follow WhatsApp's Terms of Service. The developers are not responsible for misuse of this software.
+Bot ini hanya untuk tujuan edukasi. Gunakan dengan bijak dan patuhi Terms of Service WhatsApp. Developer tidak bertanggung jawab atas penyalahgunaan software ini.
 
 ---
 
