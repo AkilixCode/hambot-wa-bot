@@ -1,8 +1,331 @@
 # HamBot Update Report
 
 **Date:** February 1, 2025  
-**Version:** 2.4.1  
+**Version:** 2.5.0  
 **Author:** GitHub Copilot AI
+
+---
+
+## 📋 Ringkasan Perubahan (v2.5.0)
+
+Update ini menambahkan fitur keamanan dan perbaikan perintah:
+
+1. **Dual Owner ID Support** - Bot sekarang mendukung 2 owner ID (untuk chat privat dan grup)
+2. **Enhanced Block Command** - Perintah `.security block` yang lebih canggih dengan proteksi owner
+3. **Owner Protection** - Owner tidak dapat diblokir, dan blokir owner akan dibersihkan saat restart
+4. **Fixed Spam Command** - Perintah `.spam` diperbaiki dengan dukungan `-` dan perilaku human-like
+5. **Improved ID Handling** - Penanganan format `@s.whatsapp.net` dan `@lid` yang lebih baik
+
+---
+
+## 🔄 Perubahan Detail (v2.5.0)
+
+### 1. Dual Owner ID Support
+
+**Masalah:**
+WhatsApp menggunakan format ID yang berbeda untuk chat privat (`@s.whatsapp.net`) dan grup (`@lid`). Owner perlu bisa menggunakan bot dari kedua konteks.
+
+**Solusi:**
+Memperbarui `config.js` untuk mendukung multiple owner IDs:
+
+#### Update `_normalizeOwnerIds()` Method (Baru)
+
+```javascript
+_normalizeOwnerIds(ownerIdStr) {
+    if (!ownerIdStr) return [];
+    
+    return ownerIdStr
+        .split(',')
+        .map(id => this._normalizeSingleOwnerId(id.trim()))
+        .filter(id => id !== null);
+}
+```
+
+#### Update `isOwner()` Method
+
+```javascript
+isOwner(senderId) {
+    if (!senderId) return false;
+    
+    const ownerIds = this.bot.ownerIds;
+    if (!ownerIds || ownerIds.length === 0) return false;
+    
+    for (const ownerId of ownerIds) {
+        if (this._matchesOwnerId(senderId, ownerId)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+```
+
+**Cara Penggunaan:**
+```env
+# Satu ID (lama)
+BOT_OWNER_ID=6281234567890@s.whatsapp.net
+
+# Dual ID (baru - direkomendasikan)
+BOT_OWNER_ID=6281234567890@s.whatsapp.net,12345678901234@lid
+```
+
+### 2. Enhanced Security Block Command
+
+**Masalah:**
+Perintah `.security block` tidak mendukung berbagai format input dan tidak melindungi owner dari blokir.
+
+**Solusi:**
+Menambahkan `parseBlockTarget()` method dan proteksi owner:
+
+#### Update `commands/security.js`
+
+```javascript
+parseBlockTarget(input, msg) {
+    // Check for mentioned user
+    const mentionedJid = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+    if (mentionedJid && mentionedJid.length > 0) {
+        return { userId: mentionedJid[0], displayName: ... };
+    }
+    
+    // Handle phone number input
+    // Handle @lid and @s.whatsapp.net formats
+    // ...
+}
+```
+
+**Fitur Baru:**
+- Blokir via mention: `.security block @user 60`
+- Blokir via nomor: `.security block 081234567890 60`
+- Blokir via @lid: `.security block 12345@lid 60`
+- Proteksi owner: Owner tidak dapat diblokir
+
+### 3. Owner Protection System
+
+**Masalah:**
+Owner bisa secara tidak sengaja memblokir diri sendiri dan terkunci dari bot.
+
+**Solusi:**
+Menambahkan proteksi berlapis:
+
+#### 1. Proteksi saat Blocking (`utils/security.js`)
+
+```javascript
+blockUser(userId, durationMs, reason) {
+    // CRITICAL: Never allow blocking the owner
+    if (config.isOwner(userId)) {
+        return { success: false, reason: 'Tidak dapat memblokir owner bot' };
+    }
+    
+    // Also check normalized IDs
+    for (const normalizedId of normalizedIds) {
+        if (config.isOwner(normalizedId)) {
+            return { success: false, reason: 'Tidak dapat memblokir owner bot' };
+        }
+    }
+    // ...
+}
+```
+
+#### 2. Safety Fallback saat Startup (`index.js`)
+
+```javascript
+async function startBot() {
+    // Safety fallback: Clear any blocks on owner IDs on startup
+    const clearedBlocks = security.clearOwnerBlocks();
+    if (clearedBlocks > 0) {
+        logger.info(`Safety fallback: Cleared ${clearedBlocks} block(s) on owner IDs`);
+    }
+    // ...
+}
+```
+
+#### 3. Block Check Protection (`utils/security.js`)
+
+```javascript
+isUserBlocked(userId) {
+    // Never block owner
+    if (config.isOwner(userId)) {
+        return false;
+    }
+    // ...
+}
+```
+
+### 4. Fixed Spam Command with Human-like Behavior
+
+**Masalah:**
+Perintah `.spam` tidak berfungsi dengan baik dan tidak mendukung spam ke chat saat ini.
+
+**Solusi:**
+Menambahkan dukungan `-` dan perilaku human-like:
+
+#### Update `commands/spam.js`
+
+```javascript
+// Support for "-" target
+parseTarget(input, currentChatJid, msg) {
+    if (input === '-' || input.toLowerCase() === 'self') {
+        return { 
+            jid: currentChatJid, 
+            displayName: 'Chat Ini'
+        };
+    }
+    // ...
+}
+
+// Human-like behavior
+async humanBehaviorDelay(sock, targetJid, messageIndex, totalMessages) {
+    // Base delay 1.5-3.5 seconds
+    let baseDelay = this.randomDelay(1500, 3500);
+    
+    // 10% chance of longer "thinking" pause
+    if (Math.random() < 0.1) {
+        baseDelay += this.randomDelay(2000, 5000);
+    }
+    
+    // Typing indicator
+    await sock.sendPresenceUpdate('composing', targetJid);
+    await sleep(typingDuration);
+    await sock.sendPresenceUpdate('paused', targetJid);
+}
+```
+
+**Cara Penggunaan:**
+```
+.spam - 10 Hello!          # Spam ke chat ini
+.spam self 5 Test          # Spam ke chat ini
+.spam @mention 10 Hi       # Spam ke user
+.spam 081234567890 5 Test  # Spam ke nomor
+```
+
+**Fitur Human-like:**
+- Typing indicator aktif sebelum pesan
+- Delay variabel (1.5-5 detik)
+- Simulasi fatigue (semakin lama semakin lambat)
+- 10% chance "thinking pause" lebih lama
+- Retry logic saat error
+
+### 5. Improved ID Normalization
+
+**Perubahan pada `utils/security.js`:**
+
+```javascript
+_normalizeUserIdForBlocking(input) {
+    const results = [];
+    
+    // Handle existing suffix
+    if (cleanInput.includes('@')) {
+        results.push(cleanInput);
+    }
+    
+    // Handle Indonesian format (0xxx -> 62xxx)
+    if (cleanNumber.startsWith('0')) {
+        normalizedNumber = '62' + cleanNumber.substring(1);
+    }
+    
+    // Add @s.whatsapp.net format
+    results.push(`${normalizedNumber}@s.whatsapp.net`);
+    
+    return [...new Set(results)]; // Remove duplicates
+}
+```
+
+---
+
+## 📁 File yang Dimodifikasi (v2.5.0)
+
+| File | Tipe | Perubahan |
+|------|------|-----------|
+| `config.js` | Modified | Dual owner ID support, `_normalizeOwnerIds()`, `getOwnerIds()` |
+| `commands/security.js` | Modified | Enhanced block command dengan `parseBlockTarget()` |
+| `commands/spam.js` | Modified | Support `-` target, human-like behavior |
+| `utils/security.js` | Modified | Owner protection, improved ID normalization |
+| `index.js` | Modified | Safety fallback untuk clear owner blocks on startup |
+| `.env.example` | Modified | Dokumentasi dual owner ID |
+| `UPDATE-REPORT.md` | Modified | Dokumentasi v2.5.0 |
+
+---
+
+## ⚠️ Saran untuk Sesi AI Berikutnya (v2.5.0)
+
+### Hal yang Harus Diingat:
+
+1. **Format Dual Owner ID:**
+   ```env
+   # DIREKOMENDASIKAN: Gunakan kedua format
+   BOT_OWNER_ID=6281234567890@s.whatsapp.net,12345678901234@lid
+   
+   # ID untuk chat privat: @s.whatsapp.net
+   # ID untuk chat grup: @lid
+   ```
+
+2. **Owner Protection:**
+   - Owner TIDAK BISA diblokir oleh siapapun
+   - Blokir pada owner akan otomatis dibersihkan saat restart
+   - Selalu gunakan `config.isOwner(senderId)` untuk cek owner
+
+3. **Block Command Formats:**
+   ```
+   .security block @mention 60     # Via mention
+   .security block 081234567890 30 # Via nomor lokal
+   .security block 6281234567890 60 # Via nomor internasional
+   .security block user@lid 60     # Via @lid format
+   ```
+
+4. **Spam Command dengan `-`:**
+   ```
+   .spam - 10 Hello    # Spam ke chat ini (grup/privat)
+   .spam self 5 Test   # Alias untuk chat ini
+   .spam here 3 Hi     # Alias untuk chat ini
+   ```
+
+5. **Human-like Behavior di Spam:**
+   - Typing indicator akan muncul sebelum tiap pesan
+   - Delay 1.5-5 detik antara pesan
+   - 10% chance delay lebih lama (thinking pause)
+   - Kecepatan berkurang seiring waktu (fatigue)
+
+### Hal yang Harus Dihindari:
+
+1. **Jangan bypass owner protection** - Jangan pernah modifikasi `blockUser()` untuk mengizinkan blokir owner.
+
+2. **Jangan hardcode owner ID di command** - Selalu gunakan `config.isOwner()` atau `config.getOwnerIds()`.
+
+3. **Jangan hapus safety fallback** - `clearOwnerBlocks()` di `startBot()` adalah safety net penting.
+
+4. **Jangan hapus human-like behavior** - Ini mencegah deteksi spam oleh WhatsApp.
+
+5. **Jangan gunakan delay tetap di spam** - Selalu gunakan delay acak untuk mencegah deteksi.
+
+### Testing Rekomendasi:
+
+```bash
+# Test dual owner ID
+BOT_OWNER_ID=id1@s.whatsapp.net,id2@lid
+
+# Test dari chat privat
+.security status   # Harus berhasil
+
+# Test dari grup
+.security status   # Harus berhasil
+
+# Test block protection
+.security block <owner_number> 60   # Harus gagal
+
+# Test spam dengan -
+.spam - 3 Test   # Harus spam ke chat ini
+
+# Test spam dengan human-like
+# Perhatikan typing indicator muncul
+```
+
+### Peningkatan untuk Pertimbangan Masa Depan:
+
+1. **Block by @lid** - Kemungkinan perlu mapping antara @lid dan @s.whatsapp.net
+2. **Multi-level Admin** - Role admin selain owner
+3. **Persistent Block Storage** - Simpan block list ke file agar bertahan restart
+4. **Block Statistics** - Track berapa kali user mencoba bypass block
+5. **Spam Templates** - Pre-defined spam templates untuk kemudahan
 
 ---
 
