@@ -489,61 +489,33 @@ Menggantikan sistem classful untuk efisiensi penggunaan IP address.`;
         return `🌐 *TOPOLOGI JARINGAN LENGKAP*
 
 🔵 *BUS TOPOLOGY*
-\`\`\`
-[PC]--[PC]--[PC]--[PC]--[PC]
-        |
-    [Terminator]
-\`\`\`
+📐 Bentuk: Semua perangkat terhubung ke satu kabel utama (backbone)
 ✅ Kelebihan: Murah, sederhana
 ❌ Kekurangan: Satu rusak = semua down
 📌 Media: Coaxial cable
 
 ⭐ *STAR TOPOLOGY*
-\`\`\`
-      [PC]
-       |
-[PC]--[SW]--[PC]
-       |
-      [PC]
-\`\`\`
+📐 Bentuk: Semua perangkat terhubung ke switch/hub pusat
 ✅ Kelebihan: Mudah troubleshoot, scalable
 ❌ Kekurangan: Tergantung switch/hub
 📌 Media: UTP, Fiber
 📌 Paling umum digunakan!
 
 🔄 *RING TOPOLOGY*
-\`\`\`
-  [PC]---[PC]
-   |       |
-  [PC]---[PC]
-\`\`\`
+📐 Bentuk: Perangkat membentuk lingkaran tertutup
 ✅ Kelebihan: Equal access, token passing
 ❌ Kekurangan: Satu rusak = ring putus
 📌 Contoh: Token Ring, FDDI
 
 🕸️ *MESH TOPOLOGY*
-\`\`\`
-[PC]==[PC]==[PC]
- | \\  / |  / |
- |  \\/  | /  |
- |  /\\  |/   |
-[PC]==[PC]==[PC]
-\`\`\`
+📐 Bentuk: Setiap perangkat terhubung ke semua perangkat lain
 ✅ Kelebihan: Redundant, reliable
 ❌ Kekurangan: Mahal, kompleks
 📌 Jenis: Full Mesh, Partial Mesh
 📌 Digunakan: WAN, ISP backbone
 
 🌲 *TREE/HIERARCHICAL TOPOLOGY*
-\`\`\`
-        [Core]
-        /    \\
-   [Dist]    [Dist]
-    / \\       / \\
- [Acc][Acc][Acc][Acc]
-  |    |    |    |
- [PC] [PC] [PC] [PC]
-\`\`\`
+📐 Bentuk: Struktur bertingkat (Core → Distribution → Access)
 ✅ Kelebihan: Scalable, hierarki jelas
 ❌ Kekurangan: Backbone rusak = fatal
 📌 3 Layer: Core, Distribution, Access
@@ -628,10 +600,7 @@ Kombinasi dari beberapa topologi untuk fleksibilitas dan skalabilitas.
         return `🔢 *KONVERSI BINER & HEKSADESIMAL*
 
 📊 *Tabel Nilai Bit (8-bit)*
-\`\`\`
-Posisi: 7    6    5    4    3    2    1    0
-Nilai: 128   64   32   16   8    4    2    1
-\`\`\`
+Posisi 7→0: 128, 64, 32, 16, 8, 4, 2, 1
 
 📝 *Konversi Desimal ke Biner:*
 • 192 = 128+64 = 11000000
@@ -857,21 +826,20 @@ VLAN membagi switch fisik menjadi beberapa network logis. Device di VLAN berbeda
    - Lebih cepat
 
 📝 *Contoh Konfigurasi:*
-\`\`\`
-! Create VLAN
+
+_Create VLAN:_
 vlan 10
- name SALES
+  name SALES
 
-! Access port
+_Access port:_
 interface Fa0/1
- switchport mode access
- switchport access vlan 10
+  switchport mode access
+  switchport access vlan 10
 
-! Trunk port
+_Trunk port:_
 interface Gi0/1
- switchport mode trunk
- switchport trunk allowed vlan 10,20,30
-\`\`\`
+  switchport mode trunk
+  switchport trunk allowed vlan 10,20,30
 
 🏷️ *VTP (VLAN Trunking Protocol):*
 • Server: Buat, ubah, hapus VLAN
@@ -927,19 +895,18 @@ Rules untuk filter traffic
 • End → Implicit deny all
 
 📌 *Contoh ACL:*
-\`\`\`
-! Block specific host
+
+_Block specific host:_
 access-list 1 deny 192.168.1.100
 access-list 1 permit any
 
-! Block web traffic
+_Block web traffic:_
 access-list 100 deny tcp any any eq 80
 access-list 100 permit ip any any
 
-! Apply to interface
+_Apply to interface:_
 interface Gi0/0
- ip access-group 100 in
-\`\`\`
+  ip access-group 100 in
 
 🔒 *Firewall Zones:*
 • Inside: Trusted network
@@ -968,29 +935,25 @@ NAT menerjemahkan IP private ke IP public agar bisa akses internet.
 *1. Static NAT:*
 • 1 IP private = 1 IP public
 • Untuk server yang perlu diakses dari luar
-\`\`\`
-Inside: 192.168.1.10
-        ↕
-Outside: 203.0.113.10
-\`\`\`
+
+_Contoh:_
+Inside: 192.168.1.10 ↔ Outside: 203.0.113.10
 
 *2. Dynamic NAT:*
 • Pool IP public
 • First-come first-serve
-\`\`\`
-Inside: 192.168.1.x
-        ↕
-Pool: 203.0.113.10-20
-\`\`\`
+
+_Contoh:_
+Inside: 192.168.1.x ↔ Pool: 203.0.113.10-20
 
 *3. PAT (Port Address Translation):*
 • Many private = 1 public
 • Dibedakan by port
 • Juga disebut NAT Overload
-\`\`\`
+
+_Contoh:_
 192.168.1.10:1234 → 203.0.113.1:40001
 192.168.1.20:5678 → 203.0.113.1:40002
-\`\`\`
 
 📌 *NAT Terminology:*
 • Inside Local: IP private internal
@@ -1001,15 +964,11 @@ Pool: 203.0.113.10-20
 📊 *Port Forwarding:*
 Redirect traffic dari port tertentu ke server internal
 
-\`\`\`
-Outside:203.0.113.1:80
-          ↓
-Inside:192.168.1.10:80 (Web server)
+_Web server:_
+Outside:203.0.113.1:80 → Inside:192.168.1.10:80
 
-Outside:203.0.113.1:22
-          ↓
-Inside:192.168.1.20:22 (SSH server)
-\`\`\`
+_SSH server:_
+Outside:203.0.113.1:22 → Inside:192.168.1.20:22
 
 📌 *NAT Traversal:*
 Masalah: Beberapa protokol sulit dengan NAT
@@ -1035,17 +994,18 @@ DHCP memberikan IP address dan network config secara otomatis ke client.
 • NTP Server (optional)
 
 📊 *DHCP Process (DORA):*
-\`\`\`
-Client         DHCP Server
-   |                |
-   |--- DISCOVER →  | (Broadcast: Siapa DHCP?)
-   |                |
-   |← OFFER --------|  (Unicast: Ini IP untukmu)
-   |                |
-   |--- REQUEST →   | (Broadcast: Aku mau IP itu)
-   |                |
-   |← ACK ---------|  (Unicast: OK, pakai)
-\`\`\`
+
+1️⃣ *DISCOVER* (Client → Broadcast)
+   "Siapa DHCP di network ini?"
+
+2️⃣ *OFFER* (Server → Client)
+   "Ini IP untukmu: 192.168.1.x"
+
+3️⃣ *REQUEST* (Client → Broadcast)
+   "Aku mau IP itu!"
+
+4️⃣ *ACK* (Server → Client)
+   "OK, pakai IP tersebut"
 
 ⏱️ *Lease Time:*
 • Waktu pemakaian IP
@@ -1056,19 +1016,19 @@ Client         DHCP Server
 
 📊 *DHCP Pool:*
 Range IP yang bisa diberikan
-\`\`\`
+
+_Contoh:_
 Pool: 192.168.1.100 - 192.168.1.200
 Gateway: 192.168.1.1
 DNS: 8.8.8.8
 Lease: 7 days
-\`\`\`
 
 📌 *DHCP Reservation:*
 IP tetap berdasarkan MAC address
-\`\`\`
+
+_Contoh:_
 MAC: AA:BB:CC:DD:EE:FF
 Reserved IP: 192.168.1.50
-\`\`\`
 
 🔧 *DHCP Relay Agent:*
 Forward DHCP ke server di network lain
@@ -1179,66 +1139,54 @@ VPN membuat koneksi aman (tunnel) melalui network public seperti internet.
 • Cek kabel tersambung?
 • LED link menyala?
 • Kabel rusak/patah?
-\`\`\`
-Perintah:
-- show interface (Cisco)
-- ip link (Linux)
-- Device Manager (Windows)
-\`\`\`
+
+_Perintah:_
+• show interface (Cisco)
+• ip link (Linux)
+• Device Manager (Windows)
 
 🔍 *Layer 2 - Data Link:*
 • MAC address terdaftar?
 • Port status up?
 • VLAN benar?
-\`\`\`
-Perintah:
-- show mac address-table
-- arp -a
-- show vlan brief
-\`\`\`
+
+_Perintah:_
+• show mac address-table
+• arp -a
+• show vlan brief
 
 🔍 *Layer 3 - Network:*
 • IP address benar?
 • Subnet mask benar?
 • Gateway reachable?
 • Routing benar?
-\`\`\`
-Perintah:
-- ping gateway
-- tracert/traceroute
-- show ip route
-- ipconfig /all
-\`\`\`
+
+_Perintah:_
+• ping gateway
+• tracert/traceroute
+• show ip route
+• ipconfig /all
 
 🔍 *Layer 4-7 - Transport/App:*
 • Port terbuka?
 • Firewall blocking?
 • Service running?
 • DNS working?
-\`\`\`
-Perintah:
-- netstat -an
-- telnet host port
-- nslookup domain
-- curl http://host
-\`\`\`
+
+_Perintah:_
+• netstat -an
+• telnet host port
+• nslookup domain
+• curl http://host
 
 📊 *Flowchart Troubleshooting:*
-\`\`\`
-Tidak bisa internet?
-        ↓
-Ping gateway → Fail?
-        ↓        ↓
-      Check    Ping IP public
-      IP/cable    ↓
-                 Fail?
-                  ↓
-              Check
-              gateway
-                  ↓
-              OK? → DNS issue
-                    nslookup
-\`\`\`
+
+1️⃣ Tidak bisa internet?
+   ↓ Ping gateway
+2️⃣ Fail? → Check IP/cable
+   ↓ OK? → Ping IP public
+3️⃣ Fail? → Check gateway
+   ↓ OK? → DNS issue, gunakan nslookup
 
 ⚠️ *Common Issues:*
 • IP conflict → Release/renew
