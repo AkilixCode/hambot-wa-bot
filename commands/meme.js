@@ -23,12 +23,6 @@ class MemeCommand extends CommandBase {
             'indowibu',         // Indonesian weebs/memes
             'indonesian_memes'  // Indonesian memes specific
         ];
-
-        // Flair/tags to look for (funny, meme, shitpost related)
-        this.allowedFlairs = [
-            'meme', 'funny', 'shitpost', 'humor', 'lucu',
-            'question/discussion', 'news', 'casual discussion'
-        ];
     }
 
     async execute(sock, msg, args, context) {
@@ -124,22 +118,35 @@ class MemeCommand extends CommandBase {
 
     isImageUrl(url) {
         if (!url) return false;
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-        const lowerUrl = url.toLowerCase();
         
-        // Check for image extensions
-        if (imageExtensions.some(ext => lowerUrl.includes(ext))) {
-            return true;
+        try {
+            const parsedUrl = new URL(url);
+            const hostname = parsedUrl.hostname.toLowerCase();
+            const pathname = parsedUrl.pathname.toLowerCase();
+            
+            // Check for image extensions in pathname
+            const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+            if (imageExtensions.some(ext => pathname.endsWith(ext))) {
+                return true;
+            }
+            
+            // Check for trusted Reddit/Imgur image hosts (exact hostname match)
+            const trustedImageHosts = [
+                'i.redd.it',
+                'i.imgur.com',
+                'preview.redd.it',
+                'external-preview.redd.it'
+            ];
+            
+            if (trustedImageHosts.includes(hostname)) {
+                return true;
+            }
+            
+            return false;
+        } catch {
+            // Invalid URL
+            return false;
         }
-        
-        // Check for Reddit/Imgur image hosts
-        if (lowerUrl.includes('i.redd.it') || 
-            lowerUrl.includes('i.imgur.com') ||
-            lowerUrl.includes('preview.redd.it')) {
-            return true;
-        }
-        
-        return false;
     }
 
     async sendFallbackMeme(sock, from, msg) {

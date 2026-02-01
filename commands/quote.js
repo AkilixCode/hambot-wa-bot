@@ -1,7 +1,7 @@
 /**
  * Quote Command
  * Dapatkan kutipan inspirasional acak dalam Bahasa Indonesia
- * Berisi 1000+ kutipan dari berbagai tokoh terkenal
+ * Berisi 300+ kutipan dari berbagai tokoh terkenal
  */
 
 const CommandBase = require('./base');

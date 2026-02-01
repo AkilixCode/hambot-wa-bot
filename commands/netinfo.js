@@ -58,7 +58,7 @@ class NetInfoCommand extends CommandBase {
         const topicHandler = this.topics[topic];
 
         if (!topicHandler) {
-            const availableTopics = Object.keys(this.topics).filter((t, i, arr) => arr.indexOf(t) === i);
+            const availableTopics = Object.keys(this.topics);
             return await this.reply(sock, from, msg, 
                 `❌ Topik "${topic}" tidak ditemukan.\n\n` +
                 `📖 *Topik tersedia:*\n` +

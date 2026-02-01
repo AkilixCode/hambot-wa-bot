@@ -181,7 +181,7 @@ class MenuCommand extends CommandBase {
                 usage: ['.quote'],
                 examples: ['.quote'],
                 notes: [
-                    '• 1000+ kutipan inspirasional',
+                    '• 300+ kutipan inspirasional',
                     '• Dari berbagai tokoh terkenal dunia dan Indonesia',
                     '• Semua dalam Bahasa Indonesia'
                 ]
