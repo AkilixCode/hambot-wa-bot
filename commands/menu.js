@@ -156,25 +156,6 @@ class MenuCommand extends CommandBase {
             },
 
             // === FUN COMMANDS ===
-            ai: {
-                title: '🤖 AI Chat (Gemini)',
-                description: 'Tanya AI apapun menggunakan Google Gemini.',
-                usage: [
-                    '.ai <pertanyaan>'
-                ],
-                examples: [
-                    '.ai Apa itu machine learning?',
-                    '.ai Buatkan puisi tentang hujan',
-                    '.ai Jelaskan teori relativitas',
-                    '.ai Cara membuat nasi goreng'
-                ],
-                notes: [
-                    '• Menggunakan Google Gemini AI',
-                    '• Bisa menjawab berbagai pertanyaan',
-                    '• Mendukung bahasa Indonesia dan Inggris'
-                ]
-            },
-
             translate: {
                 title: '🌐 Translator',
                 description: 'Terjemahkan teks ke bahasa lain.',
@@ -195,35 +176,39 @@ class MenuCommand extends CommandBase {
             },
 
             quote: {
-                title: '💭 Random Quote',
-                description: 'Dapatkan kutipan inspiratif acak.',
+                title: '💭 Kutipan Inspirasional',
+                description: 'Dapatkan kutipan inspiratif acak dalam Bahasa Indonesia.',
                 usage: ['.quote'],
                 examples: ['.quote'],
-                notes: ['• Kutipan dari berbagai tokoh terkenal']
-            },
-
-            joke: {
-                title: '😄 Random Joke',
-                description: 'Dapatkan lelucon acak.',
-                usage: ['.joke'],
-                examples: ['.joke'],
-                notes: ['• Lelucon dalam bahasa Inggris']
+                notes: [
+                    '• 1000+ kutipan inspirasional',
+                    '• Dari berbagai tokoh terkenal dunia dan Indonesia',
+                    '• Semua dalam Bahasa Indonesia'
+                ]
             },
 
             fact: {
-                title: '📚 Random Fact',
-                description: 'Dapatkan fakta menarik acak.',
+                title: '📚 Fakta Menarik',
+                description: 'Dapatkan fakta menarik acak dalam Bahasa Indonesia.',
                 usage: ['.fact'],
                 examples: ['.fact'],
-                notes: ['• Fakta unik dan menarik']
+                notes: [
+                    '• 100+ fakta unik dan menarik',
+                    '• Termasuk fakta tentang Indonesia',
+                    '• Semua dalam Bahasa Indonesia'
+                ]
             },
 
             meme: {
-                title: '😂 Random Meme',
-                description: 'Dapatkan meme acak dari Reddit.',
+                title: '😂 Meme Indonesia',
+                description: 'Dapatkan meme Indonesia dari Reddit r/indonesia.',
                 usage: ['.meme'],
                 examples: ['.meme'],
-                notes: ['• Meme dari subreddit populer']
+                notes: [
+                    '• Meme dari subreddit Indonesia',
+                    '• Konten lokal yang relatable',
+                    '• Family-friendly content'
+                ]
             },
 
             rps: {
@@ -524,15 +509,23 @@ class MenuCommand extends CommandBase {
             },
 
             netinfo: {
-                title: '📚 Network Cheatsheet',
-                description: 'Cheat sheet dan referensi networking.',
-                usage: ['.netinfo <topik>'],
+                title: '📚 Referensi Jaringan Komputer',
+                description: 'Cheat sheet dan referensi networking lengkap dalam Bahasa Indonesia.',
+                usage: ['.netinfo', '.netinfo <topik>'],
                 examples: [
-                    '.netinfo cidr',
+                    '.netinfo',
                     '.netinfo osi',
-                    '.netinfo tcp'
+                    '.netinfo subnetting',
+                    '.netinfo protokol',
+                    '.netinfo troubleshoot'
                 ],
-                notes: ['• Referensi cepat networking']
+                notes: [
+                    '• 20+ topik networking lengkap',
+                    '• OSI, TCP/IP, Subnetting, VLAN, Routing',
+                    '• Firewall, NAT, DHCP, VPN, IPv6',
+                    '• Troubleshooting guide',
+                    '• Semua dalam Bahasa Indonesia'
+                ]
             }
         };
     }
@@ -779,11 +772,9 @@ class MenuCommand extends CommandBase {
             'Search and download music from YouTube': 'Cari dan download musik dari YouTube',
             'Convert image to sticker': 'Ubah gambar menjadi stiker',
             'Convert sticker to image': 'Ubah stiker menjadi gambar',
-            'Ask AI any question using Gemini': 'Tanya AI apapun pakai Gemini',
             'Get a random inspirational quote': 'Dapatkan kutipan inspiratif acak',
-            'Get a random joke': 'Dapatkan lelucon acak',
             'Get a random fact': 'Dapatkan fakta menarik acak',
-            'Get a random meme': 'Dapatkan meme acak',
+            'Get a random meme': 'Dapatkan meme Indonesia acak',
             'Play Rock Paper Scissors': 'Main Batu Gunting Kertas',
             'Roll dice': 'Lempar dadu',
             'Flip a coin': 'Lempar koin',
@@ -807,7 +798,12 @@ class MenuCommand extends CommandBase {
             'Dapatkan informasi alamat IP': 'Dapatkan info alamat IP',
             'Lookup DNS untuk domain': 'Lookup DNS untuk domain',
             'Referensi port jaringan umum': 'Referensi port jaringan',
-            'Cheat sheet dan referensi networking': 'Cheat sheet networking'
+            'Cheat sheet dan referensi networking': 'Cheat sheet networking',
+            'Cheat sheet dan referensi networking lengkap': 'Referensi jaringan lengkap',
+            // Updated descriptions
+            'Dapatkan kutipan inspirasional acak': 'Kutipan inspirasional dalam Bahasa Indonesia',
+            'Dapatkan fakta menarik acak': 'Fakta menarik dalam Bahasa Indonesia',
+            'Dapatkan meme Indonesia acak': 'Meme Indonesia dari Reddit'
         };
         
         return translations[desc] || desc;
