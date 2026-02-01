@@ -1,6 +1,7 @@
 /**
  * Brat Sticker Command
- * Creates minimalist "Brat" style stickers with bold black text on white background
+ * Creates "Brat" style stickers (Charli XCX album cover aesthetic)
+ * White bold text on pure black background with lo-fi blur effect
  * 
  * Features:
  * - .brat <text> - Static sticker with bold text
@@ -19,19 +20,19 @@ class BratCommand extends CommandBase {
         super({
             name: 'brat',
             aliases: ['bratvid'],
-            description: 'Buat stiker gaya Brat (teks tebal hitam di latar putih)',
+            description: 'Buat stiker gaya Brat (teks putih tebal di latar hitam)',
             usage: '.brat <teks> atau .bratvid <teks>',
             category: 'tools',
             cooldown: 3000,
             isHeavy: true
         });
 
-        // Canvas settings
+        // Canvas settings - Brat aesthetic (Charli XCX album cover trend)
         this.canvasSize = 512;
-        this.backgroundColor = '#FFFFFF';
-        this.textColor = '#000000';
+        this.backgroundColor = '#000000'; // Pure black background
+        this.textColor = '#FFFFFF'; // Pure white text
         this.padding = 30;
-        this.lineSpacing = 1.1;
+        this.lineSpacing = 0.95; // Tight leading (95% of font size)
 
         // Animation settings
         this.animationFramerate = 10;
@@ -107,13 +108,15 @@ class BratCommand extends CommandBase {
         const canvas = this.createBratCanvas(text);
         const pngBuffer = canvas.toBuffer('image/png');
 
-        // Convert to WebP sticker using sharp
+        // Apply lo-fi effect with subtle blur and convert to WebP sticker
+        // Lower quality setting creates subtle compression artifacts for the anti-design aesthetic
         const stickerBuffer = await sharp(pngBuffer)
             .resize(512, 512, {
                 fit: 'contain',
-                background: { r: 255, g: 255, b: 255, alpha: 1 }
+                background: { r: 0, g: 0, b: 0, alpha: 1 } // Black background
             })
-            .webp({ quality: 90 })
+            .blur(0.5) // Subtle Gaussian blur for lo-fi aesthetic
+            .webp({ quality: 70 }) // Lower quality for subtle compression artifacts
             .toBuffer();
 
         // Send sticker
@@ -170,7 +173,7 @@ class BratCommand extends CommandBase {
         const canvas = createCanvas(this.canvasSize, this.canvasSize);
         const ctx = canvas.getContext('2d');
 
-        // Fill background (white)
+        // Fill background (pure black)
         ctx.fillStyle = this.backgroundColor;
         ctx.fillRect(0, 0, this.canvasSize, this.canvasSize);
 
