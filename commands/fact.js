@@ -1,6 +1,6 @@
 /**
  * Random Fact Command
- * Get interesting random facts
+ * Dapatkan fakta menarik acak
  */
 
 const CommandBase = require('./base');
@@ -10,8 +10,8 @@ class FactCommand extends CommandBase {
     constructor() {
         super({
             name: 'fact',
-            aliases: ['randomfact', 'funfact'],
-            description: 'Get a random interesting fact',
+            aliases: ['randomfact', 'funfact', 'fakta'],
+            description: 'Dapatkan fakta menarik acak',
             usage: '.fact',
             category: 'fun',
             cooldown: 3000
@@ -33,31 +33,31 @@ class FactCommand extends CommandBase {
             const fact = data.text;
 
             const response = 
-`💡 *Random Fact*
+`💡 *Fakta Menarik*
 
 ${fact}
 
-🎲 _Want another? Type .fact_`;
+🎲 _Mau lagi? Ketik .fact_`;
 
             await this.reply(sock, from, msg, response);
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            // Fallback to local facts
+            // Fallback ke fakta lokal
             const localFacts = [
-                'Honey never spoils. Archaeologists have found 3000-year-old honey that is still edible.',
-                'A day on Venus is longer than its year.',
-                'Octopuses have three hearts.',
-                'Bananas are berries, but strawberries are not.',
-                'The world\'s oldest known living tree is over 5,000 years old.',
-                'Sharks have been around longer than trees.',
-                'The tongue is the strongest muscle in the human body relative to its size.',
-                'A bolt of lightning is five times hotter than the surface of the sun.'
+                'Madu tidak pernah basi. Arkeolog menemukan madu berumur 3000 tahun yang masih bisa dimakan.',
+                'Satu hari di Venus lebih panjang dari satu tahunnya.',
+                'Gurita memiliki tiga jantung.',
+                'Pisang adalah buah beri, tapi stroberi bukan.',
+                'Pohon tertua di dunia berumur lebih dari 5.000 tahun.',
+                'Hiu sudah ada lebih lama dari pohon.',
+                'Lidah adalah otot terkuat di tubuh manusia relatif terhadap ukurannya.',
+                'Sambaran petir lima kali lebih panas dari permukaan matahari.'
             ];
             
             const randomFact = localFacts[Math.floor(Math.random() * localFacts.length)];
-            await this.reply(sock, from, msg, `💡 *Random Fact*\n\n${randomFact}`);
+            await this.reply(sock, from, msg, `💡 *Fakta Menarik*\n\n${randomFact}`);
         }
     }
 }

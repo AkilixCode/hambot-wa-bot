@@ -1,7 +1,9 @@
 /**
  * In-Memory Cache System
- * Lightweight caching with automatic expiration and memory management
+ * Sistem cache ringan dengan kedaluwarsa otomatis dan manajemen memori
  */
+
+const logger = require('./logger');
 
 class Cache {
     constructor() {
@@ -14,17 +16,28 @@ class Cache {
             deletes: 0
         };
         
-        // Auto cleanup every 5 minutes
-        this.cleanupInterval = setInterval(() => this.cleanup(), 300000);
+        // Interval cleanup lebih panjang untuk efisiensi memori (5 menit)
+        // Validasi untuk memastikan interval positif
+        const envInterval = parseInt(process.env.CACHE_CLEANUP_INTERVAL);
+        const cleanupInterval = (envInterval && envInterval > 0) ? envInterval : 300000;
+        this.cleanupInterval = setInterval(() => this.cleanup(), cleanupInterval);
+        
+        // Batas maksimal entri untuk mencegah kebocoran memori
+        this.maxEntries = 1000;
     }
 
     /**
-     * Store a value with optional TTL
-     * @param {string} key - Cache key
-     * @param {*} value - Value to cache
-     * @param {number} ttl - Time to live in milliseconds
+     * Simpan nilai dengan TTL opsional
+     * @param {string} key - Kunci cache
+     * @param {*} value - Nilai untuk di-cache
+     * @param {number} ttl - Time to live dalam milidetik
      */
     set(key, value, ttl = 300000) {
+        // Cegah cache tumbuh terlalu besar
+        if (this.store.size >= this.maxEntries) {
+            this._evictOldest();
+        }
+        
         this.store.set(key, value);
         this.stats.sets++;
         
@@ -37,9 +50,23 @@ class Cache {
     }
 
     /**
-     * Retrieve a cached value
-     * @param {string} key - Cache key
-     * @returns {*} Cached value or undefined
+     * Evict entri terlama saat cache penuh
+     * @private
+     */
+    _evictOldest() {
+        // Hapus 10% entri terlama
+        const toDelete = Math.ceil(this.maxEntries * 0.1);
+        const keys = Array.from(this.store.keys()).slice(0, toDelete);
+        for (const key of keys) {
+            this.delete(key);
+        }
+        logger.debug(`Cache evicted ${toDelete} entri terlama`);
+    }
+
+    /**
+     * Ambil nilai yang di-cache
+     * @param {string} key - Kunci cache
+     * @returns {*} Nilai yang di-cache atau undefined
      */
     get(key) {
         if (!this.store.has(key)) {
@@ -47,7 +74,7 @@ class Cache {
             return undefined;
         }
 
-        // Check expiration
+        // Cek kedaluwarsa
         if (this.expirations.has(key)) {
             const expiration = this.expirations.get(key);
             if (Date.now() > expiration) {
@@ -62,8 +89,8 @@ class Cache {
     }
 
     /**
-     * Check if key exists and is not expired
-     * @param {string} key - Cache key
+     * Cek apakah kunci ada dan belum kedaluwarsa
+     * @param {string} key - Kunci cache
      * @returns {boolean}
      */
     has(key) {
@@ -81,8 +108,8 @@ class Cache {
     }
 
     /**
-     * Delete a cached value
-     * @param {string} key - Cache key
+     * Hapus nilai yang di-cache
+     * @param {string} key - Kunci cache
      * @returns {boolean}
      */
     delete(key) {
@@ -92,7 +119,7 @@ class Cache {
     }
 
     /**
-     * Clear all cached values
+     * Bersihkan semua nilai yang di-cache
      */
     clear() {
         this.store.clear();
@@ -100,7 +127,7 @@ class Cache {
     }
 
     /**
-     * Remove expired entries
+     * Hapus entri yang kedaluwarsa
      */
     cleanup() {
         const now = Date.now();
@@ -114,15 +141,15 @@ class Cache {
         }
 
         if (cleaned > 0) {
-            console.log(`[CACHE] Cleaned ${cleaned} expired entries`);
+            logger.debug(`Cache: Membersihkan ${cleaned} entri kedaluwarsa`);
         }
 
         return cleaned;
     }
 
     /**
-     * Get cache statistics
-     * @returns {object} Cache stats
+     * Dapatkan statistik cache
+     * @returns {object} Stats cache
      */
     getStats() {
         const hitRate = this.stats.hits + this.stats.misses > 0 
@@ -137,20 +164,20 @@ class Cache {
     }
 
     /**
-     * Get memory usage estimate
-     * @returns {number} Approximate memory in bytes
+     * Dapatkan estimasi penggunaan memori
+     * @returns {number} Perkiraan memori dalam bytes
      */
     getMemoryUsage() {
         let size = 0;
         for (const [key, value] of this.store.entries()) {
-            size += key.length * 2; // Approximate string size
+            size += key.length * 2; // Perkiraan ukuran string
             size += JSON.stringify(value).length * 2;
         }
         return size;
     }
 
     /**
-     * Destroy cache and cleanup
+     * Hancurkan cache dan bersihkan
      */
     destroy() {
         clearInterval(this.cleanupInterval);

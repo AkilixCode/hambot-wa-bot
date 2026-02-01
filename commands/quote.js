@@ -1,6 +1,6 @@
 /**
  * Quote Command
- * Get random inspirational quotes
+ * Dapatkan kutipan inspirasional acak
  */
 
 const CommandBase = require('./base');
@@ -10,8 +10,8 @@ class QuoteCommand extends CommandBase {
     constructor() {
         super({
             name: 'quote',
-            aliases: ['quotes', 'inspire'],
-            description: 'Get a random inspirational quote',
+            aliases: ['quotes', 'inspire', 'kutipan'],
+            description: 'Dapatkan kutipan inspirasional acak',
             usage: '.quote',
             category: 'fun',
             cooldown: 3000
@@ -34,7 +34,7 @@ class QuoteCommand extends CommandBase {
             const author = data.author;
 
             const response = 
-`💭 *Inspirational Quote*
+`💭 *Kutipan Inspirasional*
 
 "${quote}"
 
@@ -46,17 +46,17 @@ class QuoteCommand extends CommandBase {
         } catch (error) {
             this.logError(error, context);
             
-            // Fallback quotes
+            // Kutipan cadangan
             const fallbackQuotes = [
-                { quote: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
-                { quote: "Life is what happens when you're busy making other plans.", author: "John Lennon" },
-                { quote: "The future belongs to those who believe in the beauty of their dreams.", author: "Eleanor Roosevelt" },
-                { quote: "It is during our darkest moments that we must focus to see the light.", author: "Aristotle" },
-                { quote: "The only impossible journey is the one you never begin.", author: "Tony Robbins" }
+                { quote: "Satu-satunya cara untuk melakukan pekerjaan hebat adalah mencintai apa yang kamu lakukan.", author: "Steve Jobs" },
+                { quote: "Hidup adalah apa yang terjadi saat kamu sibuk membuat rencana lain.", author: "John Lennon" },
+                { quote: "Masa depan milik mereka yang percaya pada keindahan mimpi mereka.", author: "Eleanor Roosevelt" },
+                { quote: "Di saat-saat tergelap, kita harus fokus untuk melihat cahaya.", author: "Aristoteles" },
+                { quote: "Perjalanan yang mustahil adalah perjalanan yang tidak pernah dimulai.", author: "Tony Robbins" }
             ];
             
             const random = fallbackQuotes[Math.floor(Math.random() * fallbackQuotes.length)];
-            await this.reply(sock, from, msg, `💭 *Quote*\n\n"${random.quote}"\n\n— _${random.author}_`);
+            await this.reply(sock, from, msg, `💭 *Kutipan*\n\n"${random.quote}"\n\n— _${random.author}_`);
         }
     }
 }

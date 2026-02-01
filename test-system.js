@@ -85,7 +85,8 @@ try {
     
     const formatted = logger.formatCommand('test', '1234567890@s.whatsapp.net', '1234567890@g.us', true);
     assert(formatted.command === 'test', 'Logger: Format command');
-    assert(formatted.chat === 'group', 'Logger: Group detection');
+    assert(formatted.chat === 'grup', 'Logger: Group detection (Indonesian)');
+    assert(formatted.sender === '1234567890@s.whatsapp.net', 'Logger: Full sender ID');
 } catch (error) {
     assert(false, 'Logger: System failed');
 }

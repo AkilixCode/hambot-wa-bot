@@ -1,7 +1,9 @@
 /**
  * Advanced Rate Limiter
- * Per-user rate limiting with sliding window algorithm
+ * Rate limiting per pengguna dengan algoritma sliding window
  */
+
+const logger = require('./logger');
 
 class RateLimiter {
     constructor(windowMs = 60000, maxRequests = 10) {
@@ -9,25 +11,35 @@ class RateLimiter {
         this.maxRequests = maxRequests;
         this.requests = new Map();
         
-        // Auto cleanup old entries every minute
-        this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+        // Interval cleanup lebih panjang untuk efisiensi (2 menit)
+        // Validasi untuk memastikan interval positif
+        const envInterval = parseInt(process.env.RATE_LIMITER_CLEANUP_INTERVAL);
+        const cleanupInterval = (envInterval && envInterval > 0) ? envInterval : 120000;
+        this.cleanupInterval = setInterval(() => this.cleanup(), cleanupInterval);
+        
+        // Batas maksimal pengguna yang dilacak untuk mencegah kebocoran memori
+        this.maxTrackedUsers = 5000;
     }
 
     /**
-     * Check if user is rate limited
-     * @param {string} userId - User identifier
+     * Cek apakah pengguna terkena rate limit
+     * @param {string} userId - Identifikasi pengguna
      * @returns {object} { allowed: boolean, remaining: number, resetTime: number }
      */
     check(userId) {
         const now = Date.now();
         
         if (!this.requests.has(userId)) {
+            // Cegah tracking terlalu banyak pengguna
+            if (this.requests.size >= this.maxTrackedUsers) {
+                this._evictInactive();
+            }
             this.requests.set(userId, []);
         }
 
         const userRequests = this.requests.get(userId);
         
-        // Remove old requests outside the window
+        // Hapus request lama di luar jendela
         const validRequests = userRequests.filter(timestamp => now - timestamp < this.windowMs);
         this.requests.set(userId, validRequests);
 
@@ -43,7 +55,7 @@ class RateLimiter {
             };
         }
 
-        // Add current request
+        // Tambahkan request saat ini
         validRequests.push(now);
         this.requests.set(userId, validRequests);
 
@@ -56,15 +68,37 @@ class RateLimiter {
     }
 
     /**
-     * Reset rate limit for a user
-     * @param {string} userId - User identifier
+     * Evict pengguna tidak aktif saat tracking penuh
+     * @private
+     */
+    _evictInactive() {
+        const now = Date.now();
+        let evicted = 0;
+        
+        for (const [userId, timestamps] of this.requests.entries()) {
+            // Hapus pengguna tanpa request terbaru
+            const recent = timestamps.filter(ts => now - ts < this.windowMs);
+            if (recent.length === 0) {
+                this.requests.delete(userId);
+                evicted++;
+            }
+            // Berhenti setelah membebaskan cukup ruang
+            if (evicted >= Math.ceil(this.maxTrackedUsers * 0.1)) break;
+        }
+        
+        logger.debug(`Rate limiter: Evicted ${evicted} pengguna tidak aktif`);
+    }
+
+    /**
+     * Reset rate limit untuk pengguna
+     * @param {string} userId - Identifikasi pengguna
      */
     reset(userId) {
         this.requests.delete(userId);
     }
 
     /**
-     * Clean up old entries
+     * Bersihkan entri lama
      */
     cleanup() {
         const now = Date.now();
@@ -82,14 +116,14 @@ class RateLimiter {
         }
 
         if (cleaned > 0) {
-            console.log(`[RATE-LIMITER] Cleaned ${cleaned} inactive users`);
+            logger.debug(`Rate limiter: Membersihkan ${cleaned} pengguna tidak aktif`);
         }
 
         return cleaned;
     }
 
     /**
-     * Get statistics
+     * Dapatkan statistik
      * @returns {object}
      */
     getStats() {
@@ -101,7 +135,7 @@ class RateLimiter {
     }
 
     /**
-     * Destroy rate limiter
+     * Hancurkan rate limiter
      */
     destroy() {
         clearInterval(this.cleanupInterval);

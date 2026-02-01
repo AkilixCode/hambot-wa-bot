@@ -1,7 +1,7 @@
 /**
  * Spam Command
- * Prank spam chat (Owner Only)
- * With safety mechanisms: max limit, random delay, stop on error
+ * Prank spam chat (Khusus Owner)
+ * Dengan mekanisme keamanan: batas maksimal, delay acak, berhenti saat error
  */
 
 const CommandBase = require('./base');
@@ -13,56 +13,56 @@ class SpamCommand extends CommandBase {
         super({
             name: 'spam',
             aliases: ['prank'],
-            description: 'Prank spam chat (Owner Only)',
-            usage: '.spam <target> <amount> <message>',
+            description: 'Prank spam chat (Khusus Owner)',
+            usage: '.spam <target> <jumlah> <pesan>',
             category: 'fun',
-            cooldown: 10000, // 10 second cooldown
+            cooldown: 10000, // 10 detik cooldown
             isHeavy: true
         });
 
-        // Maximum messages allowed per command
+        // Batas maksimal pesan per perintah
         this.MAX_LIMIT = 50;
     }
 
     /**
-     * Generate random delay between min and max milliseconds
-     * @param {number} min - Minimum delay in ms
-     * @param {number} max - Maximum delay in ms
-     * @returns {number} Random delay value
+     * Generate delay acak antara min dan max milidetik
+     * @param {number} min - Delay minimum dalam ms
+     * @param {number} max - Delay maksimum dalam ms
+     * @returns {number} Nilai delay acak
      */
     randomDelay(min, max) {
         return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
     /**
-     * Convert phone number to WhatsApp JID format
-     * @param {string} input - Phone number or mention
-     * @returns {string|null} JID or null if invalid
+     * Konversi nomor telepon ke format JID WhatsApp
+     * @param {string} input - Nomor telepon atau mention
+     * @returns {string|null} JID atau null jika tidak valid
      */
     parseTarget(input) {
         if (!input) return null;
 
-        // If it's already a JID format
+        // Jika sudah dalam format JID
         if (input.includes('@s.whatsapp.net')) {
             return input;
         }
 
-        // Remove @ if it's a mention
+        // Hapus @ jika mention
         let number = input.replace('@', '');
 
-        // Remove any non-digit characters
+        // Hapus karakter non-digit
         number = number.replace(/\D/g, '');
 
-        // Handle Indonesian number formats
+        // Handle format nomor Indonesia
         if (number.startsWith('0')) {
-            // Convert 0812xxx to 62812xxx
+            // Konversi 0812xxx ke 62812xxx
             number = '62' + number.substring(1);
         } else if (!number.startsWith('62') && number.length >= 10) {
-            // Assume Indonesian if not starting with country code
+            // Asumsikan Indonesia jika tidak ada kode negara
             number = '62' + number;
         }
 
-        // Validate length (Indonesian numbers are typically 10-13 digits)
+        // Validasi panjang (nomor Indonesia biasanya 10-13 digit)
         if (number.length < 10 || number.length > 15) {
             return null;
         }
@@ -71,60 +71,45 @@ class SpamCommand extends CommandBase {
     }
 
     /**
-     * Check if sender is the owner
-     * @param {string} sender - Sender JID
-     * @returns {boolean}
-     */
-    isOwner(sender) {
-        // Get owner number from environment or config
-        const ownerNumber = process.env.OWNER_NUMBER || '';
-        
-        // Extract number from sender JID
-        const senderNumber = sender.split('@')[0];
-        
-        // Check if sender is owner (compare numbers)
-        return ownerNumber && senderNumber === ownerNumber.replace(/\D/g, '');
-    }
-
-    /**
-     * Execute the spam command
+     * Execute perintah spam
      * @param {import('@whiskeysockets/baileys').WASocket} sock - WhatsApp socket
-     * @param {Object} msg - Message object from Baileys
-     * @param {string[]} args - Command arguments
-     * @param {Object} context - Execution context
+     * @param {Object} msg - Objek pesan dari Baileys
+     * @param {string[]} args - Argumen perintah
+     * @param {Object} context - Konteks eksekusi
      */
     async execute(sock, msg, args, context) {
         const { from, sender } = context;
 
-        // Check if user is owner
-        if (!this.isOwner(sender)) {
+        // Gunakan pengecekan owner terpusat dari config
+        if (!config.isOwner(sender)) {
             return await this.reply(sock, from, msg, 
                 '🔒 *Akses Ditolak*\n\n' +
-                'Perintah ini hanya untuk owner bot.');
+                'Perintah ini hanya untuk owner bot.\n' +
+                `Pengirim: ${sender}`);
         }
 
-        // Show usage if no arguments
+        // Tampilkan cara pakai jika tidak ada argumen
         if (args.length < 3) {
             return await this.reply(sock, from, msg,
-                '📨 *Spam Command*\n\n' +
+                '📨 *Perintah Spam*\n\n' +
                 '📝 *Cara Pakai:*\n' +
                 '`.spam <target> <jumlah> <pesan>`\n\n' +
                 '📌 *Contoh:*\n' +
-                '• `.spam @mention 10 Hello!`\n' +
+                '• `.spam @mention 10 Halo!`\n' +
                 '• `.spam 081234567890 5 Test`\n' +
                 '• `.spam 6281234567890 20 Hi`\n\n' +
-                '⚠️ *Batas:*\n' +
+                '⚠️ *Batasan:*\n' +
                 `• Maksimal ${this.MAX_LIMIT} pesan\n` +
-                '• Owner only\n' +
-                '• Delay random 1.5-3 detik');
+                '• Khusus owner\n' +
+                '• Delay acak 1.5-3 detik');
         }
 
-        // Parse arguments
+        // Parse argumen
         const targetInput = args[0];
         const amountInput = parseInt(args[1]);
         const message = args.slice(2).join(' ');
 
-        // Validate target
+        // Validasi target
         const targetJid = this.parseTarget(targetInput);
         if (!targetJid) {
             return await this.reply(sock, from, msg,
@@ -132,13 +117,13 @@ class SpamCommand extends CommandBase {
                 'Gunakan @mention atau nomor telepon');
         }
 
-        // Validate amount
+        // Validasi jumlah
         if (isNaN(amountInput) || amountInput < 1) {
             return await this.reply(sock, from, msg,
                 '❌ Jumlah harus angka positif!');
         }
 
-        // Enforce max limit
+        // Terapkan batas maksimal
         let amount = amountInput;
         let limitWarning = '';
         if (amount > this.MAX_LIMIT) {
@@ -146,16 +131,16 @@ class SpamCommand extends CommandBase {
             limitWarning = `\n⚠️ Dibatasi ke ${this.MAX_LIMIT} pesan`;
         }
 
-        // Validate message
+        // Validasi pesan
         if (!message || message.trim().length === 0) {
             return await this.reply(sock, from, msg,
                 '❌ Pesan tidak boleh kosong!');
         }
 
-        // React to show processing
+        // React untuk menunjukkan proses
         await this.react(sock, msg, '🚀');
 
-        // Send starting message
+        // Kirim pesan mulai
         const targetNumber = targetJid.split('@')[0];
         await this.reply(sock, from, msg,
             `📨 *Spam Dimulai*\n\n` +
@@ -165,19 +150,19 @@ class SpamCommand extends CommandBase {
             `⏱️ Delay: 1.5-3 detik\n\n` +
             `⏳ Mengirim...`);
 
-        // Send spam messages with random delay
+        // Kirim pesan spam dengan delay acak
         let successCount = 0;
         let failCount = 0;
 
         for (let i = 0; i < amount; i++) {
             try {
-                // Send message to target
+                // Kirim pesan ke target
                 await sock.sendMessage(targetJid, { text: message });
                 successCount++;
 
-                // Don't delay after last message
+                // Jangan delay setelah pesan terakhir
                 if (i < amount - 1) {
-                    // Random delay between 1500ms and 3000ms
+                    // Delay acak antara 1500ms dan 3000ms
                     const delay = this.randomDelay(1500, 3000);
                     await sleep(delay);
                 }
@@ -185,19 +170,19 @@ class SpamCommand extends CommandBase {
                 failCount++;
                 this.logError(error, context);
                 
-                // Stop on error to prevent ban
+                // Berhenti saat error untuk mencegah ban
                 await this.reply(sock, from, msg,
                     `⚠️ *Dihentikan karena error*\n\n` +
                     `✅ Terkirim: ${successCount}\n` +
                     `❌ Gagal: ${failCount}\n\n` +
-                    `Error: ${error.message || 'Unknown error'}`);
+                    `Error: ${error.message || 'Error tidak dikenal'}`);
                 
                 await this.react(sock, msg, '⚠️');
                 return;
             }
         }
 
-        // Send completion message
+        // Kirim pesan selesai
         await this.reply(sock, from, msg,
             `✅ *Spam Selesai*\n\n` +
             `🎯 Target: ${targetNumber}\n` +

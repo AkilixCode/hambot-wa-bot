@@ -302,18 +302,16 @@ class SecurityManager {
 
     /**
      * Check command permissions
+     * Uses centralized config for owner ID validation
      */
     checkPermission(userId, command, isGroup, isAdmin = false) {
-        // Owner-only commands (configure in .env)
-        const ownerOnly = (process.env.OWNER_ONLY_COMMANDS || '').split(',').filter(c => c);
-        if (ownerOnly.includes(command)) {
-            const ownerId = process.env.BOT_OWNER_ID;
-            // If owner ID is not set, allow in development mode
-            // In production, owner ID MUST be set
-            if (ownerId && userId !== ownerId) {
+        // Owner-only commands (from centralized config)
+        if (config.isOwnerOnlyCommand(command)) {
+            // Use centralized owner check from config
+            if (!config.isOwner(userId)) {
                 return {
                     allowed: false,
-                    reason: 'Owner-only command'
+                    reason: 'Perintah khusus owner'
                 };
             }
         }
@@ -323,7 +321,7 @@ class SecurityManager {
         if (isGroup && adminOnlyInGroups.includes(command) && !isAdmin) {
             return {
                 allowed: false,
-                reason: 'Admin-only command in groups'
+                reason: 'Perintah khusus admin di grup'
             };
         }
 
