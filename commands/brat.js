@@ -1,49 +1,39 @@
 /**
- * Brat Sticker Command
- * Creates "Brat" style stickers (Charli XCX album cover aesthetic)
- * White bold text on pure black background with lo-fi blur effect
+ * Brat-Style Text Image Generator
+ * Generate brat-style text images with white or green backgrounds
+ * Inspired by https://github.com/Arifzyn19/brat-generator
  * 
  * Features:
- * - .brat <text> - Static sticker with bold text
- * - .bratvid <text> - Animated sticker with flashing/jitter effect
+ * - .brat <text> - Generate with white background (default)
+ * - .brat <text> --green - Generate with green background (#8ACE00)
+ * - .brat <text> --blur <0-100> - Control blur level (default: 80)
  */
 
 const CommandBase = require('./base');
 const { createCanvas } = require('canvas');
-const sharp = require('sharp');
-const { spawn } = require('child_process');
-const { generateFilename, cleanupFiles } = require('../utils/helpers');
-const fsPromises = require('fs').promises;
 
 class BratCommand extends CommandBase {
     constructor() {
         super({
             name: 'brat',
-            aliases: ['bratvid'],
-            description: 'Buat stiker gaya Brat (teks putih tebal di latar hitam)',
-            usage: '.brat <teks> atau .bratvid <teks>',
-            category: 'tools',
-            cooldown: 3000,
+            aliases: ['bratgen', 'brattext'],
+            description: 'Generate brat-style text image',
+            usage: '.brat <text>',
+            category: 'fun',
+            cooldown: 5000,
             isHeavy: true
         });
 
-        // Canvas settings - Brat aesthetic (Charli XCX album cover trend)
-        this.canvasSize = 512;
-        this.backgroundColor = '#000000'; // Pure black background
-        this.textColor = '#FFFFFF'; // Pure white text
-        this.padding = 30;
-        this.lineSpacing = 0.95; // Tight leading (95% of font size)
-
-        // Animation settings
-        this.animationFramerate = 10;
-        this.jitterPatterns = [
-            { x: 0, y: 0 },
-            { x: 3, y: -2 },
-            { x: -3, y: 3 },
-            { x: 2, y: -3 },
-            { x: -2, y: 2 },
-            { x: 3, y: 3 }
-        ];
+        // Canvas settings - Brat aesthetic
+        this.canvasSize = 600;
+        this.whiteBackground = '#FFFFFF';
+        this.greenBackground = '#8ACE00';
+        this.textColor = '#000000'; // Black text
+        this.padding = 32;
+        this.lineHeight = 0.9;
+        this.fontFamily = "'Arial Narrow', Arial, sans-serif";
+        this.fontWeight = '900'; // Bold weight
+        this.defaultBlur = 80;
     }
 
     /**
@@ -54,24 +44,32 @@ class BratCommand extends CommandBase {
      * @param {Object} context - Execution context
      */
     async execute(sock, msg, args, context) {
-        const { from, commandName } = context;
+        const { from } = context;
 
         // Check if text is provided
         if (!args[0]) {
             return await this.reply(sock, from, msg,
-                '📝 *Brat Sticker*\n\n' +
+                '✨ *Brat Text Generator*\n\n' +
                 '*Cara Pakai:*\n' +
-                '• `.brat <teks>` - Stiker statis\n' +
-                '• `.bratvid <teks>` - Stiker animasi\n\n' +
+                '• `.brat <teks>` - Background putih\n' +
+                '• `.brat <teks> --green` - Background hijau\n' +
+                '• `.brat <teks> --blur <0-100>` - Custom blur level\n\n' +
                 '*Contoh:*\n' +
                 '• `.brat hello world`\n' +
-                '• `.bratvid brat summer`'
+                '• `.brat brat --green`\n' +
+                '• `.brat test --blur 50`\n' +
+                '• `.brat vibe --green --blur 30`'
             );
         }
 
-        const text = args.join(' ').trim();
+        // Parse arguments
+        const { text, isGreen, blurLevel } = this.parseArgs(args);
 
-        // Validate text length
+        // Validate text
+        if (!text || text.trim().length === 0) {
+            return await this.reply(sock, from, msg, '❌ Teks tidak boleh kosong!');
+        }
+
         if (text.length > 200) {
             return await this.reply(sock, from, msg, '❌ Teks terlalu panjang! Maksimal 200 karakter.');
         }
@@ -79,145 +77,138 @@ class BratCommand extends CommandBase {
         await this.react(sock, msg, '⏳');
 
         try {
-            // Check which command was used
-            const isAnimated = commandName === 'bratvid';
+            // Generate brat-style image
+            const imageBuffer = await this.generateBratImage(text, isGreen, blurLevel);
 
-            if (isAnimated) {
-                await this.createAnimatedSticker(sock, msg, from, text, context);
-            } else {
-                await this.createStaticSticker(sock, msg, from, text);
-            }
+            // Send as image
+            await sock.sendMessage(from, {
+                image: imageBuffer,
+                caption: `✨ *Brat Style*\n\nText: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`
+            }, { quoted: msg });
 
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal membuat stiker Brat. Coba lagi!');
+            await this.reply(sock, from, msg, '❌ Gagal membuat gambar brat. Coba lagi!');
         }
     }
 
     /**
-     * Create static brat sticker
-     * @param {Object} sock - WhatsApp socket
-     * @param {Object} msg - Message object
-     * @param {string} from - Chat JID
-     * @param {string} text - Text to render
+     * Parse command arguments to extract text and flags
+     * @param {string[]} args - Command arguments
+     * @returns {Object} - Parsed arguments { text, isGreen, blurLevel }
      */
-    async createStaticSticker(sock, msg, from, text) {
-        // Create canvas and render text
-        const canvas = this.createBratCanvas(text);
-        const pngBuffer = canvas.toBuffer('image/png');
+    parseArgs(args) {
+        let isGreen = false;
+        let blurLevel = this.defaultBlur;
+        const textParts = [];
 
-        // Apply lo-fi effect with subtle blur and convert to WebP sticker
-        // Lower quality setting creates subtle compression artifacts for the anti-design aesthetic
-        const stickerBuffer = await sharp(pngBuffer)
-            .resize(512, 512, {
-                fit: 'contain',
-                background: { r: 0, g: 0, b: 0, alpha: 1 } // Black background
-            })
-            .blur(0.5) // Subtle Gaussian blur for lo-fi aesthetic
-            .webp({ quality: 70 }) // Lower quality for subtle compression artifacts
-            .toBuffer();
+        for (let i = 0; i < args.length; i++) {
+            const arg = args[i];
 
-        // Send sticker
-        await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: msg });
-    }
-
-    /**
-     * Create animated brat sticker with flashing/jitter effect
-     * @param {Object} sock - WhatsApp socket
-     * @param {Object} msg - Message object
-     * @param {string} from - Chat JID
-     * @param {string} text - Text to render
-     * @param {Object} context - Execution context
-     */
-    async createAnimatedSticker(sock, msg, from, text, context) {
-        const filePrefix = generateFilename('brat', '');
-        const frameCount = this.jitterPatterns.length;
-        const framePaths = [];
-
-        try {
-            // Generate frames with jitter effect
-            for (let i = 0; i < frameCount; i++) {
-                const canvas = this.createBratCanvas(text, {
-                    jitter: true,
-                    frameIndex: i
-                });
-                const framePath = `${filePrefix}_frame${i.toString().padStart(3, '0')}.png`;
-                await fsPromises.writeFile(framePath, canvas.toBuffer('image/png'));
-                framePaths.push(framePath);
+            if (arg === '--green') {
+                isGreen = true;
+            } else if (arg === '--blur' && args[i + 1]) {
+                // Parse blur value
+                const value = parseInt(args[i + 1]);
+                if (!isNaN(value) && value >= 0 && value <= 100) {
+                    blurLevel = value;
+                }
+                i++; // Skip next argument (the blur value)
+            } else {
+                textParts.push(arg);
             }
-
-            // Create animated WebP using ffmpeg
-            const outputPath = `${filePrefix}_animated.webp`;
-            await this.createAnimatedWebP(framePaths, outputPath, frameCount);
-
-            // Read and send the animated sticker
-            const stickerBuffer = await fsPromises.readFile(outputPath);
-            await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: msg });
-
-        } finally {
-            // Cleanup all temporary files
-            await cleanupFiles(filePrefix);
         }
+
+        const text = textParts.join(' ').toLowerCase(); // Convert to lowercase for brat style
+
+        return { text, isGreen, blurLevel };
     }
 
     /**
-     * Create a canvas with Brat-style text
+     * Generate brat-style image
      * @param {string} text - Text to render
-     * @param {Object} options - Rendering options
-     * @returns {Canvas} - Canvas with rendered text
+     * @param {boolean} isGreen - Use green background
+     * @param {number} blurLevel - Blur level (0-100)
+     * @returns {Buffer} - PNG image buffer
      */
-    createBratCanvas(text, options = {}) {
-        const { jitter = false, frameIndex = 0 } = options;
+    async generateBratImage(text, isGreen, blurLevel) {
         const canvas = createCanvas(this.canvasSize, this.canvasSize);
         const ctx = canvas.getContext('2d');
 
-        // Fill background (pure black)
-        ctx.fillStyle = this.backgroundColor;
+        // Fill background
+        ctx.fillStyle = isGreen ? this.greenBackground : this.whiteBackground;
         ctx.fillRect(0, 0, this.canvasSize, this.canvasSize);
-
-        // Apply jitter effect for animation
-        let offsetX = 0;
-        let offsetY = 0;
-        if (jitter) {
-            // Use jitter pattern from class settings
-            const pattern = this.jitterPatterns[frameIndex % this.jitterPatterns.length];
-            offsetX = pattern.x;
-            offsetY = pattern.y;
-        }
 
         // Set text properties
         ctx.fillStyle = this.textColor;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
+        ctx.textBaseline = 'top';
 
         // Calculate optimal font size and wrap text
         const maxWidth = this.canvasSize - (this.padding * 2);
-        const lines = this.wrapText(ctx, text, maxWidth);
-        const fontSize = this.calculateOptimalFontSize(ctx, lines, maxWidth);
+        const maxHeight = this.canvasSize - (this.padding * 2);
+        const baseFontSize = Math.min(200, this.canvasSize / 3);
 
-        // Apply font with calculated size - use system bold fonts
-        ctx.font = `bold ${fontSize}px "Arial Black", "Impact", "Helvetica Neue", Arial, sans-serif`;
+        const { fontSize, lines } = this.calculateOptimalFontSize(
+            ctx,
+            text,
+            maxWidth,
+            maxHeight,
+            baseFontSize
+        );
 
-        // Calculate total text height
-        const lineHeight = fontSize * this.lineSpacing;
-        const totalHeight = lines.length * lineHeight;
+        // Apply blur filter
+        const blurAmount = (blurLevel / 100) * 3;
+        ctx.filter = `blur(${blurAmount}px)`;
 
-        // Starting Y position (centered)
-        let startY = (this.canvasSize - totalHeight) / 2 + (lineHeight / 2);
+        // Set font with calculated size
+        ctx.font = `${this.fontWeight} ${fontSize}px ${this.fontFamily}`;
 
-        // Draw each line
+        // Calculate line height
+        const lineHeightPx = fontSize * this.lineHeight;
+
+        // Draw each line starting from position (32, 32)
+        let y = this.padding;
         for (const line of lines) {
-            ctx.fillText(
-                line,
-                (this.canvasSize / 2) + offsetX,
-                startY + offsetY
-            );
-            startY += lineHeight;
+            ctx.fillText(line, this.padding, y);
+            y += lineHeightPx;
         }
 
-        return canvas;
+        // Reset filter
+        ctx.filter = 'none';
+
+        // Return PNG buffer
+        return canvas.toBuffer('image/png');
+    }
+
+    /**
+     * Calculate optimal font size and wrap text
+     * @param {CanvasRenderingContext2D} ctx - Canvas context
+     * @param {string} text - Text to render
+     * @param {number} maxWidth - Maximum width
+     * @param {number} maxHeight - Maximum height
+     * @param {number} baseFontSize - Starting font size
+     * @returns {Object} - { fontSize, lines }
+     */
+    calculateOptimalFontSize(ctx, text, maxWidth, maxHeight, baseFontSize) {
+        let fontSize = baseFontSize;
+        let lines = [];
+
+        for (let size = fontSize; size >= 20; size -= 5) {
+            ctx.font = `${this.fontWeight} ${size}px ${this.fontFamily}`;
+            lines = this.wrapText(ctx, text, maxWidth);
+
+            const lineHeightPx = size * this.lineHeight;
+            const totalHeight = lines.length * lineHeightPx;
+
+            if (totalHeight <= maxHeight) {
+                fontSize = size;
+                break;
+            }
+        }
+
+        return { fontSize, lines };
     }
 
     /**
@@ -228,107 +219,50 @@ class BratCommand extends CommandBase {
      * @returns {string[]} - Array of lines
      */
     wrapText(ctx, text, maxWidth) {
-        // Start with a large font to measure
-        ctx.font = `bold 80px "Arial Black", "Impact", "Helvetica Neue", Arial, sans-serif`;
-        
         const words = text.split(' ');
         const lines = [];
-        let currentLine = '';
 
-        for (const word of words) {
-            const testLine = currentLine ? `${currentLine} ${word}` : word;
-            const metrics = ctx.measureText(testLine);
+        // Handle single word case
+        if (words.length === 1) {
+            const width = ctx.measureText(text).width;
+            if (width <= maxWidth) {
+                lines.push(text);
+            } else {
+                // Split character by character for long single word
+                let currentLine = '';
+                for (const char of text) {
+                    const testLine = currentLine + char;
+                    const testWidth = ctx.measureText(testLine).width;
+                    if (testWidth <= maxWidth) {
+                        currentLine = testLine;
+                    } else {
+                        if (currentLine) lines.push(currentLine);
+                        currentLine = char;
+                    }
+                }
+                if (currentLine) lines.push(currentLine);
+            }
+            return lines;
+        }
 
-            if (metrics.width > maxWidth && currentLine) {
+        // Handle multiple words
+        let currentLine = words[0];
+
+        for (let i = 1; i < words.length; i++) {
+            const word = words[i];
+            const testLine = currentLine + ' ' + word;
+            const width = ctx.measureText(testLine).width;
+
+            if (width <= maxWidth) {
+                currentLine = testLine;
+            } else {
                 lines.push(currentLine);
                 currentLine = word;
-            } else {
-                currentLine = testLine;
             }
         }
-
-        if (currentLine) {
-            lines.push(currentLine);
-        }
-
-        // If still no lines (single long word), force split
-        if (lines.length === 0) {
-            lines.push(text);
-        }
+        lines.push(currentLine);
 
         return lines;
-    }
-
-    /**
-     * Calculate optimal font size to fit text in canvas
-     * @param {CanvasRenderingContext2D} ctx - Canvas context
-     * @param {string[]} lines - Text lines
-     * @param {number} maxWidth - Maximum width
-     * @returns {number} - Optimal font size
-     */
-    calculateOptimalFontSize(ctx, lines, maxWidth) {
-        const maxHeight = this.canvasSize - (this.padding * 2);
-        let fontSize = 120; // Start with large size
-        const minFontSize = 24;
-
-        while (fontSize > minFontSize) {
-            ctx.font = `bold ${fontSize}px "Arial Black", "Impact", "Helvetica Neue", Arial, sans-serif`;
-
-            // Check if all lines fit width
-            let allFit = true;
-            for (const line of lines) {
-                if (ctx.measureText(line).width > maxWidth) {
-                    allFit = false;
-                    break;
-                }
-            }
-
-            // Check if total height fits
-            const totalHeight = lines.length * fontSize * this.lineSpacing;
-            if (allFit && totalHeight <= maxHeight) {
-                break;
-            }
-
-            fontSize -= 4;
-        }
-
-        return fontSize;
-    }
-
-    /**
-     * Create animated WebP from frames using ffmpeg
-     * @param {string[]} framePaths - Paths to frame images
-     * @param {string} outputPath - Output WebP path
-     * @param {number} frameCount - Number of frames
-     * @returns {Promise<void>}
-     */
-    createAnimatedWebP(framePaths, outputPath, frameCount) {
-        return new Promise((resolve, reject) => {
-            // Get the frame pattern from the first frame path
-            const framePattern = framePaths[0].replace('_frame000.png', '_frame%03d.png');
-
-            const proc = spawn('ffmpeg', [
-                '-y',
-                '-framerate', String(this.animationFramerate),
-                '-i', framePattern,
-                '-vf', `scale=${this.canvasSize}:${this.canvasSize}:flags=lanczos`,
-                '-loop', '0', // Infinite loop
-                '-c:v', 'libwebp',
-                '-lossless', '0',
-                '-compression_level', '4',
-                '-q:v', '80',
-                '-preset', 'default',
-                outputPath
-            ]);
-
-            let stderr = '';
-            proc.stderr.on('data', (data) => stderr += data);
-            proc.on('close', (code) => {
-                if (code === 0) resolve();
-                else reject(new Error(`ffmpeg failed with code ${code}: ${stderr}`));
-            });
-            proc.on('error', (err) => reject(err));
-        });
     }
 }
 
