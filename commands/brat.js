@@ -34,6 +34,7 @@ class BratCommand extends CommandBase {
         this.fontFamily = "'Arial Narrow', Arial, sans-serif";
         this.fontWeight = '900'; // Bold weight
         this.defaultBlur = 80;
+        this.minFontSize = 20; // Minimum readable font size
     }
 
     /**
@@ -114,6 +115,9 @@ class BratCommand extends CommandBase {
                 const value = parseInt(args[i + 1]);
                 if (!isNaN(value) && value >= 0 && value <= 100) {
                     blurLevel = value;
+                } else if (!isNaN(value)) {
+                    // Invalid range - will use default but continue processing
+                    blurLevel = this.defaultBlur;
                 }
                 i++; // Skip next argument (the blur value)
             } else {
@@ -195,7 +199,7 @@ class BratCommand extends CommandBase {
         let fontSize = baseFontSize;
         let lines = [];
 
-        for (let size = fontSize; size >= 20; size -= 5) {
+        for (let size = fontSize; size >= this.minFontSize; size -= 5) {
             ctx.font = `${this.fontWeight} ${size}px ${this.fontFamily}`;
             lines = this.wrapText(ctx, text, maxWidth);
 
