@@ -1,6 +1,6 @@
 /**
  * Joke Command
- * Get random jokes
+ * Dapatkan lelucon acak
  */
 
 const CommandBase = require('./base');
@@ -10,8 +10,8 @@ class JokeCommand extends CommandBase {
     constructor() {
         super({
             name: 'joke',
-            aliases: ['jokes', 'funny'],
-            description: 'Get a random joke',
+            aliases: ['jokes', 'funny', 'lelucon'],
+            description: 'Dapatkan lelucon acak',
             usage: '.joke',
             category: 'fun',
             cooldown: 3000
@@ -38,7 +38,7 @@ class JokeCommand extends CommandBase {
                 jokeText = `${data.setup}\n\n${data.delivery}`;
             }
 
-            const response = `😂 *Random Joke*\n\n${jokeText}`;
+            const response = `😂 *Lelucon Acak*\n\n${jokeText}`;
 
             await this.reply(sock, from, msg, response);
             await this.react(sock, msg, '✅');
@@ -46,17 +46,17 @@ class JokeCommand extends CommandBase {
         } catch (error) {
             this.logError(error, context);
             
-            // Fallback jokes
+            // Lelucon cadangan
             const fallbackJokes = [
-                "Why don't scientists trust atoms? Because they make up everything!",
-                "Why did the scarecrow win an award? He was outstanding in his field!",
-                "Why don't eggs tell jokes? They'd crack each other up!",
-                "What do you call a fake noodle? An impasta!",
-                "Why did the bicycle fall over? Because it was two-tired!"
+                "Kenapa ilmuwan tidak percaya atom? Karena mereka membuat segalanya!",
+                "Kenapa orang-orangan sawah menang penghargaan? Karena dia luar biasa di ladangnya!",
+                "Kenapa telur tidak suka bercerita lelucon? Karena mereka akan pecah tertawa!",
+                "Apa yang kamu sebut mie palsu? Impasta!",
+                "Kenapa sepeda jatuh? Karena terlalu lelah (dua ban)!"
             ];
             
             const randomJoke = fallbackJokes[Math.floor(Math.random() * fallbackJokes.length)];
-            await this.reply(sock, from, msg, `😂 *Joke*\n\n${randomJoke}`);
+            await this.reply(sock, from, msg, `😂 *Lelucon*\n\n${randomJoke}`);
         }
     }
 }

@@ -5,110 +5,56 @@
  * Commands:
  * .security - Show status and help
  * .security status - Show detailed security status
- * .security stop <code> - Stop PM2 bot process (requires confirmation code)
+ * .security restart - Restart PM2 bot process (no confirmation needed)
+ * .security stop - Stop PM2 bot process (no confirmation needed)
  * .security disable <feature> - Disable security feature
  * .security enable <feature> - Enable security feature
  * .security unblock <number> - Unblock a specific user
  * .security unblock all - Unblock all users
  * .security block <number> <minutes> - Block a user manually
  * .security list - List all blocked users
- * .security code - Generate new confirmation code for dangerous operations
  */
 
 const CommandBase = require('./base');
 const security = require('../utils/security');
 const config = require('../config');
 const { spawn } = require('child_process');
-const crypto = require('crypto');
 
 class SecurityCommand extends CommandBase {
     constructor() {
         super({
             name: 'security',
             aliases: ['sec', 'secstatus'],
-            description: 'Security management panel (Owner only)',
+            description: 'Panel manajemen keamanan (Khusus Owner)',
             usage: '.security [subcommand] [args]',
             category: 'system',
             cooldown: 2000
         });
-
-        // Store confirmation codes for dangerous operations
-        // Maps owner ID -> { code: string, expires: number, operation: string }
-        this.confirmationCodes = new Map();
-        
-        // Code expiry time (60 seconds)
-        this.codeExpiryMs = 60000;
-    }
-
-    /**
-     * Generate a random 6-character confirmation code
-     * @returns {string}
-     */
-    generateConfirmationCode() {
-        return crypto.randomBytes(3).toString('hex').toUpperCase();
-    }
-
-    /**
-     * Check if a confirmation code is valid
-     * @param {string} userId - Owner user ID
-     * @param {string} code - Code to verify
-     * @param {string} operation - Expected operation type
-     * @returns {boolean}
-     */
-    verifyConfirmationCode(userId, code, operation) {
-        const stored = this.confirmationCodes.get(userId);
-        if (!stored) return false;
-        
-        // Check expiry
-        if (Date.now() > stored.expires) {
-            this.confirmationCodes.delete(userId);
-            return false;
-        }
-
-        // Check code and operation match
-        if (stored.code === code && stored.operation === operation) {
-            this.confirmationCodes.delete(userId); // One-time use
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Store a confirmation code for dangerous operations
-     * @param {string} userId - Owner user ID
-     * @param {string} operation - Operation type (stop, disable_all, etc.)
-     * @returns {string} - The generated code
-     */
-    storeConfirmationCode(userId, operation) {
-        const code = this.generateConfirmationCode();
-        this.confirmationCodes.set(userId, {
-            code,
-            operation,
-            expires: Date.now() + this.codeExpiryMs
-        });
-        return code;
     }
 
     async execute(sock, msg, args, context) {
         const { from, sender } = context;
 
-        // CRITICAL: Verify owner identity
-        const ownerId = process.env.BOT_OWNER_ID;
-        if (!ownerId) {
+        // CRITICAL: Verify owner identity using centralized config
+        if (!config.bot.ownerId) {
             return await this.reply(sock, from, msg, 
-                '⚠️ *Security Warning*\n\n' +
-                'BOT_OWNER_ID is not configured!\n' +
-                'Set it in your .env file to enable security commands.');
+                '⚠️ *Peringatan Keamanan*\n\n' +
+                'BOT_OWNER_ID belum dikonfigurasi!\n' +
+                'Atur di file .env untuk mengaktifkan perintah keamanan.\n\n' +
+                'Format: BOT_OWNER_ID=6281234567890@s.whatsapp.net');
         }
 
-        if (sender !== ownerId) {
-            // Log unauthorized access attempt
+        // Use centralized owner check
+        if (!config.isOwner(sender)) {
+            // Log unauthorized access attempt with full sender ID
             security.logSecurityEvent('unauthorized_security_access', {
                 userId: sender,
                 attemptedCommand: args.join(' ')
             });
-            return await this.reply(sock, from, msg, '🔒 This command is owner-only.');
+            return await this.reply(sock, from, msg, 
+                '🔒 *Akses Ditolak*\n\n' +
+                'Perintah ini hanya untuk owner bot.\n' +
+                `Pengirim: ${sender}`);
         }
 
         await this.react(sock, msg, '🔒');
@@ -123,8 +69,11 @@ class SecurityCommand extends CommandBase {
                 case 'status':
                     return await this.showStatus(sock, from, msg);
                     
+                case 'restart':
+                    return await this.handleRestart(sock, from, msg);
+                    
                 case 'stop':
-                    return await this.handleStop(sock, from, msg, args.slice(1), sender);
+                    return await this.handleStop(sock, from, msg);
                     
                 case 'disable':
                     return await this.handleDisable(sock, from, msg, args.slice(1));
@@ -141,44 +90,39 @@ class SecurityCommand extends CommandBase {
                 case 'list':
                     return await this.listBlockedUsers(sock, from, msg);
                     
-                case 'code':
-                    return await this.generateCode(sock, from, msg, args.slice(1), sender);
-                    
                 default:
                     return await this.showHelp(sock, from, msg);
             }
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Security command failed: ' + error.message);
+            await this.reply(sock, from, msg, '❌ Perintah keamanan gagal: ' + error.message);
         }
     }
 
     async showHelp(sock, from, msg) {
         const helpText = 
-`🔒 *SECURITY MANAGEMENT PANEL*
+`🔒 *PANEL MANAJEMEN KEAMANAN*
 
-📌 *Available Commands:*
+📌 *Perintah Tersedia:*
 
 *Status & Info*
-\`.security status\` - Show detailed status
-\`.security list\` - List blocked users
+\`.security status\` - Lihat status detail
+\`.security list\` - Daftar pengguna terblokir
 
-*Feature Control*
-\`.security enable <feature>\` - Enable feature
-\`.security disable <feature>\` - Disable feature
+*Kontrol Fitur*
+\`.security enable <fitur>\` - Aktifkan fitur
+\`.security disable <fitur>\` - Nonaktifkan fitur
 
-*User Management*
-\`.security unblock <number>\` - Unblock user
-\`.security unblock all\` - Unblock all users
-\`.security block <number> <mins>\` - Block user
+*Manajemen Pengguna*
+\`.security unblock <nomor>\` - Buka blokir
+\`.security unblock all\` - Buka blokir semua
+\`.security block <nomor> <menit>\` - Blokir pengguna
 
-*Dangerous Operations*
-\`.security code stop\` - Generate stop code
-\`.security stop <code>\` - Stop bot (PM2)
+*Kontrol Bot*
+\`.security restart\` - Restart bot (PM2)
+\`.security stop\` - Hentikan bot (PM2)
 
-🛡️ *Features:* chatFilter, rateLimit, autoBlock
-
-⚠️ Dangerous operations require confirmation codes.`;
+🛡️ *Fitur:* chatFilter, rateLimit, autoBlock`;
 
         await this.reply(sock, from, msg, helpText);
         await this.react(sock, msg, '✅');
@@ -189,71 +133,78 @@ class SecurityCommand extends CommandBase {
         const configChatFilter = config.security.chatFilterEnabled;
         
         let response = 
-`🔒 *SECURITY STATUS*
+`🔒 *STATUS KEAMANAN*
 
-📊 *Statistics*
-• Blocked Users: ${stats.blockedUsers}
-• Suspicious Activity: ${stats.suspiciousActivityTracked}
-• Security Events: ${stats.securityEvents}
+📊 *Statistik*
+• Pengguna Terblokir: ${stats.blockedUsers}
+• Aktivitas Mencurigakan: ${stats.suspiciousActivityTracked}
+• Event Keamanan: ${stats.securityEvents}
 
-⚙️ *Config Settings*
-• Chat Filter (config): ${configChatFilter ? '✅ ON' : '❌ OFF'}
+⚙️ *Pengaturan Config*
+• Filter Chat (config): ${configChatFilter ? '✅ AKTIF' : '❌ NONAKTIF'}
 
-🔄 *Runtime Settings*
-• Chat Filter: ${stats.runtimeSettings.chatFilterEnabled ? '✅ ON' : '❌ OFF'}
-• Rate Limiting: ${stats.runtimeSettings.rateLimitEnabled ? '✅ ON' : '❌ OFF'}
-• Auto-Block: ${stats.runtimeSettings.autoBlockEnabled ? '✅ ON' : '❌ OFF'}
+🔄 *Pengaturan Runtime*
+• Filter Chat: ${stats.runtimeSettings.chatFilterEnabled ? '✅ AKTIF' : '❌ NONAKTIF'}
+• Rate Limiting: ${stats.runtimeSettings.rateLimitEnabled ? '✅ AKTIF' : '❌ NONAKTIF'}
+• Auto-Block: ${stats.runtimeSettings.autoBlockEnabled ? '✅ AKTIF' : '❌ NONAKTIF'}
+
+👤 *Owner ID:* ${config.bot.ownerId || 'Belum dikonfigurasi'}
 
 `;
 
         if (stats.recentBlocks.length > 0) {
-            response += `⛔ *Recent Blocks:*\n`;
+            response += `⛔ *Blokir Terbaru:*\n`;
             for (const block of stats.recentBlocks.slice(0, 5)) {
                 const timeLeft = Math.ceil(block.expiresIn / 1000 / 60);
-                response += `• ${block.userId}: ${block.reason} (${timeLeft}m left)\n`;
+                response += `• ${block.userId}: ${block.reason} (${timeLeft}m tersisa)\n`;
             }
         } else {
-            response += `✅ *No Active Blocks*\n`;
+            response += `✅ *Tidak Ada Blokir Aktif*\n`;
         }
 
-        response += `\n🛡️ *Active Protections:*\n`;
-        response += `• Input sanitization\n`;
-        response += `• Malicious pattern detection\n`;
-        response += `• Permission checks\n`;
-        response += `• Expression tag whitelist\n`;
+        response += `\n🛡️ *Proteksi Aktif:*\n`;
+        response += `• Sanitasi input\n`;
+        response += `• Deteksi pola berbahaya\n`;
+        response += `• Pemeriksaan izin\n`;
+        response += `• Whitelist tag ekspresi\n`;
 
         await this.reply(sock, from, msg, response);
         await this.react(sock, msg, '✅');
     }
 
-    async handleStop(sock, from, msg, args, sender) {
-        const code = args[0]?.toUpperCase();
-        
-        if (!code) {
-            // Generate a new code for stop operation
-            const newCode = this.storeConfirmationCode(sender, 'stop');
-            return await this.reply(sock, from, msg, 
-                `⚠️ *DANGEROUS OPERATION*\n\n` +
-                `This will stop the bot process via PM2.\n\n` +
-                `To confirm, use:\n` +
-                `\`.security stop ${newCode}\`\n\n` +
-                `⏰ Code expires in 60 seconds.`);
-        }
-
-        // Verify the confirmation code
-        if (!this.verifyConfirmationCode(sender, code, 'stop')) {
-            return await this.reply(sock, from, msg, 
-                '❌ Invalid or expired confirmation code.\n\n' +
-                'Use `.security code stop` to generate a new code.');
-        }
-
-        // Execute PM2 stop
+    async handleRestart(sock, from, msg) {
         // Get PM2 process name from env or default to 'hambot'
         const pm2ProcessName = process.env.PM2_PROCESS_NAME || 'hambot';
         
         await this.reply(sock, from, msg, 
-            '🛑 *Stopping bot process...*\n\n' +
-            `Goodbye! Use \`pm2 start ${pm2ProcessName}\` to restart.`);
+            '🔄 *Me-restart proses bot...*\n\n' +
+            `Proses PM2: ${pm2ProcessName}\n` +
+            'Bot akan kembali dalam beberapa detik.');
+
+        // Give time for the message to send
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Execute PM2 restart
+        try {
+            const pm2Restart = spawn('pm2', ['restart', pm2ProcessName], {
+                detached: true,
+                stdio: 'ignore'
+            });
+            pm2Restart.unref();
+        } catch (error) {
+            // If PM2 fails, try graceful restart via process exit
+            // PM2 should auto-restart the process
+            process.exit(0);
+        }
+    }
+
+    async handleStop(sock, from, msg) {
+        // Get PM2 process name from env or default to 'hambot'
+        const pm2ProcessName = process.env.PM2_PROCESS_NAME || 'hambot';
+        
+        await this.reply(sock, from, msg, 
+            '🛑 *Menghentikan proses bot...*\n\n' +
+            `Selamat tinggal! Gunakan \`pm2 start ${pm2ProcessName}\` untuk restart.`);
 
         // Give time for the message to send
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -276,11 +227,11 @@ class SecurityCommand extends CommandBase {
         
         if (!feature) {
             return await this.reply(sock, from, msg, 
-                '❌ Please specify a feature to disable.\n\n' +
-                '*Available features:*\n' +
-                '• `chatFilter` - Message content filtering\n' +
-                '• `rateLimit` - Request rate limiting\n' +
-                '• `autoBlock` - Automatic user blocking');
+                '❌ Tentukan fitur yang ingin dinonaktifkan.\n\n' +
+                '*Fitur tersedia:*\n' +
+                '• `chatFilter` - Filter konten pesan\n' +
+                '• `rateLimit` - Pembatasan request\n' +
+                '• `autoBlock` - Blokir otomatis pengguna');
         }
 
         const validFeatures = ['chatFilter', 'rateLimit', 'autoBlock'];
@@ -288,17 +239,17 @@ class SecurityCommand extends CommandBase {
         
         if (!normalizedFeature) {
             return await this.reply(sock, from, msg, 
-                `❌ Unknown feature: ${feature}\n\n` +
-                `Valid features: ${validFeatures.join(', ')}`);
+                `❌ Fitur tidak dikenal: ${feature}\n\n` +
+                `Fitur valid: ${validFeatures.join(', ')}`);
         }
 
         security.toggleFeature(normalizedFeature, false);
         
         await this.reply(sock, from, msg, 
-            `⚙️ *Security Feature Updated*\n\n` +
-            `Feature: ${normalizedFeature}\n` +
-            `Status: ❌ DISABLED\n\n` +
-            `⚠️ Warning: Disabling security features may expose the bot to abuse.`);
+            `⚙️ *Fitur Keamanan Diperbarui*\n\n` +
+            `Fitur: ${normalizedFeature}\n` +
+            `Status: ❌ NONAKTIF\n\n` +
+            `⚠️ Peringatan: Menonaktifkan fitur keamanan dapat membuat bot rentan terhadap penyalahgunaan.`);
         await this.react(sock, msg, '✅');
     }
 
@@ -307,11 +258,11 @@ class SecurityCommand extends CommandBase {
         
         if (!feature) {
             return await this.reply(sock, from, msg, 
-                '❌ Please specify a feature to enable.\n\n' +
-                '*Available features:*\n' +
-                '• `chatFilter` - Message content filtering\n' +
-                '• `rateLimit` - Request rate limiting\n' +
-                '• `autoBlock` - Automatic user blocking');
+                '❌ Tentukan fitur yang ingin diaktifkan.\n\n' +
+                '*Fitur tersedia:*\n' +
+                '• `chatFilter` - Filter konten pesan\n' +
+                '• `rateLimit` - Pembatasan request\n' +
+                '• `autoBlock` - Blokir otomatis pengguna');
         }
 
         const validFeatures = ['chatFilter', 'rateLimit', 'autoBlock'];
@@ -319,16 +270,16 @@ class SecurityCommand extends CommandBase {
         
         if (!normalizedFeature) {
             return await this.reply(sock, from, msg, 
-                `❌ Unknown feature: ${feature}\n\n` +
-                `Valid features: ${validFeatures.join(', ')}`);
+                `❌ Fitur tidak dikenal: ${feature}\n\n` +
+                `Fitur valid: ${validFeatures.join(', ')}`);
         }
 
         security.toggleFeature(normalizedFeature, true);
         
         await this.reply(sock, from, msg, 
-            `⚙️ *Security Feature Updated*\n\n` +
-            `Feature: ${normalizedFeature}\n` +
-            `Status: ✅ ENABLED`);
+            `⚙️ *Fitur Keamanan Diperbarui*\n\n` +
+            `Fitur: ${normalizedFeature}\n` +
+            `Status: ✅ AKTIF`);
         await this.react(sock, msg, '✅');
     }
 
@@ -337,17 +288,17 @@ class SecurityCommand extends CommandBase {
         
         if (!target) {
             return await this.reply(sock, from, msg, 
-                '❌ Please specify a user to unblock.\n\n' +
-                '*Usage:*\n' +
-                '• `.security unblock 62812345678` - Unblock specific user\n' +
-                '• `.security unblock all` - Unblock all users');
+                '❌ Tentukan pengguna yang ingin dibuka blokirnya.\n\n' +
+                '*Cara Pakai:*\n' +
+                '• `.security unblock 62812345678` - Buka blokir pengguna tertentu\n' +
+                '• `.security unblock all` - Buka blokir semua pengguna');
         }
 
         if (target === 'all') {
             const count = security.clearAllBlocks();
             await this.reply(sock, from, msg, 
-                `✅ *All Users Unblocked*\n\n` +
-                `Cleared ${count} blocked user(s).`);
+                `✅ *Semua Pengguna Dibuka Blokirnya*\n\n` +
+                `Membersihkan ${count} pengguna terblokir.`);
             await this.react(sock, msg, '✅');
             return;
         }
@@ -358,11 +309,11 @@ class SecurityCommand extends CommandBase {
         
         if (success) {
             await this.reply(sock, from, msg, 
-                `✅ *User Unblocked*\n\n` +
-                `User: ${target}`);
+                `✅ *Pengguna Dibuka Blokirnya*\n\n` +
+                `Pengguna: ${target}`);
         } else {
             await this.reply(sock, from, msg, 
-                `❌ User not found in block list: ${target}`);
+                `❌ Pengguna tidak ditemukan dalam daftar blokir: ${target}`);
         }
         await this.react(sock, msg, '✅');
     }
@@ -373,22 +324,22 @@ class SecurityCommand extends CommandBase {
         
         if (!target) {
             return await this.reply(sock, from, msg, 
-                '❌ Please specify a user to block.\n\n' +
-                '*Usage:*\n' +
-                '`.security block 62812345678 60` - Block for 60 minutes');
+                '❌ Tentukan pengguna yang ingin diblokir.\n\n' +
+                '*Cara Pakai:*\n' +
+                '`.security block 62812345678 60` - Blokir selama 60 menit');
         }
 
         // Convert phone number to WhatsApp ID format
         const userId = target.includes('@') ? target : `${target}@s.whatsapp.net`;
         const durationMs = minutes * 60 * 1000;
         
-        security.blockUser(userId, durationMs, 'Manually blocked by owner');
+        security.blockUser(userId, durationMs, 'Diblokir manual oleh owner');
         
         await this.reply(sock, from, msg, 
-            `⛔ *User Blocked*\n\n` +
-            `User: ${target}\n` +
-            `Duration: ${minutes} minutes\n` +
-            `Reason: Manually blocked by owner`);
+            `⛔ *Pengguna Diblokir*\n\n` +
+            `Pengguna: ${target}\n` +
+            `Durasi: ${minutes} menit\n` +
+            `Alasan: Diblokir manual oleh owner`);
         await this.react(sock, msg, '✅');
     }
 
@@ -396,53 +347,25 @@ class SecurityCommand extends CommandBase {
         const blockedUsers = security.getBlockedUsers();
         
         if (blockedUsers.length === 0) {
-            await this.reply(sock, from, msg, '✅ *No users are currently blocked.*');
+            await this.reply(sock, from, msg, '✅ *Tidak ada pengguna yang terblokir saat ini.*');
             await this.react(sock, msg, '✅');
             return;
         }
 
-        let response = `⛔ *BLOCKED USERS (${blockedUsers.length})*\n\n`;
+        let response = `⛔ *PENGGUNA TERBLOKIR (${blockedUsers.length})*\n\n`;
         
         for (const user of blockedUsers.slice(0, 10)) {
             const minsLeft = Math.ceil(user.expiresIn / 1000 / 60);
             response += `• ${user.userIdShort}\n`;
-            response += `  Reason: ${user.reason}\n`;
-            response += `  Expires in: ${minsLeft} mins\n\n`;
+            response += `  Alasan: ${user.reason}\n`;
+            response += `  Berakhir dalam: ${minsLeft} menit\n\n`;
         }
 
         if (blockedUsers.length > 10) {
-            response += `... and ${blockedUsers.length - 10} more`;
+            response += `... dan ${blockedUsers.length - 10} lainnya`;
         }
 
         await this.reply(sock, from, msg, response);
-        await this.react(sock, msg, '✅');
-    }
-
-    async generateCode(sock, from, msg, args, sender) {
-        const operation = args[0]?.toLowerCase();
-        
-        if (!operation) {
-            return await this.reply(sock, from, msg, 
-                '❌ Please specify an operation.\n\n' +
-                '*Available operations:*\n' +
-                '• `stop` - Generate code to stop bot process');
-        }
-
-        const validOperations = ['stop'];
-        if (!validOperations.includes(operation)) {
-            return await this.reply(sock, from, msg, 
-                `❌ Unknown operation: ${operation}\n\n` +
-                `Valid operations: ${validOperations.join(', ')}`);
-        }
-
-        const code = this.storeConfirmationCode(sender, operation);
-        
-        await this.reply(sock, from, msg, 
-            `🔑 *Confirmation Code Generated*\n\n` +
-            `Operation: ${operation}\n` +
-            `Code: \`${code}\`\n\n` +
-            `⏰ Expires in 60 seconds.\n\n` +
-            `Use: \`.security ${operation} ${code}\``);
         await this.react(sock, msg, '✅');
     }
 }

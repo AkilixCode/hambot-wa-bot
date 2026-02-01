@@ -1,6 +1,6 @@
 /**
  * Group Info Command
- * Display group metadata and statistics
+ * Menampilkan metadata dan statistik grup
  */
 
 const CommandBase = require('./base');
@@ -10,7 +10,7 @@ class InfoCommand extends CommandBase {
         super({
             name: 'info',
             aliases: ['groupinfo', 'grup'],
-            description: 'Display group information and statistics',
+            description: 'Menampilkan informasi dan statistik grup',
             usage: '.info',
             category: 'group',
             cooldown: 3000,
@@ -37,24 +37,24 @@ class InfoCommand extends CommandBase {
                     year: 'numeric'
                 });
 
-            const description = metadata.desc || 'No description';
+            const description = metadata.desc || 'Tidak ada deskripsi';
             const descTrimmed = description.length > 200 
                 ? description.substring(0, 200) + '...' 
                 : description;
 
             const info = 
-`📋 *GROUP INFORMATION*
+`📋 *INFORMASI GRUP*
 
 👥 *${metadata.subject}*
 
-🆔 Group ID: ${metadata.id}
-📅 Created: ${creationDate}
-👥 Members: ${metadata.participants.length}
-👑 Admins: ${admins}
-🔒 Restrict: ${metadata.restrict ? 'Yes' : 'No'}
-📢 Announce: ${metadata.announce ? 'Yes' : 'No'}
+🆔 ID Grup: ${metadata.id}
+📅 Dibuat: ${creationDate}
+👥 Anggota: ${metadata.participants.length}
+👑 Admin: ${admins}
+🔒 Terbatas: ${metadata.restrict ? 'Ya' : 'Tidak'}
+📢 Pengumuman: ${metadata.announce ? 'Ya' : 'Tidak'}
 
-📝 *Description:*
+📝 *Deskripsi:*
 ${descTrimmed}`;
 
             await this.reply(sock, from, msg, info);
@@ -62,7 +62,7 @@ ${descTrimmed}`;
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to get group information.');
+            await this.reply(sock, from, msg, '❌ Gagal mendapatkan informasi grup.');
         }
     }
 }

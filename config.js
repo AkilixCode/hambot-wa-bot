@@ -13,7 +13,11 @@ class Config {
             prefix: process.env.BOT_PREFIX || '.',
             browser: ['HamBot', 'Chrome', '1.0.0'],
             // Private mode: ignore private messages when true
-            onlyGroupMode: process.env.ONLY_GROUP_MODE === 'true'
+            onlyGroupMode: process.env.ONLY_GROUP_MODE === 'true',
+            // Owner ID in format: number@s.whatsapp.net
+            ownerId: this._normalizeOwnerId(process.env.BOT_OWNER_ID),
+            // Owner-only commands list from env
+            ownerOnlyCommands: (process.env.OWNER_ONLY_COMMANDS || 'security,spam').split(',').map(c => c.trim().toLowerCase()).filter(c => c)
         };
 
         this.performance = {
@@ -168,19 +172,99 @@ class Config {
         return [`--proxy-server=${proxyUrl}`];
     }
 
+    /**
+     * Normalize owner ID to number@s.whatsapp.net format
+     * Ensures consistent format across the application
+     * @param {string} ownerId - Raw owner ID from env
+     * @returns {string|null} Normalized owner ID
+     */
+    _normalizeOwnerId(ownerId) {
+        if (!ownerId) return null;
+        
+        // Remove any whitespace
+        let normalized = ownerId.trim();
+        
+        // If already in correct format, return as-is
+        if (normalized.endsWith('@s.whatsapp.net')) {
+            // Extract number and re-normalize
+            const number = normalized.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+            return number ? `${number}@s.whatsapp.net` : null;
+        }
+        
+        // If it's @lid format, we need to convert - but we can't 
+        // since @lid is a different identifier system
+        // Log warning if @lid format detected
+        if (normalized.endsWith('@lid')) {
+            console.warn('⚠️ WARNING: BOT_OWNER_ID uses @lid format which is not supported.');
+            console.warn('⚠️ Please use number@s.whatsapp.net format (e.g., 6281234567890@s.whatsapp.net)');
+            return null;
+        }
+        
+        // Otherwise, assume it's a phone number - normalize and add suffix
+        const number = normalized.replace(/\D/g, '');
+        if (!number) return null;
+        
+        return `${number}@s.whatsapp.net`;
+    }
+
+    /**
+     * Check if a sender is the bot owner
+     * @param {string} senderId - Sender JID
+     * @returns {boolean}
+     */
+    isOwner(senderId) {
+        if (!this.bot.ownerId || !senderId) return false;
+        
+        // Normalize sender to @s.whatsapp.net format for comparison
+        let normalizedSender = senderId;
+        
+        // If sender uses @lid format, extract and try to match number
+        if (senderId.endsWith('@lid')) {
+            // Cannot reliably match @lid to @s.whatsapp.net
+            // This is a WhatsApp limitation - @lid is an internal ID
+            return false;
+        }
+        
+        // If sender is in participant format (group), extract JID
+        if (senderId.includes(':')) {
+            normalizedSender = senderId.split(':')[0] + '@s.whatsapp.net';
+        }
+        
+        // Ensure @s.whatsapp.net suffix
+        if (!normalizedSender.endsWith('@s.whatsapp.net')) {
+            const number = normalizedSender.replace(/\D/g, '');
+            normalizedSender = `${number}@s.whatsapp.net`;
+        }
+        
+        return normalizedSender === this.bot.ownerId;
+    }
+
+    /**
+     * Check if a command is owner-only
+     * @param {string} commandName - Command name
+     * @returns {boolean}
+     */
+    isOwnerOnlyCommand(commandName) {
+        return this.bot.ownerOnlyCommands.includes(commandName.toLowerCase());
+    }
+
     validate() {
         const errors = [];
 
         if (this.performance.maxProcesses < 1) {
-            errors.push('MAX_PROCESSES must be at least 1');
+            errors.push('MAX_PROCESSES harus minimal 1');
         }
 
         if (this.performance.cooldownMs < 0) {
-            errors.push('COOLDOWN_MS must be non-negative');
+            errors.push('COOLDOWN_MS harus non-negatif');
+        }
+
+        if (!this.bot.ownerId) {
+            console.warn('⚠️ PERINGATAN: BOT_OWNER_ID tidak dikonfigurasi. Perintah owner-only tidak akan berfungsi.');
         }
 
         if (errors.length > 0) {
-            throw new Error(`Configuration validation failed:\n${errors.join('\n')}`);
+            throw new Error(`Validasi konfigurasi gagal:\n${errors.join('\n')}`);
         }
 
         return true;

@@ -1,33 +1,316 @@
 # HamBot Update Report
 
-**Date:** January 31, 2025  
-**Version:** 2.3.0  
+**Date:** February 1, 2025  
+**Version:** 2.4.0  
 **Author:** GitHub Copilot AI
 
 ---
 
-## 📋 Summary of Changes (v2.3.0)
+## 📋 Ringkasan Perubahan (v2.4.0)
 
-This update adds:
-1. **New Brat Sticker Command** - Create minimalist "Brat" style stickers with bold black text on white background
-2. **Static sticker support** (`.brat <text>`)
-3. **Animated sticker support** (`.bratvid <text>`) with flashing/jitter effect
-4. **Canvas library integration** - Added `canvas` package for image generation
+Update ini menambahkan:
+1. **Perbaikan Bug Owner ID** - Memastikan `BOT_OWNER_ID` menggunakan format `number@s.whatsapp.net` secara konsisten
+2. **Terjemahan Bahasa Indonesia** - Semua output perintah diterjemahkan ke Bahasa Indonesia
+3. **Optimisasi Penggunaan Memori** - Cache dan rate limiter yang lebih ringan dengan eviction dan batas
+4. **Konfigurasi .env Komprehensif** - File `.env.example` yang diperluas dengan semua opsi konfigurasi
+5. **Perintah Restart Langsung** - `.security restart` tanpa memerlukan kode konfirmasi
+6. **Perintah Owner-Only yang Dapat Dikonfigurasi** - Daftar perintah khusus owner dapat diatur melalui `.env`
 
 ---
 
-## 🔄 Detailed Changes (v2.3.0)
+## 🔄 Perubahan Detail (v2.4.0)
 
-### 1. New Brat Sticker Command (`commands/brat.js`)
+### 1. Perbaikan Bug Owner ID
 
-**What is "Brat" Style?**
-A minimalist design style with:
-- **Background:** Solid Pure White (#FFFFFF)
-- **Text Font:** Thick, bold, sans-serif font (Arial Black, Impact, Helvetica Neue Bold)
-- **Text Color:** Solid Pure Black (#000000)
-- **Layout:** Text centered horizontally and vertically, filling most of the canvas
+**Masalah:**
+Nilai `BOT_OWNER_ID` tidak diterapkan dengan benar pada perintah khusus owner seperti `.security` dan `.spam`. Sistem menggunakan format yang tidak konsisten (`@lid` vs `@s.whatsapp.net`).
 
-**Features:**
+**Solusi:**
+- Menambahkan fungsi `_normalizeOwnerId()` di `config.js` untuk normalisasi format ID owner
+- Menambahkan method `isOwner()` terpusat di `config.js` untuk pengecekan owner yang konsisten
+- Menambahkan method `isOwnerOnlyCommand()` untuk pengecekan perintah khusus owner
+- Memperbarui `commands/security.js` untuk menggunakan `config.isOwner(sender)` 
+- Memperbarui `commands/spam.js` untuk menggunakan `config.isOwner(sender)`
+- Memperbarui `utils/security.js` untuk menggunakan pengecekan terpusat dari config
+
+**Perubahan Kode:**
+
+```javascript
+// config.js - Method baru
+_normalizeOwnerId(ownerId) {
+    if (!ownerId) return null;
+    let normalized = ownerId.trim();
+    
+    // Jika sudah format benar
+    if (normalized.endsWith('@s.whatsapp.net')) {
+        const number = normalized.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+        return number ? `${number}@s.whatsapp.net` : null;
+    }
+    
+    // Peringatan untuk format @lid
+    if (normalized.endsWith('@lid')) {
+        console.warn('⚠️ WARNING: BOT_OWNER_ID uses @lid format which is not supported.');
+        return null;
+    }
+    
+    // Normalisasi nomor telepon
+    const number = normalized.replace(/\D/g, '');
+    return number ? `${number}@s.whatsapp.net` : null;
+}
+
+isOwner(senderId) {
+    if (!this.bot.ownerId || !senderId) return false;
+    // ... logika normalisasi dan perbandingan
+    return normalizedSender === this.bot.ownerId;
+}
+```
+
+**File yang Dimodifikasi:**
+- `config.js` - Menambahkan normalisasi owner ID dan method isOwner()
+- `commands/security.js` - Menggunakan config.isOwner() untuk validasi
+- `commands/spam.js` - Menggunakan config.isOwner() untuk validasi
+- `utils/security.js` - Menggunakan config untuk pengecekan izin
+
+### 2. Log Sender ID Lengkap
+
+**Perubahan:**
+Logger sekarang menampilkan sender ID lengkap (`number@s.whatsapp.net`) untuk identifikasi yang presisi.
+
+```javascript
+// utils/logger.js
+formatCommand(command, sender, from, isGroup) {
+    return {
+        command,
+        sender: sender, // ID JID lengkap untuk identifikasi presisi
+        senderNumber: sender.split('@')[0], // Hanya nomor untuk keterbacaan
+        chat: isGroup ? 'grup' : 'pribadi',
+        chatId: from
+    };
+}
+```
+
+### 3. Terjemahan Bahasa Indonesia
+
+**Semua output perintah diterjemahkan ke Bahasa Indonesia:**
+
+| Perintah | Perubahan |
+|----------|-----------|
+| `.security` | Semua pesan dan menu dalam Bahasa Indonesia |
+| `.spam` | Semua pesan dalam Bahasa Indonesia |
+| `.fact` | Fakta cadangan dalam Bahasa Indonesia |
+| `.quote` | Kutipan cadangan dalam Bahasa Indonesia |
+| `.joke` | Lelucon cadangan dalam Bahasa Indonesia |
+| `.info` | Informasi grup dalam Bahasa Indonesia |
+| `.ping` | Status sistem dalam Bahasa Indonesia |
+
+**Contoh Sebelum:**
+```
+🔒 This command is owner-only.
+```
+
+**Contoh Sesudah:**
+```
+🔒 *Akses Ditolak*
+
+Perintah ini hanya untuk owner bot.
+Pengirim: 6281234567890@s.whatsapp.net
+```
+
+### 4. Optimisasi Penggunaan Memori
+
+**Perbaikan pada `utils/cache.js`:**
+- Menambahkan batas maksimal entri (`maxEntries: 1000`)
+- Implementasi eviction otomatis (`_evictOldest()`) saat cache penuh
+- Interval cleanup yang dapat dikonfigurasi via env
+
+**Perbaikan pada `utils/rate-limiter.js`:**
+- Menambahkan batas maksimal pengguna yang dilacak (`maxTrackedUsers: 5000`)
+- Implementasi eviction pengguna tidak aktif
+- Interval cleanup yang lebih efisien (2 menit default)
+
+```javascript
+// Cache dengan batas dan eviction
+set(key, value, ttl = 300000) {
+    if (this.store.size >= this.maxEntries) {
+        this._evictOldest(); // Hapus 10% entri terlama
+    }
+    // ...
+}
+```
+
+### 5. Konfigurasi .env Komprehensif
+
+**Opsi baru di `.env.example`:**
+
+```env
+# Perintah khusus owner (dipisahkan koma)
+OWNER_ONLY_COMMANDS=security,spam
+
+# Interval cleanup cache (milidetik)
+CACHE_CLEANUP_INTERVAL=300000
+
+# Interval cleanup rate limiter (milidetik)
+RATE_LIMITER_CLEANUP_INTERVAL=60000
+
+# Durasi blokir otomatis (milidetik)
+AUTO_BLOCK_DURATION=1800000
+
+# Batas aktivitas mencurigakan sebelum blokir
+SUSPICIOUS_ACTIVITY_THRESHOLD=20
+```
+
+### 6. Perintah .security Restart Langsung
+
+**Sebelum:** Memerlukan kode konfirmasi untuk restart/stop
+**Sesudah:** Langsung eksekusi tanpa konfirmasi
+
+**Subperintah baru:**
+- `.security restart` - Restart PM2 process langsung
+- `.security stop` - Hentikan PM2 process langsung
+
+```javascript
+async handleRestart(sock, from, msg) {
+    const pm2ProcessName = process.env.PM2_PROCESS_NAME || 'hambot';
+    
+    await this.reply(sock, from, msg, 
+        '🔄 *Me-restart proses bot...*\n\n' +
+        `Proses PM2: ${pm2ProcessName}\n` +
+        'Bot akan kembali dalam beberapa detik.');
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    try {
+        const pm2Restart = spawn('pm2', ['restart', pm2ProcessName], {
+            detached: true,
+            stdio: 'ignore'
+        });
+        pm2Restart.unref();
+    } catch (error) {
+        process.exit(0); // Fallback ke exit
+    }
+}
+```
+
+### 7. Perintah Owner-Only yang Dapat Dikonfigurasi
+
+**Cara Mengkonfigurasi:**
+```env
+# Di .env
+OWNER_ONLY_COMMANDS=security,spam,restart,admin
+```
+
+**Cara Kerja:**
+- Daftar perintah diparsing dari env saat startup
+- Jika perintah ada di daftar, hanya owner yang bisa menggunakan
+- Jika dihapus dari daftar, perintah dapat diakses semua orang
+
+---
+
+## 📁 File yang Dimodifikasi (v2.4.0)
+
+| File | Tipe | Perubahan |
+|------|------|-----------|
+| `config.js` | Modified | Normalisasi owner ID, method isOwner(), isOwnerOnlyCommand() |
+| `commands/security.js` | Modified | Restart langsung, terjemahan Indonesia, owner check terpusat |
+| `commands/spam.js` | Modified | Owner check terpusat, terjemahan Indonesia |
+| `commands/fact.js` | Modified | Terjemahan fakta cadangan ke Indonesia |
+| `commands/quote.js` | Modified | Terjemahan kutipan ke Indonesia |
+| `commands/joke.js` | Modified | Terjemahan lelucon ke Indonesia |
+| `commands/info.js` | Modified | Terjemahan output ke Indonesia |
+| `utils/security.js` | Modified | Menggunakan config.isOwnerOnlyCommand() |
+| `utils/logger.js` | Modified | Menampilkan sender ID lengkap |
+| `utils/cache.js` | Modified | Batas entri, eviction, optimisasi memori |
+| `utils/rate-limiter.js` | Modified | Batas pengguna, eviction, optimisasi memori |
+| `.env.example` | Modified | Opsi konfigurasi komprehensif dengan dokumentasi bilingual |
+| `UPDATE-REPORT.md` | Modified | Dokumentasi perubahan v2.4.0 |
+
+---
+
+## ⚠️ Saran untuk Sesi AI Berikutnya (v2.4.0)
+
+### Hal yang Harus Dihindari:
+
+1. **Jangan gunakan format `@lid` untuk BOT_OWNER_ID** - Format ini adalah ID internal WhatsApp dan tidak bisa dibandingkan dengan JID standar. Selalu gunakan `number@s.whatsapp.net`.
+
+2. **Jangan lakukan pengecekan owner manual** - Selalu gunakan `config.isOwner(sender)` yang sudah terpusat.
+
+3. **Jangan tambahkan perintah owner-only langsung di kode** - Gunakan konfigurasi `OWNER_ONLY_COMMANDS` di `.env`.
+
+4. **Jangan abaikan batas memori** - Cache dan rate limiter sekarang memiliki batas. Pastikan tidak mengubah batas tanpa pertimbangan.
+
+5. **Jangan hapus terjemahan Indonesia** - Semua output harus konsisten dalam Bahasa Indonesia.
+
+### Hal yang Harus Diingat:
+
+1. **Format Owner ID yang Benar:**
+   ```
+   BOT_OWNER_ID=6281234567890@s.whatsapp.net
+   ```
+   Bukan:
+   ```
+   BOT_OWNER_ID=8888@lid
+   BOT_OWNER_ID=6281234567890
+   ```
+
+2. **Pengecekan Owner Terpusat:**
+   ```javascript
+   // BENAR
+   if (!config.isOwner(sender)) {
+       return await this.reply(...);
+   }
+   
+   // SALAH
+   if (sender !== process.env.BOT_OWNER_ID) {
+       return await this.reply(...);
+   }
+   ```
+
+3. **Perintah Owner-Only via .env:**
+   ```env
+   OWNER_ONLY_COMMANDS=security,spam,admin
+   ```
+
+4. **Optimisasi Memori:**
+   - Cache maksimal 1000 entri
+   - Rate limiter maksimal 5000 pengguna
+   - Eviction otomatis saat batas tercapai
+
+5. **Log dengan Sender ID Lengkap:**
+   - Log sekarang menampilkan JID lengkap
+   - Memudahkan identifikasi pengguna
+
+### Testing Rekomendasi:
+
+```
+# Test owner check dengan format berbeda
+# Set BOT_OWNER_ID ke nomor Anda
+.security status  # Harus berhasil sebagai owner
+.spam 081234567890 1 test  # Harus berhasil sebagai owner
+
+# Test restart langsung
+.security restart  # Tidak perlu kode
+
+# Test dengan non-owner
+# Login dengan nomor berbeda
+.security status  # Harus ditolak dengan pesan Indonesia
+
+# Test konfigurasi owner-only commands
+# Tambahkan perintah ke OWNER_ONLY_COMMANDS
+# Coba akses dengan non-owner
+```
+
+### Peningkatan untuk Pertimbangan Masa Depan:
+
+1. **Multi-Owner Support** - Mendukung beberapa owner dalam daftar
+2. **Role-Based Access Control** - Sistem peran (owner, admin, user)
+3. **Per-Group Owner** - Owner yang berbeda per grup
+4. **Audit Log** - Log semua aksi admin
+
+---
+
+## 📋 Ringkasan Perubahan (v2.3.0)
+
+Update ini menambahkan:
 
 | Command | Description |
 |---------|-------------|

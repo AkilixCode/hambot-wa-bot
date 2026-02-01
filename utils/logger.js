@@ -20,13 +20,17 @@ class Logger {
 
     /**
      * Format command info for logging
+     * Always displays full sender ID for precise identification
      */
     formatCommand(command, sender, from, isGroup) {
+        // Keep full sender ID for precise tracking
+        // Format: number@s.whatsapp.net
         return {
             command,
-            sender: sender.split('@')[0],
-            chat: isGroup ? 'group' : 'private',
-            chatId: from.split('@')[0].slice(-4)
+            sender: sender, // Full JID for precise identification
+            senderNumber: sender.split('@')[0], // Just the number for readability
+            chat: isGroup ? 'grup' : 'pribadi',
+            chatId: from
         };
     }
 
