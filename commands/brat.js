@@ -1,11 +1,12 @@
 /**
- * Brat-Style Generator (Final Fix - Gyurmatag Style)
- 
+ * Brat Command - Charli XCX Album Cover Style Generator
+ * Replicates the visual style of the Gyurmatag brat generator
+ * Uses Canvas for rendering and Sharp for post-processing filters
  */
 
 const CommandBase = require('./base');
 const { createCanvas, registerFont } = require('canvas');
-const sharp = require('sharp'); // Wajib ada di package.json
+const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
 
@@ -13,62 +14,98 @@ class BratCommand extends CommandBase {
     constructor() {
         super({
             name: 'brat',
-            aliases: ['bratgen', 'stikerbrat'],
-            description: 'Buat stiker teks ala Brat (Fix Style & Overflow)',
-            usage: '.brat <teks>',
+            aliases: ['bratgen', 'stikerbrat', 'charli'],
+            description: 'Generate Charli XCX "Brat" album cover style sticker',
+            usage: '.brat <text>',
             category: 'fun',
             cooldown: 5000,
             isHeavy: true
         });
 
-        // 1. REGISTER FONT
-        try {
-            const fontPath = path.join(process.cwd(), 'fonts', 'arialnarrow.ttf');
-            if (fs.existsSync(fontPath)) {
-                registerFont(fontPath, { family: 'BratFont' });
-            } else {
-                console.warn('[BRAT] ⚠️ Font arialnarrow.ttf tidak ditemukan. Style mungkin beda.');
-            }
-        } catch (e) {
-            console.error('[BRAT] Error register font:', e);
-        }
+        this.canvasSize = 512;
+        this.padding = 30;
+        this.fontFamily = 'Arial Narrow';
+        this.fontRegistered = false;
 
-        this.canvasSize = 512; 
-        this.padding = 24; // Padding sedikit lebih luas biar aman
+        // Register custom font if available
+        this._registerFont();
     }
 
+    /**
+     * Register Arial Narrow font if available
+     * Falls back to system fonts if not found
+     */
+    _registerFont() {
+        const fontPaths = [
+            path.join(process.cwd(), 'fonts', 'arialnarrow.ttf'),
+            path.join(process.cwd(), 'fonts', 'ArialNarrow.ttf'),
+            path.join(process.cwd(), 'fonts', 'arial-narrow.ttf'),
+            path.join(process.cwd(), 'fonts', 'ArialNarrow-Bold.ttf')
+        ];
+
+        for (const fontPath of fontPaths) {
+            try {
+                if (fs.existsSync(fontPath)) {
+                    registerFont(fontPath, { family: 'BratFont', weight: 'bold' });
+                    this.fontFamily = 'BratFont';
+                    this.fontRegistered = true;
+                    return;
+                }
+            } catch (e) {
+                // Continue to next font path
+            }
+        }
+
+        // Fallback warning (only log once)
+        if (!this.fontRegistered) {
+            console.warn('[BRAT] Arial Narrow font not found in /fonts. Using system fallback.');
+        }
+    }
+
+    /**
+     * Execute the brat command
+     * @param {import('@whiskeysockets/baileys').WASocket} sock - WhatsApp socket
+     * @param {Object} msg - Message object from Baileys
+     * @param {string[]} args - Command arguments
+     * @param {Object} context - Execution context
+     */
     async execute(sock, msg, args, context) {
         const { from } = context;
-        
-        // Gabungkan argumen, support enter/newline dari pesan asli jika memungkinkan
-        // Di banyak handler, args sudah di-split spasi. Kita join dulu.
-        // Jika user pake enter, biasanya args akan terpisah.
-        // Cara terbaik ambil full text adalah dari msg content langsung, tapi args.join cukup untuk v1.
+
+        // Preserve all whitespace by joining with single space
+        // Args are already split by handler, so we rejoin them
         let text = args.join(' ');
 
-        if (!text) {
-            return await this.reply(sock, from, msg, '❌ Masukkan teksnya!\nContoh: *.brat siapa suruh*');
+        // Validation
+        if (!text || text.trim() === '') {
+            return await this.reply(sock, from, msg, 
+                '❌ Please provide text!\n\n' +
+                '*Usage:* `.brat your text here`\n' +
+                '*Example:* `.brat brat`'
+            );
         }
 
         if (text.length > 500) {
-            return await this.reply(sock, from, msg, '❌ Teks kepanjangan, nanti kekecilan!');
+            return await this.reply(sock, from, msg, 
+                '❌ Text too long! Maximum 500 characters.'
+            );
         }
 
         await this.react(sock, msg, '⏳');
 
         try {
-            // 1. Generate Raw Canvas (Teks Hitam, Background Putih)
+            // Step 1: Generate raw canvas with text
             const rawBuffer = await this.generateCanvas(text);
 
-            // 2. Post-Processing dengan Sharp (Tiru Filter Gyurmatag)
-            // CSS asli: filter: blur(1px) contrast(1.25);
+            // Step 2: Apply Gyurmatag-style post-processing filter
+            // CSS equivalent: filter: blur(1px) contrast(1.25)
             const finalBuffer = await sharp(rawBuffer)
-                .blur(0.5) // Blur sedikit aja biar 'crispy' (1.0 kadang terlalu buram buat stiker kecil)
-                .linear(1.25, -(128 * 1.25) + 128) // Rumus Contrast 1.25 manual
-                .toFormat('webp')
+                .blur(0.5) // Slight blur for "low-res" aesthetic
+                .linear(1.25, -(128 * 1.25) + 128) // Contrast 1.25 formula
+                .toFormat('webp', { quality: 90 })
                 .toBuffer();
 
-            // 3. Kirim Stiker
+            // Step 3: Send as sticker
             await sock.sendMessage(from, {
                 sticker: finalBuffer
             }, { quoted: msg });
@@ -77,119 +114,199 @@ class BratCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal membuat stiker. Cek log.');
+            await this.reply(sock, from, msg, '❌ Failed to generate sticker.');
         }
     }
 
+    /**
+     * Generate the Brat-style canvas
+     * @param {string} text - Text to render
+     * @returns {Promise<Buffer>} PNG buffer
+     */
     async generateCanvas(text) {
         const size = this.canvasSize;
         const padding = this.padding;
         const maxWidth = size - (padding * 2);
         const maxHeight = size - (padding * 2);
+        const verticalStretch = 1.15; // 115% vertical stretch
+        const lineHeightRatio = 1.05; // Tight line spacing like album cover
 
         const canvas = createCanvas(size, size);
         const ctx = canvas.getContext('2d');
 
-        // Background Putih
+        // Background: Pure White (#FFFFFF)
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, size, size);
 
-        // Config Dasar
+        // Text config: Pure Black (#000000)
         ctx.fillStyle = '#000000';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
-        // Logika Scaling Font Anti-Jebol
-        let fontSize = 200; // Mulai dari gede
+        // Auto-scaling loop: Start large, shrink until text fits
+        let fontSize = 200;
         let finalLines = [];
-        let lineHeightRatio = 1.05; // Style Brat Rapat
+        const minFontSize = 10;
 
         do {
-            // Reset font
-            // Gunakan weight 900 biar tebal ala album asli
-            ctx.font = `900 ${fontSize}px "BratFont", "Arial Narrow", sans-serif`;
+            // Set font with weight 900 for bold look
+            ctx.font = `900 ${fontSize}px "${this.fontFamily}", "Arial Narrow", Arial, sans-serif`;
 
-            // Coba wrap text dengan ukuran segini
+            // Smart wrap the text
             const lines = this.smartWrap(ctx, text, maxWidth);
-            
-            // Cek Tinggi
-            const totalHeight = lines.length * (fontSize * lineHeightRatio);
-            
-            // Cek Lebar (Double Check: Apakah ada baris yang masih tembus?)
-            const isTooWide = lines.some(line => ctx.measureText(line).width > maxWidth + 10); // Toleransi 10px
 
-            if (totalHeight <= maxHeight && !isTooWide) {
+            // Calculate total height with stretch factor
+            const lineHeight = fontSize * lineHeightRatio;
+            const totalHeight = lines.length * lineHeight * verticalStretch;
+
+            // Check if any single word/line exceeds max width
+            const widestLine = Math.max(...lines.map(line => ctx.measureText(line).width));
+            const isTooWide = widestLine > maxWidth;
+
+            // Check if total height exceeds max height
+            const isTooTall = totalHeight > maxHeight;
+
+            if (!isTooWide && !isTooTall) {
                 finalLines = lines;
-                break; // Muat!
+                break;
             }
 
-            // Kalau gak muat, kecilin
+            // Reduce font size and try again
             fontSize -= 5;
-        } while (fontSize > 10);
 
-        // Rendering Final
-        const totalBlockHeight = finalLines.length * (fontSize * lineHeightRatio);
-        let startY = (size / 2) - (totalBlockHeight / 2) + ((fontSize * lineHeightRatio) / 2);
+        } while (fontSize >= minFontSize);
 
-        // Terapkan Stretch (Gepeng)
+        // Fallback if font is still too large (shouldn't happen)
+        if (finalLines.length === 0) {
+            ctx.font = `900 ${minFontSize}px "${this.fontFamily}", "Arial Narrow", Arial, sans-serif`;
+            finalLines = this.smartWrap(ctx, text, maxWidth);
+        }
+
+        // Calculate vertical positioning
+        const lineHeight = fontSize * lineHeightRatio;
+        const totalBlockHeight = finalLines.length * lineHeight * verticalStretch;
+        const startY = (size - totalBlockHeight) / 2 + (lineHeight * verticalStretch) / 2;
+
+        // Apply vertical stretch transformation
         ctx.save();
-        ctx.translate(size/2, size/2);
-        ctx.scale(1, 1.15); // Stretch Vertikal 115%
-        ctx.translate(-size/2, -size/2);
+        ctx.translate(size / 2, size / 2);
+        ctx.scale(1, verticalStretch); // Vertical stretch 115%
+        ctx.translate(-size / 2, -size / 2);
 
-        finalLines.forEach((line, i) => {
-            // Koreksi posisi Y
-            const yPos = startY + (i * (fontSize * lineHeightRatio)) - (fontSize * 0.12);
+        // Render each line
+        finalLines.forEach((line, index) => {
+            // Adjust Y position for stretch
+            const yPos = (startY / verticalStretch) + (index * lineHeight);
             ctx.fillText(line, size / 2, yPos);
         });
-        
+
         ctx.restore();
 
-        return canvas.toBuffer();
+        return canvas.toBuffer('image/png');
     }
 
     /**
-     * Logic Wrap Pintar yang support Newline & Spasi
+     * Smart word wrap that preserves whitespace and handles manual newlines
+     * Microsoft Word-like behavior: preserves multiple spaces and respects \n
+     * @param {CanvasRenderingContext2D} ctx - Canvas context
+     * @param {string} text - Input text
+     * @param {number} maxWidth - Maximum line width
+     * @returns {string[]} Array of lines
      */
     smartWrap(ctx, text, maxWidth) {
-        // 1. Split berdasarkan Baris Baru (\n) dulu (Manual Enter dari user)
+        // Step 1: Split by manual newlines first
         const paragraphs = text.split('\n');
-        let allLines = [];
+        const allLines = [];
 
-        for (let paragraph of paragraphs) {
-            // 2. Split berdasarkan Spasi tapi simpan spasinya (Regex capture group)
-            const parts = paragraph.split(/(\s+)/);
-            let currentLine = "";
+        for (const paragraph of paragraphs) {
+            // Handle empty paragraphs (consecutive newlines)
+            if (paragraph === '') {
+                allLines.push('');
+                continue;
+            }
 
-            for (let part of parts) {
-                const testLine = currentLine + part;
-                const metrics = ctx.measureText(testLine);
-                
-                if (metrics.width <= maxWidth) {
-                    currentLine += part;
+            // Step 2: Split by whitespace but PRESERVE the whitespace tokens
+            // Regex captures whitespace as separate tokens
+            const tokens = paragraph.split(/(\s+)/);
+            let currentLine = '';
+
+            for (const token of tokens) {
+                const testLine = currentLine + token;
+                const testWidth = ctx.measureText(testLine).width;
+
+                if (testWidth <= maxWidth) {
+                    // Fits - add to current line
+                    currentLine = testLine;
                 } else {
-                    // Overflow!
-                    // Jangan push baris kosong (misal spasi doang di awal)
-                    if (currentLine.trim() !== "") {
+                    // Doesn't fit - handle overflow
+                    
+                    // Push current line if it has content
+                    if (currentLine !== '') {
                         allLines.push(currentLine);
                     }
+
+                    // Check if this single token is wider than maxWidth
+                    const tokenWidth = ctx.measureText(token).width;
                     
-                    // Reset current line dengan kata yang bikin overflow
-                    // Tapi cek dulu, kalau kata ini SENDIRIAN aja udah overflow (misal: "AAAAAAAAAAAA")
-                    // Kita harus paksa potong (Break-Word/Character)
-                    if (ctx.measureText(part).width > maxWidth) {
-                        // Kasus Kata Super Panjang: Biarkan dia masuk currentLine, 
-                        // nanti loop utama (do-while) yang akan mengecilkan font size sampai kata ini muat.
-                        currentLine = part;
+                    if (tokenWidth > maxWidth) {
+                        // Token itself is too wide - character-level break
+                        const brokenLines = this.breakLongWord(ctx, token, maxWidth);
+                        
+                        // Add all but the last line
+                        for (let i = 0; i < brokenLines.length - 1; i++) {
+                            allLines.push(brokenLines[i]);
+                        }
+                        
+                        // Continue with the last fragment
+                        currentLine = brokenLines[brokenLines.length - 1] || '';
                     } else {
-                        currentLine = part;
+                        // Token fits on a new line
+                        // Trim leading whitespace for new lines (optional behavior)
+                        currentLine = token.trimStart() || token;
                     }
                 }
             }
-            if (currentLine) allLines.push(currentLine);
+
+            // Push remaining content
+            if (currentLine !== '') {
+                allLines.push(currentLine);
+            }
         }
-        
+
         return allLines;
+    }
+
+    /**
+     * Break a long word that exceeds maxWidth into multiple lines
+     * Character-level breaking for super long words
+     * @param {CanvasRenderingContext2D} ctx - Canvas context
+     * @param {string} word - Long word to break
+     * @param {number} maxWidth - Maximum width
+     * @returns {string[]} Array of word fragments
+     */
+    breakLongWord(ctx, word, maxWidth) {
+        const fragments = [];
+        let currentFragment = '';
+
+        for (const char of word) {
+            const testFragment = currentFragment + char;
+            const testWidth = ctx.measureText(testFragment).width;
+
+            if (testWidth <= maxWidth) {
+                currentFragment = testFragment;
+            } else {
+                if (currentFragment !== '') {
+                    fragments.push(currentFragment);
+                }
+                currentFragment = char;
+            }
+        }
+
+        if (currentFragment !== '') {
+            fragments.push(currentFragment);
+        }
+
+        return fragments;
     }
 }
 
