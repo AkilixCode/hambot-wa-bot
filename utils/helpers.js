@@ -113,20 +113,29 @@ async function smartSearchIMDb(query) {
 /**
  * Get valid high-resolution poster URL
  * Uses HTTP client with proxy support
+ * Tries multiple HD resolutions, falls back to original if none available
  */
 async function getValidPosterUrl(originalUrl) {
     if (!originalUrl || originalUrl === 'N/A') {
         return 'https://via.placeholder.com/600x900?text=No+Poster';
     }
     
-    const hdUrl = originalUrl.replace(/\._V1_.*\.jpg$/i, '._V1_SX2000.jpg');
+    // HD resolutions to try (from highest to lowest)
+    const hdResolutions = ['SX2000', 'SX1500', 'SX1200', 'SX1000', 'SX800'];
     
-    try {
-        await httpClient.head(hdUrl, { timeout: 2000 });
-        return hdUrl;
-    } catch (e) { 
-        return originalUrl; 
+    for (const resolution of hdResolutions) {
+        const hdUrl = originalUrl.replace(/\._V1_.*\.jpg$/i, `._V1_${resolution}.jpg`);
+        
+        try {
+            await httpClient.head(hdUrl, { timeout: 2000 });
+            return hdUrl;
+        } catch {
+            // Try next resolution
+        }
     }
+    
+    // All HD attempts failed, return original URL
+    return originalUrl;
 }
 
 /**
