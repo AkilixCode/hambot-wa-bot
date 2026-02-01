@@ -62,6 +62,7 @@ try {
     // Test isOwner with @lid format (direct match)
     const testConfig4 = new Config.constructor();
     testConfig4.bot.ownerId = '12345678901234@lid';
+    testConfig4.bot.ownerIds = ['12345678901234@lid']; // Also set ownerIds array
     assert(testConfig4.isOwner('12345678901234@lid') === true, 
            'Config: isOwner matches @lid format (direct match)');
     assert(testConfig4.isOwner('6281234567890@s.whatsapp.net') === false, 
@@ -70,10 +71,21 @@ try {
     // Test isOwner with @s.whatsapp.net format
     const testConfig5 = new Config.constructor();
     testConfig5.bot.ownerId = '6281234567890@s.whatsapp.net';
+    testConfig5.bot.ownerIds = ['6281234567890@s.whatsapp.net']; // Also set ownerIds array
     assert(testConfig5.isOwner('6281234567890@s.whatsapp.net') === true, 
            'Config: isOwner matches @s.whatsapp.net format (direct match)');
     assert(testConfig5.isOwner('12345678901234@lid') === false, 
            'Config: isOwner rejects @lid when owner uses @s.whatsapp.net');
+    
+    // Test dual owner ID support
+    const testConfig6 = new Config.constructor();
+    testConfig6.bot.ownerIds = ['6281234567890@s.whatsapp.net', '12345678901234@lid'];
+    assert(testConfig6.isOwner('6281234567890@s.whatsapp.net') === true, 
+           'Config: isOwner matches first owner ID in dual setup');
+    assert(testConfig6.isOwner('12345678901234@lid') === true, 
+           'Config: isOwner matches second owner ID in dual setup');
+    assert(testConfig6.isOwner('999999999@s.whatsapp.net') === false, 
+           'Config: isOwner rejects non-owner in dual setup');
     
     // Restore original owner ID
     if (originalOwnerId) {

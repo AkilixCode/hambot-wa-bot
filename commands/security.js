@@ -321,28 +321,96 @@ class SecurityCommand extends CommandBase {
         await this.react(sock, msg, '✅');
     }
 
+    /**
+     * Parse target user from various input formats
+     * Supports: mentions, phone numbers, @lid format, @s.whatsapp.net format
+     * @param {string} input - User input
+     * @param {Object} msg - Message object (for extracting mentioned users)
+     * @returns {Object} { userId: string, displayName: string } or null
+     */
+    parseBlockTarget(input, msg) {
+        if (!input) return null;
+        
+        // Check if there's a mentioned user in the message
+        const mentionedJid = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+        if (mentionedJid && mentionedJid.length > 0) {
+            // Use the first mentioned user
+            const jid = mentionedJid[0];
+            return { userId: jid, displayName: jid.split('@')[0] };
+        }
+        
+        // Check if input already has @ suffix
+        if (input.includes('@')) {
+            return { userId: input.trim(), displayName: input.split('@')[0] };
+        }
+        
+        // Handle phone number input
+        let number = input.replace(/\D/g, ''); // Remove non-digit characters
+        
+        if (!number) return null;
+        
+        // Handle Indonesian format (0xxx -> 62xxx)
+        if (number.startsWith('0')) {
+            number = '62' + number.substring(1);
+        }
+        
+        // Validate length (typical phone numbers are 10-15 digits)
+        if (number.length < 10 || number.length > 15) {
+            return null;
+        }
+        
+        // Default to @s.whatsapp.net format for phone numbers
+        return { 
+            userId: `${number}@s.whatsapp.net`, 
+            displayName: number 
+        };
+    }
+
     async handleBlock(sock, from, msg, args) {
-        const target = args[0];
+        const targetInput = args[0];
         const minutes = parseInt(args[1]) || 60;
         
-        if (!target) {
+        if (!targetInput) {
             return await this.reply(sock, from, msg, 
                 '❌ Tentukan pengguna yang ingin diblokir.\n\n' +
                 '*Cara Pakai:*\n' +
-                '`.security block 62812345678 60` - Blokir selama 60 menit');
+                '• `.security block @mention 60` - Blokir via mention\n' +
+                '• `.security block 62812345678 60` - Blokir via nomor\n' +
+                '• `.security block 081234567890 30` - Blokir 30 menit\n' +
+                '• `.security block user@lid 60` - Blokir via @lid format\n\n' +
+                '*Catatan:*\n' +
+                '• Owner bot tidak dapat diblokir\n' +
+                '• Format ID: @s.whatsapp.net (privat) atau @lid (grup)');
         }
 
-        // Convert phone number to WhatsApp ID format
-        const userId = target.includes('@') ? target : `${target}@s.whatsapp.net`;
+        // Parse the target using smart detection
+        const target = this.parseBlockTarget(targetInput, msg);
+        
+        if (!target) {
+            return await this.reply(sock, from, msg,
+                '❌ Format target tidak valid!\n\n' +
+                'Gunakan @mention, nomor telepon, atau ID WhatsApp lengkap');
+        }
+        
         const durationMs = minutes * 60 * 1000;
         
-        security.blockUser(userId, durationMs, 'Diblokir manual oleh owner');
+        // Try to block (this will fail if target is owner)
+        const result = security.blockUser(target.userId, durationMs, 'Diblokir manual oleh owner');
+        
+        if (!result.success) {
+            return await this.reply(sock, from, msg, 
+                `❌ *Gagal Memblokir*\n\n` +
+                `Alasan: ${result.reason}\n` +
+                `Target: ${target.displayName}`);
+        }
         
         await this.reply(sock, from, msg, 
             `⛔ *Pengguna Diblokir*\n\n` +
-            `Pengguna: ${target}\n` +
-            `Durasi: ${minutes} menit\n` +
-            `Alasan: Diblokir manual oleh owner`);
+            `📱 Pengguna: ${target.displayName}\n` +
+            `🆔 ID: ${target.userId}\n` +
+            `⏱️ Durasi: ${minutes} menit\n` +
+            `📝 Alasan: Diblokir manual oleh owner\n\n` +
+            `_Bot tidak akan merespon pengguna ini selama durasi blokir._`);
         await this.react(sock, msg, '✅');
     }
 

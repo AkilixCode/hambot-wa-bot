@@ -7,6 +7,7 @@ const config = require('./config');
 const logger = require('./utils/logger');
 const browserManager = require('./utils/browser-manager');
 const cache = require('./utils/cache');
+const security = require('./utils/security');
 
 // Use the modular handler directly
 const handler = require('./handler');
@@ -17,6 +18,13 @@ async function startBot() {
     try {
         // Validate configuration
         config.validate();
+        
+        // Safety fallback: Clear any blocks on owner IDs on startup
+        // This prevents owner from being locked out if accidentally blocked
+        const clearedBlocks = security.clearOwnerBlocks();
+        if (clearedBlocks > 0) {
+            logger.info(`Safety fallback: Cleared ${clearedBlocks} block(s) on owner IDs`);
+        }
         
         const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
