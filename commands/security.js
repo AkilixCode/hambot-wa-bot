@@ -978,10 +978,10 @@ class SecurityCommand extends CommandBase {
         const days = Math.floor(hours / 24);
 
         const parts = [];
-        if (days > 0) parts.push(`${days}h`);
-        if (hours % 24 > 0) parts.push(`${hours % 24}j`);
-        if (minutes % 60 > 0) parts.push(`${minutes % 60}m`);
-        if (seconds % 60 > 0 || parts.length === 0) parts.push(`${seconds % 60}d`);
+        if (days > 0) parts.push(`${days} hari`);
+        if (hours % 24 > 0) parts.push(`${hours % 24} jam`);
+        if (minutes % 60 > 0) parts.push(`${minutes % 60} menit`);
+        if (seconds % 60 > 0 || parts.length === 0) parts.push(`${seconds % 60} detik`);
 
         return parts.join(' ');
     }
