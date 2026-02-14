@@ -1,5 +1,255 @@
 # HamBot Update Report
 
+**Date:** February 14, 2026  
+**Version:** 2.7.0  
+**Author:** GitHub Copilot AI
+
+---
+
+## 📋 Ringkasan Perubahan (v2.7.0)
+
+Update ini mengubah perintah `.security` menjadi **Owner Control Panel** lengkap dengan kemampuan kontrol penuh atas bot:
+
+1. **Full Owner Control Panel** - `.security` sekarang adalah panel kontrol owner yang komprehensif dengan 18+ subcommand
+2. **Log Retrieval** - Owner bisa menarik log bot langsung ke WhatsApp chat sebagai teks atau file .txt
+3. **Runtime Configuration** - Ubah cooldown, prefix, max proses, dan mode owner-only tanpa restart
+4. **System Monitoring** - Lihat uptime, penggunaan memori, info CPU, dan statistik cache secara real-time
+5. **Broadcast Messaging** - Kirim pesan ke chat/grup manapun langsung dari panel owner
+6. **Cache Management** - Bersihkan cache bot dengan statistik detail
+7. **Environment Viewer** - Lihat semua pengaturan runtime bot (tanpa expose data sensitif)
+
+---
+
+## 🔄 Perubahan Detail (v2.7.0)
+
+### 1. Full Owner Control Panel (`.security`)
+
+**Masalah:**
+Perintah `.security` sebelumnya hanya memiliki fitur dasar untuk manajemen keamanan (block/unblock, enable/disable fitur, restart/stop). Owner membutuhkan kontrol penuh atas bot tanpa harus mengakses server secara langsung.
+
+**Solusi:**
+Mengubah `.security` menjadi panel kontrol owner yang komprehensif dengan semua fitur yang dibutuhkan untuk mengelola bot dari WhatsApp.
+
+#### Subcommand Baru yang Ditambahkan:
+
+**`.security uptime`** - Menampilkan informasi sistem lengkap:
+- Bot uptime, PID, Node.js version
+- Penggunaan memori (heap, RSS, external)
+- Info OS, CPU cores, RAM usage
+- Statistik cache (entries, hits, misses, hit rate)
+
+**`.security env`** - Menampilkan pengaturan runtime (non-sensitif):
+- Konfigurasi bot (nama, owner, prefix, owner IDs)
+- Performance settings (cooldown, max proses, rate limit)
+- Media settings (max durasi, file size, proxy status)
+- Security settings dan API key status (hanya ✅/❌, bukan key-nya)
+
+**`.security logs [jumlah]`** - Menarik log bot ke WhatsApp:
+- Mencoba PM2 log files terlebih dahulu
+- Fallback ke PM2 command `pm2 logs --nostream`
+- Fallback terakhir ke in-memory security event logs
+- Log pendek dikirim sebagai teks biasa
+- Log panjang (>4000 karakter) dikirim sebagai file .txt
+
+**`.security owneronly <on|off>`** - Toggle owner-only mode:
+- `on`: Bot hanya merespon di grup, chat privat diabaikan
+- `off`: Bot merespon semua chat (privat & grup)
+- Perubahan berlaku langsung tanpa restart
+
+**`.security setcooldown <ms>`** - Ubah cooldown default:
+- Rentang valid: 500ms - 30000ms (30 detik)
+- Menampilkan nilai sebelum dan sesudah
+- Berlaku untuk perintah selanjutnya
+
+**`.security setprefix <prefix>`** - Ubah command prefix:
+- Maksimal 3 karakter
+- Menampilkan prefix baru yang harus digunakan
+- Berlaku langsung
+
+**`.security setmaxproc <n>`** - Ubah max proses berat:
+- Rentang valid: 1 - 20
+- Mengontrol berapa banyak heavy command bisa berjalan bersamaan
+
+**`.security clearcache`** - Bersihkan cache bot:
+- Menampilkan jumlah entri yang dihapus
+- Menampilkan statistik cache sebelum pembersihan (hits, misses, hit rate)
+
+**`.security broadcast <jid> <pesan>`** - Kirim pesan ke chat tertentu:
+- Support format JID: `nomor@s.whatsapp.net` (privat) atau `id@g.us` (grup)
+- Validasi format JID sebelum pengiriman
+- Konfirmasi pengiriman dengan preview pesan
+
+#### Subcommand yang Sudah Ada (Dipertahankan):
+- `.security status` - Ditingkatkan dengan uptime dan bot settings info
+- `.security help` - Diperbarui dengan semua subcommand baru, dikelompokkan per kategori
+- `.security enable/disable <fitur>` - Toggle chatFilter, rateLimit, autoBlock
+- `.security block/unblock` - Manajemen blokir pengguna
+- `.security list` - Daftar pengguna terblokir
+- `.security restart/stop` - Kontrol PM2
+
+### 2. Perubahan Teknis
+
+**Import Baru di `commands/security.js`:**
+```javascript
+const cache = require('../utils/cache');
+const logger = require('../utils/logger');
+const os = require('os');
+const fs = require('fs');
+const path = require('path');
+```
+
+**Bot Start Time Tracking:**
+```javascript
+const botStartTime = Date.now();
+```
+Variabel ini digunakan untuk menghitung uptime bot secara akurat.
+
+**Utility Methods Baru:**
+- `_formatDuration(ms)` - Format durasi dalam format Indonesia (h/j/m/d)
+- `_formatBytes(bytes)` - Format ukuran file (B/KB/MB/GB)
+- `_getPm2Logs(processName, lineCount)` - Ambil log dari PM2
+- `_getInMemoryLogs(lineCount)` - Ambil log dari memori sebagai fallback
+
+### 3. Keamanan
+
+Semua fitur baru dilindungi oleh:
+- Verifikasi owner ID sebelum eksekusi (menggunakan `config.isOwner()`)
+- Logging akses tidak sah ke security events
+- Validasi input pada semua parameter (rentang nilai, format, dll.)
+- API keys tidak pernah di-expose (hanya status ✅/❌)
+- Broadcast hanya bisa dilakukan oleh owner
+- Semua perubahan runtime bisa di-reset dengan restart bot
+
+---
+
+## ⚠️ Breaking Changes
+
+Tidak ada breaking changes. Semua subcommand yang sudah ada tetap berfungsi seperti sebelumnya.
+
+---
+
+## 📌 Saran untuk AI Session Berikutnya
+
+### ✅ Yang Harus Diperhatikan:
+
+1. **Config Singleton Pattern**
+   - `config.js` menggunakan `module.exports = new Config()` (singleton)
+   - Perubahan runtime pada `config.bot.prefix`, `config.performance.cooldownMs`, dll. akan bertahan selama proses berjalan
+   - Tapi tidak persisten setelah restart (kembali ke nilai .env)
+   - Jika ingin persisten, perlu implementasi file-based config storage
+
+2. **Pre-existing Test Failures**
+   - `test-security.cjs` memiliki 2 test failures yang sudah ada sebelumnya:
+     - "Permission for security granted (dev-mode)" - Gagal karena test mengset `OWNER_ONLY_COMMANDS=security` via env, tapi config sudah di-inisialisasi
+     - "Permission for tagall denied (admin-only in groups)" - `tagall` tidak ada di `adminOnlyInGroups` array
+   - Jangan perbaiki test ini kecuali diminta khusus, karena ini bukan regresi
+
+3. **Log Retrieval Strategy**
+   - Log retrieval menggunakan 3 fallback:
+     1. PM2 log files di `~/.pm2/logs/`
+     2. PM2 `logs --nostream` command
+     3. In-memory security events
+   - Pastikan PM2 process name sesuai dengan `PM2_PROCESS_NAME` env var
+
+4. **Runtime vs Persistent Configuration**
+   - Perubahan via `.security setprefix`, `.security setcooldown`, dll. hanya berlaku di runtime
+   - Setelah restart, kembali ke nilai default dari `.env`
+   - Jika ingin fitur persistent config, pertimbangkan menggunakan JSON file storage
+
+5. **Mobile-First Design** (dari session sebelumnya)
+   - Semua output harus readable di WhatsApp mobile
+   - Hindari tabel ASCII - gunakan format list dengan emoji
+   - Batasi lebar line agar tidak wrap aneh
+
+### ❌ Yang Harus Dihindari:
+
+1. **Jangan tambahkan `eval()` command**
+   - Meskipun owner-only, eval adalah security risk besar
+   - Arbitrary code execution bisa membocorkan credentials
+   - Gunakan subcommand spesifik sebagai gantinya
+
+2. **Jangan expose API keys atau credentials**
+   - `.security env` hanya menampilkan status (✅/❌)
+   - Jangan pernah mengirim actual key values ke WhatsApp chat
+
+3. **Jangan bypass owner check**
+   - Semua subcommand baru harus melalui `config.isOwner()` check
+   - Jangan gunakan hardcoded owner IDs
+
+4. **Jangan gunakan `process.exit()` sembarangan**
+   - Hanya untuk restart/stop yang diminta owner
+   - Selalu kirim pesan konfirmasi sebelum exit
+
+5. **Jangan hapus atau modifikasi test yang sudah ada**
+   - 2 test failures di `test-security.cjs` adalah pre-existing
+   - Jangan "fix" test dengan mengubah expected behavior
+
+### 💡 Ide Pengembangan Selanjutnya:
+
+1. **Persistent Configuration**
+   - Simpan perubahan runtime ke file JSON
+   - Load config dari JSON saat startup, fallback ke .env
+   - Command: `.security save` untuk menyimpan konfigurasi saat ini
+
+2. **Command Usage Analytics**
+   - Track penggunaan setiap command
+   - `.security stats` untuk melihat command paling populer
+   - Identifikasi fitur yang jarang digunakan
+
+3. **Scheduled Messages**
+   - `.security schedule <time> <jid> <message>`
+   - Kirim pesan terjadwal
+
+4. **User Notes/Tags**
+   - `.security note <user> <note>` - Tambah catatan untuk user
+   - Berguna untuk tracking behavior sebelum block
+
+5. **Auto-Reply System**
+   - `.security autoreply <pattern> <response>`
+   - Set auto-reply untuk pola pesan tertentu
+
+6. **Backup & Restore**
+   - `.security backup` - Export semua settings sebagai JSON
+   - `.security restore` - Import settings dari JSON
+
+---
+
+## 📂 Files Changed in This Update
+
+| File | Action | Description |
+|------|--------|-------------|
+| `commands/security.js` | MODIFIED | Ditingkatkan menjadi full owner control panel dengan 9 subcommand baru |
+| `UPDATE-REPORT.md` | MODIFIED | Ditambahkan dokumentasi v2.7.0 |
+
+---
+
+## 📊 Statistik Perubahan
+
+- **Lines Added:** ~570
+- **Lines Removed:** ~12
+- **New Subcommands:** 9 (logs, owneronly, setcooldown, setprefix, setmaxproc, clearcache, broadcast, uptime, env)
+- **Total Subcommands:** 18 (termasuk yang sudah ada)
+- **Test Regressions:** 0 (semua test yang pass sebelumnya tetap pass)
+
+---
+
+## 📞 Contact
+
+For issues or questions about these changes, refer to:
+- Repository: `AkilixCode/hambot-wa-bot`
+- Custom Instructions: `README-FOR-AI.md`
+
+---
+
+*This report was generated by GitHub Copilot AI on February 14, 2026.*
+
+---
+---
+
+# Previous Updates
+
+---
+
 **Date:** February 1, 2026  
 **Version:** 2.6.0  
 **Author:** GitHub Copilot AI
