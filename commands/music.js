@@ -11,6 +11,7 @@ const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers
 const { identifyPlatform, isAudioSupported, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
 const fsPromises = require('fs').promises;
 const config = require('../config');
+const logger = require('../utils/logger');
 
 class MusicCommand extends CommandBase {
     constructor() {
@@ -45,6 +46,28 @@ class MusicCommand extends CommandBase {
         });
     }
 
+    /**
+     * Execute yt-dlp with proxy fallback support
+     * If proxy is enabled and the command fails, retries without proxy using local IP
+     * @param {string[]} baseArgs - Base yt-dlp arguments (without proxy/network args)
+     * @param {string[]} proxyArgs - Proxy arguments from config
+     * @param {string[]} networkArgs - Network arguments (e.g., --force-ipv4)
+     */
+    async spawnYtDlpWithFallback(baseArgs, proxyArgs, networkArgs) {
+        const fullArgs = [...baseArgs, ...networkArgs, ...proxyArgs];
+        try {
+            return await this.spawnYtDlp(fullArgs);
+        } catch (error) {
+            // If proxy was used and fallback is enabled, retry without proxy
+            if (proxyArgs.length > 0 && config.network.fallbackToLocal) {
+                logger.warn('Proxy failed for yt-dlp, falling back to local IP');
+                const fallbackArgs = [...baseArgs, ...networkArgs];
+                return await this.spawnYtDlp(fallbackArgs);
+            }
+            throw error;
+        }
+    }
+
     async execute(sock, msg, args, context) {
         const { from } = context;
 
@@ -73,6 +96,8 @@ class MusicCommand extends CommandBase {
         
         // Build proxy args from config - uses getYtDlpProxyArgs method
         const proxyArgs = config.getYtDlpProxyArgs();
+        // Build network args from config (e.g., --force-ipv4)
+        const networkArgs = config.getYtDlpNetworkArgs();
 
         // Check if input is a URL
         const isUrl = isValidUrl(query);
@@ -102,11 +127,9 @@ class MusicCommand extends CommandBase {
                         videoUrl,
                         '--dump-json',
                         '--no-playlist',
-                        '--force-ipv4',
                         ...platformArgs,
-                        ...proxyArgs
                     ];
-                    const infoResult = await this.spawnYtDlp(infoArgs);
+                    const infoResult = await this.spawnYtDlpWithFallback(infoArgs, proxyArgs, networkArgs);
                     const videoInfo = JSON.parse(infoResult.trim().split('\n')[0]);
                     
                     if (videoInfo.duration && videoInfo.duration > config.media.maxDuration) {
@@ -128,11 +151,9 @@ class MusicCommand extends CommandBase {
                     '--no-playlist',
                     '--flat-playlist',
                     '--extractor-args', 'youtube:player_client=android',
-                    '--force-ipv4',
-                    ...proxyArgs
                 ];
 
-                const searchResult = await this.spawnYtDlp(searchArgs);
+                const searchResult = await this.spawnYtDlpWithFallback(searchArgs, proxyArgs, networkArgs);
 
                 const videos = searchResult.trim().split('\n').map(line => {
                     try { return JSON.parse(line); } 
@@ -167,13 +188,11 @@ class MusicCommand extends CommandBase {
                 '--audio-quality', '0',        // Best quality
                 '-o', outputPath,
                 '--max-filesize', '200M',      // Safety cap for 3GB data limit
-                '--force-ipv4',
                 '--no-warnings',
                 ...downloadPlatformArgs,
-                ...proxyArgs
             ];
 
-            await this.spawnYtDlp(downloadArgs);
+            await this.spawnYtDlpWithFallback(downloadArgs, proxyArgs, networkArgs);
 
             // Find downloaded file
             const files = await fsPromises.readdir('./');

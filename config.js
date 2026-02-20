@@ -80,6 +80,17 @@ class Config {
             // Full proxy URL (takes priority if set)
             url: this._buildProxyUrl()
         };
+
+        // Network configuration for yt-dlp and other CLI tools
+        // Controls how commands connect to the internet
+        this.network = {
+            // Force IPv4 for yt-dlp connections (default: true for compatibility)
+            // Set to false if your network supports IPv6 or if IPv4 causes issues
+            forceIPv4: process.env.FORCE_IPV4 !== 'false',
+            // When proxy is enabled, fall back to local IP if proxy fails (default: true)
+            // This ensures commands still work even if the proxy is temporarily unavailable
+            fallbackToLocal: process.env.NETWORK_FALLBACK_TO_LOCAL !== 'false'
+        };
     }
 
     /**
@@ -161,6 +172,14 @@ class Config {
     getYtDlpProxyArgs() {
         const proxyUrl = this.getProxyUrl();
         return proxyUrl ? ['--proxy', proxyUrl] : [];
+    }
+
+    /**
+     * Get network arguments for yt-dlp (e.g., --force-ipv4)
+     * Configurable via FORCE_IPV4 env var
+     */
+    getYtDlpNetworkArgs() {
+        return this.network.forceIPv4 ? ['--force-ipv4'] : [];
     }
 
     /**

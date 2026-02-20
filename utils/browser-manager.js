@@ -18,6 +18,7 @@ class BrowserManager {
         this.maxPages = 5;
         this.isLaunching = false;
         this.healthCheckInterval = null;
+        this.usingProxy = false;
     }
 
     /**
@@ -52,8 +53,9 @@ class BrowserManager {
     /**
      * Launch new browser instance
      * Includes proxy configuration if enabled
+     * @param {boolean} useProxy - Whether to use proxy (default: true, uses config)
      */
-    async launch() {
+    async launch(useProxy = true) {
         this.isLaunching = true;
 
         try {
@@ -71,11 +73,17 @@ class BrowserManager {
                 '--disable-features=IsolateOrigins,site-per-process'
             ];
 
-            // Add proxy arguments if enabled
-            const proxyArgs = config.getPuppeteerProxyArgs();
-            if (proxyArgs.length > 0) {
-                launchArgs.push(...proxyArgs);
-                logger.info(`Browser using proxy: ${config.getProxyUrl()}`);
+            // Add proxy arguments if enabled and requested
+            this.usingProxy = false;
+            if (useProxy) {
+                const proxyArgs = config.getPuppeteerProxyArgs();
+                if (proxyArgs.length > 0) {
+                    launchArgs.push(...proxyArgs);
+                    this.usingProxy = true;
+                    logger.info(`Browser using proxy: ${config.getProxyUrl()}`);
+                }
+            } else {
+                logger.info('Browser launched without proxy (local IP)');
             }
             
             this.browser = await puppeteer.launch({
@@ -95,6 +103,16 @@ class BrowserManager {
         } finally {
             this.isLaunching = false;
         }
+    }
+
+    /**
+     * Relaunch browser without proxy (fallback to local IP)
+     * Used when proxy is unavailable and fallback is enabled
+     */
+    async relaunchWithoutProxy() {
+        logger.warn('Relaunching browser without proxy (falling back to local IP)');
+        await this.destroy();
+        return await this.launch(false);
     }
 
     /**

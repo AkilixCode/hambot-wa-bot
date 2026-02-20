@@ -10,6 +10,7 @@ const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers
 const { identifyPlatform, isVideoSupported, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
 const fsPromises = require('fs').promises;
 const config = require('../config');
+const logger = require('../utils/logger');
 
 // Video format selector: prefer mp4, fallback to best available
 const VIDEO_FORMAT_SELECTOR = 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best';
@@ -45,6 +46,28 @@ class VideoCommand extends CommandBase {
             });
             proc.on('error', (err) => reject(err));
         });
+    }
+
+    /**
+     * Execute yt-dlp with proxy fallback support
+     * If proxy is enabled and the command fails, retries without proxy using local IP
+     * @param {string[]} baseArgs - Base yt-dlp arguments (without proxy/network args)
+     * @param {string[]} proxyArgs - Proxy arguments from config
+     * @param {string[]} networkArgs - Network arguments (e.g., --force-ipv4)
+     */
+    async spawnYtDlpWithFallback(baseArgs, proxyArgs, networkArgs) {
+        const fullArgs = [...baseArgs, ...networkArgs, ...proxyArgs];
+        try {
+            return await this.spawnYtDlp(fullArgs);
+        } catch (error) {
+            // If proxy was used and fallback is enabled, retry without proxy
+            if (proxyArgs.length > 0 && config.network.fallbackToLocal) {
+                logger.warn('Proxy failed for yt-dlp, falling back to local IP');
+                const fallbackArgs = [...baseArgs, ...networkArgs];
+                return await this.spawnYtDlp(fallbackArgs);
+            }
+            throw error;
+        }
     }
 
     async execute(sock, msg, args, context) {
@@ -96,6 +119,8 @@ class VideoCommand extends CommandBase {
         
         // Build proxy args from config - uses getYtDlpProxyArgs method
         const proxyArgs = config.getYtDlpProxyArgs();
+        // Build network args from config (e.g., --force-ipv4)
+        const networkArgs = config.getYtDlpNetworkArgs();
 
         // Get platform-specific arguments
         const platformArgs = getPlatformArgs(url);
@@ -113,16 +138,14 @@ class VideoCommand extends CommandBase {
                 url,
                 '--dump-json',
                 '--no-playlist',
-                '--force-ipv4',
                 ...platformArgs,
-                ...proxyArgs
             ];
 
             let videoTitle = 'Video';
             let videoDuration = 0;
 
             try {
-                const infoResult = await this.spawnYtDlp(infoArgs);
+                const infoResult = await this.spawnYtDlpWithFallback(infoArgs, proxyArgs, networkArgs);
                 const videoInfo = JSON.parse(infoResult.trim().split('\n')[0]);
                 
                 videoTitle = videoInfo.title || 'Video';
@@ -146,13 +169,11 @@ class VideoCommand extends CommandBase {
                 '--merge-output-format', 'mp4',  // Ensure output is mp4
                 '-o', outputPath,
                 '--max-filesize', '200M',        // Safety cap for 3GB data limit
-                '--force-ipv4',
                 '--no-warnings',
                 ...platformArgs,
-                ...proxyArgs
             ];
 
-            await this.spawnYtDlp(downloadArgs);
+            await this.spawnYtDlpWithFallback(downloadArgs, proxyArgs, networkArgs);
 
             // Find downloaded file
             const files = await fsPromises.readdir('./');

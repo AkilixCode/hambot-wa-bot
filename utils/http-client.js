@@ -98,7 +98,54 @@ function createHttpClient(customConfig = {}) {
 }
 
 /**
- * Make HTTP GET request with proxy support
+ * Create axios instance WITHOUT proxy (for local/direct connection)
+ * Used as fallback when proxy is unavailable
+ * @param {Object} customConfig - Custom axios config to merge
+ * @returns {Object} axios instance
+ */
+function createLocalHttpClient(customConfig = {}) {
+    const baseConfig = {
+        timeout: 30000,
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        ...customConfig
+    };
+
+    // Explicitly disable proxy
+    baseConfig.proxy = false;
+
+    return axios.create(baseConfig);
+}
+
+/**
+ * Check if an error is a proxy/connection-level error (not an HTTP status error)
+ * Used to determine if a fallback to local IP should be attempted
+ * @param {Error} error - The error to check
+ * @returns {boolean} true if the error suggests a proxy/connection failure
+ */
+function isProxyConnectionError(error) {
+    // Connection-level errors that suggest the proxy is unavailable
+    const connectionErrorCodes = [
+        'ECONNREFUSED', 'ETIMEDOUT', 'ECONNABORTED', 'ENOTFOUND',
+        'ENETUNREACH', 'EHOSTUNREACH', 'ECONNRESET', 'EPIPE', 'EAI_AGAIN'
+    ];
+
+    if (error.code && connectionErrorCodes.includes(error.code)) return true;
+
+    // Axios timeout or SOCKS proxy errors
+    if (error.message && (
+        error.message.includes('timeout') ||
+        error.message.includes('SOCKS') ||
+        error.message.includes('socket disconnected') ||
+        error.message.includes('Proxy connection')
+    )) return true;
+
+    return false;
+}
+
+/**
+ * Make HTTP GET request with proxy support and local IP fallback
  * @param {string} url - URL to fetch
  * @param {Object} options - Axios request options
  * @returns {Promise} axios response
@@ -106,11 +153,20 @@ function createHttpClient(customConfig = {}) {
 async function get(url, options = {}) {
     const client = createHttpClient(options);
     applySocksProxy(client, options);
-    return client.get(url, options);
+    try {
+        return await client.get(url, options);
+    } catch (error) {
+        if (isProxyEnabled() && config.network.fallbackToLocal && isProxyConnectionError(error)) {
+            logger.warn('Proxy failed for HTTP GET, falling back to local IP');
+            const localClient = createLocalHttpClient(options);
+            return localClient.get(url, options);
+        }
+        throw error;
+    }
 }
 
 /**
- * Make HTTP POST request with proxy support
+ * Make HTTP POST request with proxy support and local IP fallback
  * @param {string} url - URL to post to
  * @param {Object} data - Request body
  * @param {Object} options - Axios request options
@@ -119,11 +175,20 @@ async function get(url, options = {}) {
 async function post(url, data = {}, options = {}) {
     const client = createHttpClient(options);
     applySocksProxy(client, options);
-    return client.post(url, data, options);
+    try {
+        return await client.post(url, data, options);
+    } catch (error) {
+        if (isProxyEnabled() && config.network.fallbackToLocal && isProxyConnectionError(error)) {
+            logger.warn('Proxy failed for HTTP POST, falling back to local IP');
+            const localClient = createLocalHttpClient(options);
+            return localClient.post(url, data, options);
+        }
+        throw error;
+    }
 }
 
 /**
- * Make HTTP HEAD request with proxy support
+ * Make HTTP HEAD request with proxy support and local IP fallback
  * @param {string} url - URL to check
  * @param {Object} options - Axios request options
  * @returns {Promise} axios response
@@ -131,7 +196,16 @@ async function post(url, data = {}, options = {}) {
 async function head(url, options = {}) {
     const client = createHttpClient(options);
     applySocksProxy(client, options);
-    return client.head(url, options);
+    try {
+        return await client.head(url, options);
+    } catch (error) {
+        if (isProxyEnabled() && config.network.fallbackToLocal && isProxyConnectionError(error)) {
+            logger.warn('Proxy failed for HTTP HEAD, falling back to local IP');
+            const localClient = createLocalHttpClient(options);
+            return localClient.head(url, options);
+        }
+        throw error;
+    }
 }
 
 /**
@@ -158,9 +232,11 @@ function getProxyStatus() {
 
 module.exports = {
     createHttpClient,
+    createLocalHttpClient,
     get,
     post,
     head,
     isProxyEnabled,
+    isProxyConnectionError,
     getProxyStatus
 };
