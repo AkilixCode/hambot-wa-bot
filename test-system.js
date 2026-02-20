@@ -98,6 +98,95 @@ try {
     assert(false, 'Config: Owner ID normalization tests failed');
 }
 
+// Test 1.2: Network configuration
+try {
+    const Config = require('./config');
+    
+    // Save original env vars
+    const origForceIPv4 = process.env.FORCE_IPV4;
+    const origFallback = process.env.NETWORK_FALLBACK_TO_LOCAL;
+    const origProxyEnabled = process.env.PROXY_ENABLED;
+    
+    // Test default values (forceIPv4 defaults to true, fallbackToLocal defaults to true)
+    delete process.env.FORCE_IPV4;
+    delete process.env.NETWORK_FALLBACK_TO_LOCAL;
+    const testNetConfig1 = new Config.constructor();
+    assert(testNetConfig1.network.forceIPv4 === true, 
+           'Config: Network forceIPv4 defaults to true');
+    assert(testNetConfig1.network.fallbackToLocal === true, 
+           'Config: Network fallbackToLocal defaults to true');
+    
+    // Test forceIPv4 can be disabled
+    process.env.FORCE_IPV4 = 'false';
+    const testNetConfig2 = new Config.constructor();
+    assert(testNetConfig2.network.forceIPv4 === false, 
+           'Config: Network forceIPv4 can be set to false');
+    
+    // Test fallbackToLocal can be disabled
+    process.env.NETWORK_FALLBACK_TO_LOCAL = 'false';
+    const testNetConfig3 = new Config.constructor();
+    assert(testNetConfig3.network.fallbackToLocal === false, 
+           'Config: Network fallbackToLocal can be set to false');
+    
+    // Test getYtDlpNetworkArgs returns --force-ipv4 when enabled
+    process.env.FORCE_IPV4 = 'true';
+    const testNetConfig4 = new Config.constructor();
+    const networkArgs = testNetConfig4.getYtDlpNetworkArgs();
+    assert(Array.isArray(networkArgs) && networkArgs.includes('--force-ipv4'), 
+           'Config: getYtDlpNetworkArgs returns --force-ipv4 when enabled');
+    
+    // Test getYtDlpNetworkArgs returns empty when disabled
+    process.env.FORCE_IPV4 = 'false';
+    const testNetConfig5 = new Config.constructor();
+    const emptyArgs = testNetConfig5.getYtDlpNetworkArgs();
+    assert(Array.isArray(emptyArgs) && emptyArgs.length === 0, 
+           'Config: getYtDlpNetworkArgs returns empty when forceIPv4 disabled');
+    
+    // Test getYtDlpProxyArgs returns empty when proxy disabled
+    delete process.env.PROXY_ENABLED;
+    const testNetConfig6 = new Config.constructor();
+    const noProxyArgs = testNetConfig6.getYtDlpProxyArgs();
+    assert(Array.isArray(noProxyArgs) && noProxyArgs.length === 0, 
+           'Config: getYtDlpProxyArgs returns empty when proxy disabled');
+    
+    // Restore original env vars
+    if (origForceIPv4 !== undefined) process.env.FORCE_IPV4 = origForceIPv4;
+    else delete process.env.FORCE_IPV4;
+    if (origFallback !== undefined) process.env.NETWORK_FALLBACK_TO_LOCAL = origFallback;
+    else delete process.env.NETWORK_FALLBACK_TO_LOCAL;
+    if (origProxyEnabled !== undefined) process.env.PROXY_ENABLED = origProxyEnabled;
+    else delete process.env.PROXY_ENABLED;
+} catch (error) {
+    console.error(error);
+    assert(false, 'Config: Network configuration tests failed');
+}
+
+// Test 1.3: HTTP Client proxy connection error detection
+try {
+    const { isProxyConnectionError } = require('./utils/http-client');
+    
+    // Connection errors should be detected
+    assert(isProxyConnectionError({ code: 'ECONNREFUSED' }) === true,
+           'HTTP Client: Detects ECONNREFUSED as proxy error');
+    assert(isProxyConnectionError({ code: 'ETIMEDOUT' }) === true,
+           'HTTP Client: Detects ETIMEDOUT as proxy error');
+    assert(isProxyConnectionError({ code: 'ECONNRESET' }) === true,
+           'HTTP Client: Detects ECONNRESET as proxy error');
+    assert(isProxyConnectionError({ message: 'SOCKS connection failed' }) === true,
+           'HTTP Client: Detects SOCKS errors');
+    
+    // Non-connection errors should not be detected
+    assert(isProxyConnectionError({ response: { status: 404 } }) === false,
+           'HTTP Client: Does not detect HTTP 404 as proxy error');
+    assert(isProxyConnectionError({ message: 'Request failed with status code 500' }) === false,
+           'HTTP Client: Does not detect HTTP 500 as proxy error');
+    assert(isProxyConnectionError({}) === false,
+           'HTTP Client: Does not detect empty error as proxy error');
+} catch (error) {
+    console.error(error);
+    assert(false, 'HTTP Client: Proxy connection error detection tests failed');
+}
+
 // Test 2: Cache System
 try {
     cache.clear();

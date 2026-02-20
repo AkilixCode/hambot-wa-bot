@@ -8,6 +8,8 @@ const { getRandomUA, sleep } = require('../utils/helpers');
 const browserManager = require('../utils/browser-manager');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
+const config = require('../config');
+const logger = require('../utils/logger');
 
 class PinterestCommand extends CommandBase {
     constructor() {
@@ -47,10 +49,30 @@ class PinterestCommand extends CommandBase {
                 await page.setUserAgent(getRandomUA());
 
                 const targetUrl = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
-                await page.goto(targetUrl, { 
-                    waitUntil: 'networkidle2', 
-                    timeout: 60000 
-                });
+                
+                try {
+                    await page.goto(targetUrl, { 
+                        waitUntil: 'networkidle2', 
+                        timeout: 60000 
+                    });
+                } catch (navError) {
+                    // If proxy is active and navigation failed, try fallback to local IP
+                    if (browserManager.usingProxy && config.network.fallbackToLocal) {
+                        logger.warn('Browser proxy failed for Pinterest, falling back to local IP');
+                        await browserManager.closePage(page);
+                        page = null;
+                        
+                        await browserManager.relaunchWithoutProxy();
+                        page = await browserManager.newPage();
+                        await page.setUserAgent(getRandomUA());
+                        await page.goto(targetUrl, { 
+                            waitUntil: 'networkidle2', 
+                            timeout: 60000 
+                        });
+                    } else {
+                        throw navError;
+                    }
+                }
 
                 // Scroll multiple times to load more images for better variety
                 for (let i = 0; i < 3; i++) {
