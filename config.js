@@ -9,7 +9,7 @@ class Config {
     constructor() {
         this.bot = {
             name: process.env.BOT_NAME || 'HamBot',
-            owner: process.env.BOT_OWNER || 'Ilham',
+            owner: process.env.BOT_OWNER || 'Name',
             prefix: process.env.BOT_PREFIX || '.',
             browser: ['HamBot', 'Chrome', '1.0.0'],
             // Private mode: ignore private messages when true
