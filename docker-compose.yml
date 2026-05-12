@@ -1,0 +1,65 @@
+# ============================================================
+# HamBot WhatsApp Bot - Docker Compose
+# ============================================================
+# Usage:
+#   cp .env.example .env          # Configure your API keys
+#   docker compose up -d          # Start in background
+#   docker compose logs -f        # Follow logs
+#   docker compose down           # Stop
+# ============================================================
+
+services:
+  hambot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hambot
+    restart: unless-stopped
+
+    # Environment from .env file
+    env_file:
+      - .env
+
+    # Override critical container settings
+    environment:
+      - NODE_ENV=production
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+    volumes:
+      # Persist WhatsApp auth session (survives container restarts)
+      - hambot_auth:/app/auth_info_baileys
+      # Persist logs
+      - hambot_logs:/app/logs
+      # Mount fonts directory (if customized locally)
+      # - ./fonts:/app/fonts:ro
+
+    # Memory & CPU limits (adjust based on your server)
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+
+    # Security: drop unnecessary Linux capabilities
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN  # Required by Chromium sandbox
+    security_opt:
+      - no-new-privileges:true
+
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  hambot_auth:
+    name: hambot_auth
+  hambot_logs:
+    name: hambot_logs
