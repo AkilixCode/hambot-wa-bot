@@ -3,7 +3,7 @@
  * Main message processing with security controls
  */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const config = require('./config');
 const cache = require('./utils/cache');
 const RateLimiter = require('./utils/rate-limiter');
