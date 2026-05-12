@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Environment (secrets)
+.env
+.env.local
+.env.*.local
+
+# WhatsApp Auth (persisted via Docker volume)
+auth_info_baileys/
+
+# Logs
+logs/
+*.log
+
+# Temporary media files
+*.tmp
+*.temp
+tmp/
+temp/
+music_*
+video_*
+media_*
+sticker_*
+tts_*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Build / CI
+dist/
+build/
+out/
+coverage/
+.nyc_output/
+
+# Tests (not needed in production image)
+test-*.js
+test-*.cjs
+
+# Documentation (not needed in production image)
+UPDATE-REPORT.md
+SECURITY.md
+README-FOR-AI.md
+*.pid
+*.seed
+*.pid.lock
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore

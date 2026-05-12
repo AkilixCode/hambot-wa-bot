@@ -18,6 +18,7 @@ Update ini fokus pada **modernisasi seluruh dependency stack** agar tetap kompat
 6. **Removed `os` npm shim** — Node.js built-in, npm shim tidak diperlukan
 7. **Node.js >=20.0.0** — Minimum version dinaikkan (diperlukan oleh Pino v10)
 8. **Batch Message Fix** — `messages.upsert` sekarang memproses SEMUA pesan dalam batch, bukan hanya pesan pertama
+9. **Docker Setup Guide** — Menambahkan panduan setup Docker dari nol di `README.md`
 
 ---
 
