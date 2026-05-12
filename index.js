@@ -1,4 +1,5 @@
-require('dotenv').config({ quiet: true });
+require('dotenv').config();
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
@@ -11,21 +12,10 @@ const security = require('./utils/security');
 // Use the modular handler directly
 const handler = require('./handler');
 
-// Baileys is ESM-only since v7.0.0-rc.10 — must use dynamic import
-let makeWASocket, useMultiFileAuthState, DisconnectReason;
-
 let sock = null;
 
 async function startBot() {
     try {
-        // Dynamically import ESM-only Baileys module
-        if (!makeWASocket) {
-            const baileys = await import('@whiskeysockets/baileys');
-            makeWASocket = baileys.default;
-            useMultiFileAuthState = baileys.useMultiFileAuthState;
-            DisconnectReason = baileys.DisconnectReason;
-        }
-
         // Validate configuration
         config.validate();
         
@@ -77,14 +67,11 @@ async function startBot() {
             }
         });
 
-        sock.ev.on('messages.upsert', async ({ type, messages }) => {
-            if (type === 'notify') {
-                // Process ALL messages in the batch, not just the first
-                for (const msg of messages) {
-                    await handler(sock, { messages: [msg], type }).catch(error => {
-                        logger.error(error, { context: 'message-handler' });
-                    });
-                }
+        sock.ev.on('messages.upsert', async m => {
+            if (m.type === 'notify') {
+                await handler(sock, m).catch(error => {
+                    logger.error(error, { context: 'message-handler' });
+                });
             }
         });
 

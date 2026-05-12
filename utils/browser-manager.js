@@ -87,7 +87,7 @@ class BrowserManager {
             }
             
             this.browser = await puppeteer.launch({
-                headless: true,
+                headless: "new",
                 args: launchArgs
             });
 
