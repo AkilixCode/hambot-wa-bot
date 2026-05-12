@@ -1,14 +1,19 @@
 /**
  * Pinterest Command
  * Search and download images from Pinterest
+ * 
+ * Uses HTTP-based scraping instead of Puppeteer to bypass
+ * Pinterest's aggressive login wall modal (introduced late 2024).
+ * 
+ * Strategy: Fetch the raw HTML via HTTP GET and extract image URLs
+ * from the __PWS_DATA__ JSON blob that Pinterest embeds in the
+ * initial server-rendered HTML — no browser needed.
  */
 
 const CommandBase = require('./base');
-const { getRandomUA, sleep } = require('../utils/helpers');
-const browserManager = require('../utils/browser-manager');
+const { getRandomUA } = require('../utils/helpers');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
-const config = require('../config');
 const logger = require('../utils/logger');
 
 class PinterestCommand extends CommandBase {
@@ -20,7 +25,7 @@ class PinterestCommand extends CommandBase {
             usage: '.pinterest <search query>',
             category: 'media',
             cooldown: 5000,
-            isHeavy: true
+            isHeavy: false // No longer spawns a browser — much lighter
         });
     }
 
@@ -37,72 +42,13 @@ class PinterestCommand extends CommandBase {
         const cacheKey = `pinterest:${query.toLowerCase()}`;
         const sentKey = `pinterest_sent:${query.toLowerCase()}`;
 
-        let page = null;
-
         try {
             // Get all scraped URLs from cache (full pool of images)
             let allScrapedUrls = cache.get(cacheKey);
             
             if (!allScrapedUrls || !Array.isArray(allScrapedUrls) || allScrapedUrls.length === 0) {
-                // Need to scrape fresh images
-                page = await browserManager.newPage();
-                await page.setUserAgent(getRandomUA());
-
-                const targetUrl = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
-                
-                try {
-                    await page.goto(targetUrl, { 
-                        waitUntil: 'networkidle2', 
-                        timeout: 60000 
-                    });
-                } catch (navError) {
-                    // If proxy is active and navigation failed, try fallback to local IP
-                    if (browserManager.usingProxy && config.network.fallbackToLocal) {
-                        logger.warn('Browser proxy failed for Pinterest, falling back to local IP');
-                        await browserManager.closePage(page);
-                        page = null;
-                        
-                        await browserManager.relaunchWithoutProxy();
-                        page = await browserManager.newPage();
-                        await page.setUserAgent(getRandomUA());
-                        await page.goto(targetUrl, { 
-                            waitUntil: 'networkidle2', 
-                            timeout: 60000 
-                        });
-                    } else {
-                        throw navError;
-                    }
-                }
-
-                // Scroll multiple times to load more images for better variety
-                for (let i = 0; i < 3; i++) {
-                    await page.evaluate(() => {
-                        window.scrollBy(0, 1000);
-                    });
-                    await sleep(1500);
-                }
-
-                // Scrape image URLs - get more images for better randomization
-                allScrapedUrls = await page.evaluate(() => {
-                    const urls = new Set();
-                    const images = document.querySelectorAll('img');
-                    
-                    for (const img of images) {
-                        // Pinterest uses 236x for thumbnails, we want originals
-                        if (img.src && img.src.includes('236x') && img.naturalWidth > 100) {
-                            // Convert thumbnail URL to original size
-                            const originalUrl = img.src.replace(/236x/, 'originals');
-                            urls.add(originalUrl);
-                        }
-                        // Also check for 474x (medium size) images
-                        if (img.src && img.src.includes('474x') && img.naturalWidth > 100) {
-                            const originalUrl = img.src.replace(/474x/, 'originals');
-                            urls.add(originalUrl);
-                        }
-                    }
-                    
-                    return Array.from(urls);
-                });
+                // Scrape fresh images via HTTP (no browser needed)
+                allScrapedUrls = await this.searchPinterest(query);
 
                 if (allScrapedUrls.length === 0) {
                     return await this.reply(sock, from, msg, '❌ No images found. Try a different search term.');
@@ -145,11 +91,133 @@ class PinterestCommand extends CommandBase {
         } catch (error) {
             this.logError(error, context);
             await this.reply(sock, from, msg, '❌ Failed to fetch images. Please try again later.');
-        } finally {
-            if (page) {
-                await browserManager.closePage(page);
-            }
         }
+    }
+
+    /**
+     * Search Pinterest for images using HTTP-based scraping.
+     * Fetches the search page HTML and extracts image URLs from
+     * the embedded __PWS_DATA__ / __PWS_INITIAL_PROPS__ JSON,
+     * or falls back to regex extraction from raw HTML.
+     * 
+     * @param {string} query - Search query
+     * @returns {Promise<string[]>} Array of image URLs (originals or 736x)
+     */
+    async searchPinterest(query) {
+        const url = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
+        
+        const { data: html } = await httpClient.get(url, {
+            timeout: 20000,
+            headers: {
+                'User-Agent': getRandomUA(),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
+                'Cache-Control': 'no-cache',
+            }
+        });
+
+        let imageUrls = [];
+
+        // Method 1: Extract from __PWS_DATA__ embedded JSON
+        imageUrls = this.extractFromPwsData(html);
+
+        // Method 2: Fallback — regex scan entire HTML for pinimg URLs
+        if (imageUrls.length < 5) {
+            const regexUrls = this.extractFromRegex(html);
+            // Merge, deduplicate
+            const combined = new Set([...imageUrls, ...regexUrls]);
+            imageUrls = Array.from(combined);
+        }
+
+        logger.info(`Pinterest HTTP scrape for "${query}": found ${imageUrls.length} images`);
+        return imageUrls;
+    }
+
+    /**
+     * Extract image URLs from Pinterest's __PWS_DATA__ script tag.
+     * This JSON blob contains the server-side rendered search results.
+     * @param {string} html - Raw HTML string
+     * @returns {string[]} Array of deduplicated image URLs
+     */
+    extractFromPwsData(html) {
+        const urls = new Set();
+
+        // Try __PWS_DATA__ first (primary data source)
+        const pwsMatch = html.match(/<script\s+id="__PWS_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+        if (pwsMatch) {
+            this._extractPinimgUrls(pwsMatch[1], urls);
+        }
+
+        // Also try __PWS_INITIAL_PROPS__ (secondary data source)
+        const propsMatch = html.match(/<script\s+id="__PWS_INITIAL_PROPS__"[^>]*>([\s\S]*?)<\/script>/);
+        if (propsMatch) {
+            this._extractPinimgUrls(propsMatch[1], urls);
+        }
+
+        return Array.from(urls);
+    }
+
+    /**
+     * Extract i.pinimg.com image URLs from a JSON string and add to the Set.
+     * Converts thumbnail sizes (236x, 474x) to high-resolution (originals).
+     * @param {string} jsonStr - Raw JSON string to scan
+     * @param {Set} urls - Set to add discovered URLs to
+     */
+    _extractPinimgUrls(jsonStr, urls) {
+        // Match all pinimg.com URLs in the JSON
+        const matches = jsonStr.match(/https?:\/\/i\.pinimg\.com\/[^"\\)\s}]+/g);
+        if (!matches) return;
+
+        for (const rawUrl of matches) {
+            // Clean URL (remove trailing punctuation artifacts from regex)
+            let cleanUrl = rawUrl.replace(/[,;}\]]+$/, '');
+
+            // Only keep actual image files
+            if (!/\.(jpg|jpeg|png|webp|gif)$/i.test(cleanUrl)) continue;
+
+            // Skip tiny icons, avatars, and UI assets (75x75, 30x30, etc.)
+            if (/\/\d{1,2}x\d{1,2}\//.test(cleanUrl)) continue;
+            if (/\/30x30_RS\/|\/75x75_RS\/|\/140x140_RS\//.test(cleanUrl)) continue;
+
+            // Convert thumbnails to high-res originals
+            if (cleanUrl.includes('/236x/') || cleanUrl.includes('/474x/')) {
+                cleanUrl = cleanUrl.replace(/\/236x\/|\/474x\//, '/originals/');
+            }
+
+            urls.add(cleanUrl);
+        }
+    }
+
+    /**
+     * Fallback: Extract image URLs via regex scan of raw HTML.
+     * Used when __PWS_DATA__ parsing fails or yields too few results.
+     * @param {string} html - Raw HTML string
+     * @returns {string[]} Array of image URLs
+     */
+    extractFromRegex(html) {
+        const urls = new Set();
+        
+        // Match all pinimg.com URLs anywhere in the HTML
+        const matches = html.match(/https?:\/\/i\.pinimg\.com\/[^"'\\)\s}>]+/g);
+        if (!matches) return [];
+
+        for (const rawUrl of matches) {
+            let cleanUrl = rawUrl.replace(/[,;}\]]+$/, '');
+
+            if (!/\.(jpg|jpeg|png|webp|gif)$/i.test(cleanUrl)) continue;
+            if (/\/\d{1,2}x\d{1,2}\//.test(cleanUrl)) continue;
+            if (/\/30x30_RS\/|\/75x75_RS\/|\/140x140_RS\//.test(cleanUrl)) continue;
+
+            // Convert to originals
+            if (cleanUrl.includes('/236x/') || cleanUrl.includes('/474x/')) {
+                cleanUrl = cleanUrl.replace(/\/236x\/|\/474x\//, '/originals/');
+            }
+
+            urls.add(cleanUrl);
+        }
+
+        return Array.from(urls);
     }
 
     /**
