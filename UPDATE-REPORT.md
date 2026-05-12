@@ -1,7 +1,34 @@
 # HamBot Update Report
 
 **Date:** May 12, 2026  
-**Version:** 2.8.0  
+**Version:** 2.8.2  
+**Author:** Antigravity AI (Google DeepMind)
+
+---
+
+## 📋 Perubahan (v2.8.2) — Pinterest Stealth Puppeteer Fix
+
+### Masalah
+Perintah `.pinterest` yang sebelumnya diubah ke HTTP-based scraping (di v2.8.1) kembali gagal dengan log `found 0 images`. Akar masalahnya adalah anti-bot Pinterest yang baru: request HTTP mentah kini di-intercept dan diarahkan ke halaman "Sign Up", sehingga blok JSON `__PWS_DATA__` yang berisi gambar tidak dikirim oleh server.
+
+### Solusi
+Mengembalikan pendekatan ke **Puppeteer**, namun kali ini memanfaatkan integrasi dengan `utils/browser-manager.js`. Karena `browser-manager.js` sudah dilengkapi dengan `puppeteer-extra` beserta `StealthPlugin`, dan mengatur shared browser instance pool, bot dapat melewati deteksi bot/login wall dengan aman tanpa menguras memori secara berlebihan.
+
+### Perubahan Teknis
+- **`commands/pinterest.js`**:
+  - Mengubah `isHeavy` kembali menjadi `true` agar selaras dengan penggunaan browser.
+  - Memperbarui `searchPinterest(query)` untuk memanggil `browserManager.newPage()` yang sudah mengimplementasikan StealthPlugin dan proxy.
+  - Menggunakan `page.goto` dan `page.content()` untuk mengekstrak data JSON. Jika JSON kosong, bot otomatis melakukan scrolling DOM sebagai fallback ganda, kemudian merge & deduplicate hasil ekstrak `<img>` tags dan JSON parser regex.
+  - Semua resources page ditutup dengan rapi (`browserManager.closePage(page)`) menggunakan blok `finally`.
+
+### Saran untuk AI Session Berikutnya
+- **PENTING**: Tolong pertahankan integrasi dengan `browser-manager.js` untuk tugas scraping apa pun (seperti Pinterest). Jangan kembali menggunakan pure HTTP GET (Axios dll.) tanpa proxy rotasi atau plugin stealth karena anti-bot modern akan langsung memblokirnya dan melempar halaman Sign Up/Login.
+- **Resource Management**: Jangan spawn instans browser baru dengan `puppeteer.launch` di setiap command. Selalu gunakan `browserManager.getBrowser()` atau `browserManager.newPage()` untuk menghindari memory leaks.
+
+---
+
+**Date:** May 12, 2026  
+**Version:** 2.8.1  
 **Author:** Antigravity AI (Google DeepMind)
 
 ---
