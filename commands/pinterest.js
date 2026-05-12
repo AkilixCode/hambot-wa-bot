@@ -266,6 +266,8 @@ class PinterestCommand extends CommandBase {
             });
             return Buffer.from(response.data);
         } catch (error) {
+            logger.debug(`[Pinterest Fetch Error] Gagal download dari URL: ${url}`);
+            logger.error(error, { context: 'pinterest-downloadImage' });
             return null;
         }
     }
