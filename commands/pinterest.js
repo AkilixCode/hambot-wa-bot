@@ -2,16 +2,16 @@
  * Pinterest Command
  * Search and download images from Pinterest
  * 
- * Uses HTTP-based scraping instead of Puppeteer to bypass
- * Pinterest's aggressive login wall modal (introduced late 2024).
+ * Uses Puppeteer with StealthPlugin (via browserManager) to bypass
+ * Pinterest's aggressive login wall modal.
  * 
- * Strategy: Fetch the raw HTML via HTTP GET and extract image URLs
- * from the __PWS_DATA__ JSON blob that Pinterest embeds in the
- * initial server-rendered HTML — no browser needed.
+ * Strategy: Navigate using Puppeteer, extract from __PWS_DATA__ 
+ * in the page source first. If empty, scroll and extract from DOM.
  */
 
 const CommandBase = require('./base');
-const { getRandomUA } = require('../utils/helpers');
+const { getRandomUA, sleep } = require('../utils/helpers');
+const browserManager = require('../utils/browser-manager');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const logger = require('../utils/logger');
@@ -25,7 +25,7 @@ class PinterestCommand extends CommandBase {
             usage: '.pinterest <search query>',
             category: 'media',
             cooldown: 5000,
-            isHeavy: false // No longer spawns a browser — much lighter
+            isHeavy: true // Use browserManager pool
         });
     }
 
@@ -95,43 +95,71 @@ class PinterestCommand extends CommandBase {
     }
 
     /**
-     * Search Pinterest for images using HTTP-based scraping.
-     * Fetches the search page HTML and extracts image URLs from
-     * the embedded __PWS_DATA__ / __PWS_INITIAL_PROPS__ JSON,
-     * or falls back to regex extraction from raw HTML.
+     * Search Pinterest for images using Puppeteer via browserManager.
+     * This bypasses the login wall by using StealthPlugin.
      * 
      * @param {string} query - Search query
      * @returns {Promise<string[]>} Array of image URLs (originals or 736x)
      */
     async searchPinterest(query) {
         const url = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
-        
-        const { data: html } = await httpClient.get(url, {
-            timeout: 20000,
-            headers: {
-                'User-Agent': getRandomUA(),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Connection': 'keep-alive',
-                'Cache-Control': 'no-cache',
-            }
-        });
-
+        let page = null;
         let imageUrls = [];
 
-        // Method 1: Extract from __PWS_DATA__ embedded JSON
-        imageUrls = this.extractFromPwsData(html);
+        try {
+            page = await browserManager.newPage();
+            await page.setUserAgent(getRandomUA());
 
-        // Method 2: Fallback — regex scan entire HTML for pinimg URLs
-        if (imageUrls.length < 5) {
-            const regexUrls = this.extractFromRegex(html);
-            // Merge, deduplicate
-            const combined = new Set([...imageUrls, ...regexUrls]);
-            imageUrls = Array.from(combined);
+            await page.goto(url, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+
+            // Try to extract from __PWS_DATA__ in the page source first (most reliable)
+            const html = await page.content();
+            imageUrls = this.extractFromPwsData(html);
+
+            // If empty, try scrolling and extracting from DOM
+            if (imageUrls.length < 5) {
+                for (let i = 0; i < 3; i++) {
+                    await page.evaluate(() => window.scrollBy(0, 1000));
+                    await sleep(1500);
+                }
+
+                const domUrls = await page.evaluate(() => {
+                    const urls = new Set();
+                    const images = document.querySelectorAll('img');
+                    
+                    for (const img of images) {
+                        if (img.src && (img.src.includes('236x') || img.src.includes('474x'))) {
+                            urls.add(img.src.replace(/\/236x\/|\/474x\//, '/originals/'));
+                        }
+                    }
+                    return Array.from(urls);
+                });
+                
+                // Merge and deduplicate
+                const combined = new Set([...imageUrls, ...domUrls]);
+                imageUrls = Array.from(combined);
+            }
+
+            // Fallback to regex scan if still empty
+            if (imageUrls.length < 5) {
+                const regexUrls = this.extractFromRegex(html);
+                const combined = new Set([...imageUrls, ...regexUrls]);
+                imageUrls = Array.from(combined);
+            }
+
+            logger.info(`Pinterest scrape for "${query}": found ${imageUrls.length} images`);
+            return imageUrls;
+        } catch (error) {
+            logger.error(`Error scraping Pinterest: ${error.message}`);
+            return [];
+        } finally {
+            if (page) {
+                await browserManager.closePage(page);
+            }
         }
-
-        logger.info(`Pinterest HTTP scrape for "${query}": found ${imageUrls.length} images`);
-        return imageUrls;
     }
 
     /**
