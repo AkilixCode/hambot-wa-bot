@@ -1,69 +1,295 @@
 # HamBot Update Report
 
 **Date:** May 12, 2026  
-**Version:** 2.8.1  
+**Version:** 2.8.0  
 **Author:** Antigravity AI (Google DeepMind)
 
 ---
 
-## 📋 Perubahan (v2.8.1) — Pinterest Login Wall Fix
+## 📋 Ringkasan Perubahan (v2.8.0)
 
-### Masalah
-Perintah `.pinterest` tidak bisa mengambil gambar. Pinterest menerapkan **login wall modal** yang agresif (muncul dalam 2-3 detik) yang memblokir scrolling dan lazy-loading gambar. Pendekatan lama menggunakan Puppeteer (headless browser) gagal total karena:
-1. Modal "Log in to see more" menutupi seluruh halaman
-2. Scroll event diblokir oleh overlay
-3. Hanya 2-3 thumbnail yang dimuat sebelum wall muncul
-4. Anti-bot detection memblokir headless browser
+Update ini fokus pada **modernisasi seluruh dependency stack** agar tetap kompatibel dengan ekosistem Node.js terbaru dan memperbaiki bug batch message processing:
 
-### Solusi
-**Mengganti Puppeteer scraping dengan HTTP-based scraping.** Pinterest meng-embed data hasil pencarian dalam JSON (`__PWS_DATA__` dan `__PWS_INITIAL_PROPS__`) di dalam HTML awal yang dikirim server — sebelum JavaScript client-side dijalankan. Dengan mengambil HTML via HTTP GET biasa, login wall (yang merupakan client-side JS overlay) tidak pernah dieksekusi.
+1. **Baileys v7.0.0-rc.10 ESM Migration** — Migrasi dari `require()` ke dynamic `import()` karena Baileys sekarang ESM-only
+2. **dotenv v17.4.2** — Menambahkan `{ quiet: true }` untuk menekan runtime logging baru yang diperkenalkan di v17
+3. **Puppeteer 24.43.1** — Update `headless: "new"` → `headless: true` (modern headless mode sekarang default)
+4. **Pino 10.3.1** — Minor bump, drop Node.js 18 support
+5. **Axios 1.16.0** — Minor bump, patch keamanan supply chain
+6. **Removed `os` npm shim** — Node.js built-in, npm shim tidak diperlukan
+7. **Node.js >=20.0.0** — Minimum version dinaikkan (diperlukan oleh Pino v10)
+8. **Batch Message Fix** — `messages.upsert` sekarang memproses SEMUA pesan dalam batch, bukan hanya pesan pertama
+9. **Docker Setup Guide** — Menambahkan panduan setup Docker dari nol di `README.md`
 
-### Perubahan Teknis
+---
 
-#### `commands/pinterest.js` — Full Refactor:
+## 🔄 Perubahan Detail (v2.8.0)
+
+### 1. Baileys v7.0.0-rc.10 — ESM Migration (Critical)
+
+**Masalah:**
+`@whiskeysockets/baileys` v7+ adalah ESM-only module. `require()` tidak bisa memuat ESM modules — akan menghasilkan error `ERR_REQUIRE_ESM`.
+
+**Solusi:**
+Menggunakan dynamic `import()` yang di-cache agar hanya dimuat sekali.
+
+#### Update `index.js`:
 ```javascript
-// SEBELUM: Puppeteer browser scraping (BROKEN)
-page = await browserManager.newPage();
-await page.goto(targetUrl, { waitUntil: 'networkidle2' });
-// ... scroll, evaluate, scrape img tags
+// SEBELUM (v2.7.0):
+require('dotenv').config();
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 
-// SESUDAH: HTTP-based scraping (WORKING)
-const { data: html } = await httpClient.get(url, { headers: {...} });
-const imageUrls = this.extractFromPwsData(html);  // Parse __PWS_DATA__ JSON
-// Fallback: this.extractFromRegex(html);           // Regex scan raw HTML
+// SESUDAH (v2.8.0):
+require('dotenv').config({ quiet: true });
+
+// Baileys is ESM-only since v7 — must use dynamic import()
+let makeWASocket, useMultiFileAuthState, DisconnectReason;
+
+async function startBot() {
+    // Dynamically import ESM-only Baileys module (cached after first call)
+    if (!makeWASocket) {
+        const baileys = await import('@whiskeysockets/baileys');
+        makeWASocket = baileys.default;
+        useMultiFileAuthState = baileys.useMultiFileAuthState;
+        DisconnectReason = baileys.DisconnectReason;
+    }
+    // ... rest of startBot
+}
 ```
 
-**Metode ekstraksi (prioritas):**
-1. `extractFromPwsData()` — Parse `__PWS_DATA__` dan `__PWS_INITIAL_PROPS__` script tags
-2. `extractFromRegex()` — Fallback regex scan untuk `i.pinimg.com` URLs di seluruh HTML
-3. `_extractPinimgUrls()` — Filter: skip icons/avatars, convert `236x`/`474x` → `originals`
+#### Update `utils/helpers.js`:
+```javascript
+// SEBELUM:
+const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 
-**Apa yang TETAP sama:**
-- Cache rotation logic (30 menit TTL, tracking gambar yang sudah dikirim)
-- Download fallback (`originals` → `736x`)
-- Fisher-Yates shuffle untuk randomisasi
-- Proxy support via `httpClient` 
-- Error handling dan user feedback
+// SESUDAH:
+let _downloadContentFromMessage = null;
 
-**Apa yang BERUBAH:**
-- `isHeavy: true` → `isHeavy: false` (tidak lagi spawn browser)
-- Dihapus: dependency pada `browserManager` dan `sleep`
-- Dihapus: semua Puppeteer logic (newPage, goto, evaluate, scroll)
-- Ditambah: `searchPinterest()`, `extractFromPwsData()`, `extractFromRegex()`, `_extractPinimgUrls()`
+async function _loadBaileysHelper() {
+    if (!_downloadContentFromMessage) {
+        const baileys = await import('@whiskeysockets/baileys');
+        _downloadContentFromMessage = baileys.downloadContentFromMessage;
+    }
+    return _downloadContentFromMessage;
+}
 
-### Dampak Performa
-| Metrik | Sebelum (Puppeteer) | Sesudah (HTTP) |
-|--------|-------------------|----------------|
-| Waktu respons | 15-60 detik | 2-5 detik |
-| Memori | ~200MB (Chromium) | ~5MB (HTTP request) |
-| CPU | Tinggi (browser render) | Minimal |
-| Reliability | ❌ 0% (login wall) | ✅ ~95% |
+async function downloadMedia(message, type) {
+    const downloadContentFromMessage = await _loadBaileysHelper();
+    // ... rest of function
+}
+```
 
-### Saran untuk AI Session Berikutnya
-- **JANGAN** kembali ke Puppeteer untuk Pinterest — login wall adalah perubahan permanen
-- **JANGAN** mencoba dismiss/remove modal via DOM manipulation — Pinterest sering mengubah selector
-- **PERHATIKAN** jika Pinterest mengubah format `__PWS_DATA__` — fallback regex akan tetap bekerja
-- **PERTIMBANGKAN** menambah method ketiga (DuckDuckGo image search) sebagai ultimate fallback
+**Kenapa Dynamic Import?**
+- Project ini tetap CommonJS (tidak ada `"type": "module"` di package.json)
+- Semua 39 command files dan 8 utility files menggunakan `require()`/`module.exports`
+- Migrasi penuh ke ESM akan membutuhkan perubahan di 50+ files
+- Dynamic `import()` adalah solusi yang aman dan didukung resmi oleh Node.js
+
+### 2. dotenv v17.4.2 — Quiet Mode
+
+**Masalah:**
+dotenv v17 memperkenalkan runtime logging — setiap kali `.config()` dipanggil, ia mencetak file `.env` yang dimuat dan jumlah key yang di-inject. Ini mengotori console output bot.
+
+**Solusi:**
+Menambahkan `{ quiet: true }` ke semua 3 lokasi `.config()`:
+
+```javascript
+// 3 files yang diubah:
+require('dotenv').config({ quiet: true }); // index.js
+require('dotenv').config({ quiet: true }); // handler.js
+require('dotenv').config({ quiet: true }); // config.js
+```
+
+### 3. Puppeteer 24.43.1 — Headless Update
+
+**Masalah:**
+`headless: "new"` sudah deprecated. Modern Puppeteer menggunakan `headless: true` yang otomatis menggunakan headless mode terbaru.
+
+**Solusi:**
+```javascript
+// SEBELUM:
+this.browser = await puppeteer.launch({
+    headless: "new",
+    args: launchArgs
+});
+
+// SESUDAH:
+this.browser = await puppeteer.launch({
+    headless: true,
+    args: launchArgs
+});
+```
+
+### 4. Removed `os` npm Shim
+
+**Masalah:**
+`"os": "^0.1.2"` di package.json adalah npm shim yang tidak diperlukan. `os` adalah Node.js built-in module — `require('os')` sudah berfungsi tanpa npm package.
+
+**Solusi:**
+Dihapus dari `dependencies` di package.json. Kode yang menggunakan `require('os')` (di `commands/security.js` dan `commands/ping.js`) tetap berfungsi karena mereka menggunakan built-in Node.js module.
+
+### 5. Batch Message Processing Fix
+
+**Masalah:**
+Event `messages.upsert` dari Baileys bisa mengirim beberapa pesan sekaligus dalam satu batch. Kode sebelumnya hanya memproses `m.messages[0]` — pesan lainnya diabaikan.
+
+**Solusi:**
+```javascript
+// SEBELUM:
+sock.ev.on('messages.upsert', async m => {
+    if (m.type === 'notify') {
+        await handler(sock, m).catch(error => { ... });
+    }
+});
+
+// SESUDAH:
+sock.ev.on('messages.upsert', async ({ type, messages }) => {
+    if (type === 'notify') {
+        for (const msg of messages) {
+            await handler(sock, { messages: [msg], type }).catch(error => { ... });
+        }
+    }
+});
+```
+
+### 6. Node.js Engine Requirement
+
+**Sebelum:** `"node": ">=16.0.0"`
+**Sesudah:** `"node": ">=20.0.0"`
+
+**Alasan:** Pino v10 membutuhkan Node.js >= 20. Node.js 16 dan 18 sudah End-of-Life.
+
+---
+
+## ⚠️ Breaking Changes
+
+| Perubahan | Impact | Mitigasi |
+|-----------|--------|----------|
+| Node.js >= 20 required | Server harus upgrade | Pastikan `node -v` menampilkan v20+ |
+| Baileys ESM import | Startup menjadi async | Sudah ditangani di kode |
+| dotenv logging | Console noise | `{ quiet: true }` sudah ditambahkan |
+
+---
+
+## 📂 Files Changed in This Update
+
+| File | Action | Description |
+|------|--------|-------------|
+| `package.json` | MODIFIED | Version bumps, removed `os` shim, raised Node.js min to >=20 |
+| `index.js` | MODIFIED | Baileys dynamic import, dotenv quiet, batch message fix |
+| `config.js` | MODIFIED | dotenv quiet mode |
+| `handler.js` | MODIFIED | dotenv quiet mode |
+| `utils/helpers.js` | MODIFIED | Baileys downloadContentFromMessage lazy-load |
+| `utils/browser-manager.js` | MODIFIED | Puppeteer headless: true |
+| `UPDATE-REPORT.md` | MODIFIED | v2.8.0 documentation |
+
+---
+
+## 📊 Statistik Perubahan
+
+- **Lines Changed:** ~80
+- **Dependencies Updated:** 5 (Baileys, dotenv, puppeteer, pino, axios)
+- **Dependencies Removed:** 1 (os npm shim)
+- **Breaking Changes:** 1 (Node.js >=20 requirement)
+- **Bug Fixes:** 1 (batch message processing)
+- **Test Regressions:** 0 (semua test yang pass sebelumnya tetap pass)
+
+---
+
+## 📌 Saran untuk AI Session Berikutnya
+
+### ✅ Yang Harus Diperhatikan:
+
+1. **Baileys adalah ESM-only — Jangan pernah gunakan `require('@whiskeysockets/baileys')`**
+   - Selalu gunakan `await import('@whiskeysockets/baileys')` di dalam async function
+   - Dynamic import sudah di-cache di variabel module-level (`makeWASocket`, `_downloadContentFromMessage`)
+   - Jangan panggil `await import()` berulang kali — gunakan pattern `if (!cached) { cached = await import() }`
+
+2. **dotenv v17 butuh `{ quiet: true }` di semua `.config()` calls**
+   - Ada 3 lokasi: `index.js`, `handler.js`, `config.js`
+   - Tanpa `quiet: true`, dotenv akan mencetak log setiap kali dipanggil
+   - Alternatif: set `DOTENV_CONFIG_QUIET=true` di `.env` file
+
+3. **Puppeteer headless mode**
+   - Gunakan `headless: true` (bukan `"new"`)
+   - `puppeteer-extra` masih kompatibel tapi tidak lagi aktif dikembangkan
+   - Stealth plugin semakin kurang efektif melawan deteksi bot modern
+
+4. **Project ini tetap CommonJS (CJS)**
+   - TIDAK ada `"type": "module"` di package.json
+   - Semua file (50+) menggunakan `require()`/`module.exports`
+   - Jangan coba migrasi penuh ke ESM kecuali diminta secara eksplisit — itu akan membutuhkan refactor 50+ files
+   - Dynamic `import()` sudah menangani module ESM-only (Baileys)
+
+5. **`os` module adalah Node.js built-in**
+   - `require('os')` di `commands/security.js` dan `commands/ping.js` menggunakan built-in, BUKAN npm package
+   - npm shim `"os": "^0.1.2"` sudah dihapus dari package.json — ini tidak mempengaruhi fungsionalitas
+
+6. **PR #26 sebelumnya (oleh Copilot) sudah pernah di-merge lalu di-revert (PR #27)**
+   - Perubahan di v2.8.0 ini merupakan ulang dari PR #26 dengan pendekatan yang sama
+   - Jika ada masalah di runtime, kemungkinan disebabkan oleh dependency resolution (perlu `rm -rf node_modules package-lock.json && npm install`)
+
+7. **Pre-existing Test Failures**
+   - `test-security.cjs` memiliki 2 test failures yang sudah ada sejak v2.5.0
+   - "Permission for security granted (dev-mode)" dan "Permission for tagall denied"
+   - Jangan perbaiki kecuali diminta — ini bukan regresi
+
+### ❌ Yang Harus Dihindari:
+
+1. **Jangan konversi seluruh project ke ESM**
+   - Jangan tambahkan `"type": "module"` ke package.json
+   - Ini akan memecah SEMUA 50+ files yang pakai `require()`
+
+2. **Jangan gunakan `require()` untuk Baileys**
+   - Akan menghasilkan `ERR_REQUIRE_ESM` error
+   - Selalu gunakan `await import()`
+
+3. **Jangan hapus `{ quiet: true }` dari dotenv**
+   - Console output akan dipenuhi log dotenv
+
+4. **Jangan downgrade ke Puppeteer headless: "new"**
+   - Opsi `"new"` sudah deprecated dan akan dihapus
+
+5. **Jangan tambahkan kembali `"os"` ke dependencies**
+   - `os` adalah Node.js built-in, npm shim tidak diperlukan
+
+6. **Jangan force push ke main branch**
+   - Selalu buat branch dan PR
+
+### 💡 Ide Pengembangan Selanjutnya:
+
+1. **Upgrade puppeteer-extra ke alternatif modern**
+   - `puppeteer-extra` dan stealth plugin tidak aktif dikembangkan
+   - Pertimbangkan migrasi ke `rebrowser-puppeteer` atau Playwright
+
+2. **Persistent Configuration Storage**
+   - Simpan runtime config changes ke JSON file
+   - Load dari JSON saat startup, fallback ke `.env`
+
+3. **ESM Migration (Major)**
+   - Jika ingin full ESM, perlu refactor semua 50+ files
+   - Ganti `require()` → `import`, `module.exports` → `export`
+   - Ini adalah major undertaking, jangan lakukan kecuali diminta
+
+4. **Update @hapi/boom**
+   - Versi terbaru mungkin juga ESM-only
+   - Cek kompatibilitas sebelum upgrade
+
+---
+
+## 📞 Contact
+
+For issues or questions about these changes, refer to:
+- Repository: `AkilixCode/hambot-wa-bot`
+- Custom Instructions: `README-FOR-AI.md`
+
+---
+
+*This report was generated by Antigravity AI (Google DeepMind) on May 12, 2026.*
+
+---
+---
+
+# Previous Updates
 
 ---
 

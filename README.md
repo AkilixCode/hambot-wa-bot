@@ -155,6 +155,56 @@ npm start
 6. **Scan QR Code**
 Buka WhatsApp di HP dan scan QR code yang muncul di terminal.
 
+## 🐳 Setup Menggunakan Docker (Rekomendasi)
+
+Menjalankan HamBot menggunakan Docker adalah cara termudah dan paling aman. Docker secara otomatis menginstal Node.js, Python, FFmpeg, Chromium, dan semua dependensi sistem yang dibutuhkan tanpa mengotori server/komputer asli Anda.
+
+### Prasyarat Docker
+- [Docker](https://docs.docker.com/get-docker/) terinstall
+- [Docker Compose](https://docs.docker.com/compose/install/) terinstall
+
+### Langkah Setup Docker dari Awal (Zero to Hero)
+
+**1. Clone Repository & Masuk ke Folder**
+```bash
+git clone https://github.com/AkilixCode/hambot-wa-bot.git
+cd hambot-wa-bot
+```
+
+**2. Siapkan File Konfigurasi (.env)**
+Gandakan template konfigurasi yang sudah disediakan:
+```bash
+cp .env.example .env
+```
+Buka file `.env` (bisa pakai `nano .env` di Linux atau Notepad di Windows) dan isikan informasi penting seperti `BOT_OWNER_ID` dan API Keys.
+
+**3. Build & Jalankan Container di Background**
+Jalankan perintah ini (mungkin butuh `sudo` di Linux). Ini akan mendownload semua kebutuhan dan memakan waktu sekitar 5-10 menit saat pertama kali dijalankan:
+```bash
+docker compose up -d
+```
+
+**4. Scan QR Code WhatsApp**
+Setelah container berjalan, lihat logs untuk mendapatkan QR Code:
+```bash
+docker compose logs -f
+```
+Scan QR code tersebut dari HP yang akan dijadikan bot (WhatsApp -> Tautkan Perangkat). Jika berhasil, akan muncul tulisan "Bot successfully connected". 
+Tekan `Ctrl+C` untuk keluar dari logs (bot tetap berjalan di background).
+
+### Perintah Penting Docker
+
+- **Melihat Log**: `docker compose logs -f`
+- **Menghentikan Bot**: `docker compose down`
+- **Menjalankan Kembali**: `docker compose up -d`
+- **Update & Build Ulang**: (Jika ada update kode baru)
+  ```bash
+  git pull
+  docker compose up -d --build
+  ```
+
+*Catatan: Sesi login WhatsApp (`auth_info_baileys/`) dan Logs (`logs/`) akan tersimpan aman meskipun container dimatikan karena sudah dilindungi oleh Docker Volumes.*
+
 ## 📝 Konfigurasi
 
 Edit file `.env` untuk kustomisasi:

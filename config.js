@@ -3,7 +3,7 @@
  * Centralized configuration with validation and defaults
  */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 class Config {
     constructor() {

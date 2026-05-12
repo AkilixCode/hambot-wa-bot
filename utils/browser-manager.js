@@ -87,8 +87,12 @@ class BrowserManager {
             }
             
             this.browser = await puppeteer.launch({
-                headless: "new",
-                args: launchArgs
+                headless: true,
+                args: launchArgs,
+                // Use system Chromium in Docker (set via PUPPETEER_EXECUTABLE_PATH)
+                ...(process.env.PUPPETEER_EXECUTABLE_PATH && {
+                    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH
+                })
             });
 
             // Start health check

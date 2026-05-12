@@ -3,11 +3,21 @@
  * Common utilities used across the application
  */
 
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const { spawn } = require('child_process');
 const fsPromises = require('fs').promises;
 const httpClient = require('./http-client');
 const security = require('./security');
+
+// Baileys is ESM-only since v7 — lazy-load via dynamic import
+let _downloadContentFromMessage = null;
+
+async function _loadBaileysHelper() {
+    if (!_downloadContentFromMessage) {
+        const baileys = await import('@whiskeysockets/baileys');
+        _downloadContentFromMessage = baileys.downloadContentFromMessage;
+    }
+    return _downloadContentFromMessage;
+}
 
 // --- HELPER FUNCTIONS ---
 
@@ -64,6 +74,7 @@ const getRandomUA = () => userAgents[Math.floor(Math.random() * userAgents.lengt
  * Download media from WhatsApp message
  */
 async function downloadMedia(message, type) {
+    const downloadContentFromMessage = await _loadBaileysHelper();
     const stream = await downloadContentFromMessage(message, type);
     let buffer = Buffer.from([]);
     for await (const chunk of stream) { 
