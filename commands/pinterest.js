@@ -481,7 +481,8 @@ class PinterestCommand extends CommandBase {
                 timeout: 15000,
                 headers: {
                     'User-Agent': getRandomUA(),
-                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+                    'Referer': 'https://www.pinterest.com/'
                 }
             });
 
