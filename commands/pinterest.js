@@ -165,10 +165,6 @@ class PinterestCommand extends CommandBase {
             
             browser = await chromiumBrowser.launch({
                 headless: true,
-                // Use system Chromium in Docker (set via PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH)
-                ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH && {
-                    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-                }),
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
