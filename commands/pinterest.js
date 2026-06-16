@@ -71,8 +71,7 @@ class PinterestCommand extends CommandBase {
                 allScrapedUrls = await this.searchPinterest(query);
 
                 if (allScrapedUrls.length === 0) {
-                    this.setFailed(context, 'No images found or proxy timeout');
-                    return await this.reply(sock, from, msg, '❌ No images found. Try a different search term or check proxy connection.');
+                    return await this.reply(sock, from, msg, '❌ No images found. Try a different search term.');
                 }
 
                 // Cache all scraped URLs for 30 minutes (pool of images)
@@ -274,20 +273,11 @@ class PinterestCommand extends CommandBase {
                     
                     for (const img of images) {
                         if (img.src) {
-                            // Convert to high-res. 736x is reliable for JPG, but breaks PNG/GIF
-                            let cleaned = img.src;
-                            if (/\.(jpg|jpeg|webp)$/i.test(cleaned)) {
-                                cleaned = cleaned
-                                    .replace(/\/originals\//, '/736x/')
-                                    .replace(/\/236x\//, '/736x/')
-                                    .replace(/\/474x\//, '/736x/');
-                            } else {
-                                // For PNG/GIF, use originals
-                                cleaned = cleaned
-                                    .replace(/\/236x\//, '/originals/')
-                                    .replace(/\/474x\//, '/originals/')
-                                    .replace(/\/736x\//, '/originals/');
-                            }
+                            // Convert any size to 736x (reliable without auth)
+                            const cleaned = img.src
+                                .replace(/\/originals\//, '/736x/')
+                                .replace(/\/236x\//, '/736x/')
+                                .replace(/\/474x\//, '/736x/');
                             
                             // Skip tiny icons and avatars
                             if (/\/\d{1,2}x\d{1,2}\//.test(cleaned)) continue;
@@ -435,19 +425,12 @@ class PinterestCommand extends CommandBase {
             if (/\/\d{1,2}x\d{1,2}\//.test(cleanUrl)) continue;
             if (/\/30x30_RS\/|\/75x75_RS\/|\/140x140_RS\//.test(cleanUrl)) continue;
 
-            // Convert to high-res. 736x is reliable for JPG, but breaks PNG/GIF
-            if (/\.(jpg|jpeg|webp)$/i.test(cleanUrl)) {
-                cleanUrl = cleanUrl
-                    .replace(/\/originals\//, '/736x/')
-                    .replace(/\/236x\//, '/736x/')
-                    .replace(/\/474x\//, '/736x/');
-            } else {
-                // For PNG/GIF, use originals
-                cleanUrl = cleanUrl
-                    .replace(/\/236x\//, '/originals/')
-                    .replace(/\/474x\//, '/originals/')
-                    .replace(/\/736x\//, '/originals/');
-            }
+            // Convert all sizes to 736x (reliable without auth)
+            // /originals/ returns 403 for unauthenticated requests
+            cleanUrl = cleanUrl
+                .replace(/\/originals\//, '/736x/')
+                .replace(/\/236x\//, '/736x/')
+                .replace(/\/474x\//, '/736x/');
 
             urls.add(cleanUrl);
         }
@@ -473,19 +456,11 @@ class PinterestCommand extends CommandBase {
             if (/\/\d{1,2}x\d{1,2}\//.test(cleanUrl)) continue;
             if (/\/30x30_RS\/|\/75x75_RS\/|\/140x140_RS\//.test(cleanUrl)) continue;
 
-            // Convert to high-res. 736x is reliable for JPG, but breaks PNG/GIF
-            if (/\.(jpg|jpeg|webp)$/i.test(cleanUrl)) {
-                cleanUrl = cleanUrl
-                    .replace(/\/originals\//, '/736x/')
-                    .replace(/\/236x\//, '/736x/')
-                    .replace(/\/474x\//, '/736x/');
-            } else {
-                // For PNG/GIF, use originals
-                cleanUrl = cleanUrl
-                    .replace(/\/236x\//, '/originals/')
-                    .replace(/\/474x\//, '/originals/')
-                    .replace(/\/736x\//, '/originals/');
-            }
+            // Convert to 736x (reliable without auth)
+            cleanUrl = cleanUrl
+                .replace(/\/originals\//, '/736x/')
+                .replace(/\/236x\//, '/736x/')
+                .replace(/\/474x\//, '/736x/');
 
             urls.add(cleanUrl);
         }
