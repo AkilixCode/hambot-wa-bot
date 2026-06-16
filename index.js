@@ -73,7 +73,7 @@ async function startBot() {
                     process.exit(0);
                 }
             } else if (connection === 'open') {
-                logger.info(`✅ ${config.bot.name} connected to WhatsApp!`);
+                logger.system(`✅ ${config.bot.name} connected to WhatsApp!`);
             }
         });
 
@@ -96,7 +96,7 @@ async function startBot() {
 
 // Graceful shutdown
 async function shutdown() {
-    logger.info('Shutting down gracefully...');
+    logger.system('Shutting down gracefully...');
 
     try {
         // Close WhatsApp connection
@@ -110,7 +110,7 @@ async function shutdown() {
         // Cleanup cache
         cache.destroy();
 
-        logger.info('Shutdown complete');
+        logger.system('Shutdown complete');
         process.exit(0);
     } catch (error) {
         logger.error(error, { context: 'shutdown' });

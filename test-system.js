@@ -231,15 +231,34 @@ try {
 
 // Test 4: Logger
 try {
+    // Legacy methods (backward compat)
     logger.info('Test message');
     logger.warn('Test warning');
     logger.error(new Error('Test error'));
+    logger.system('Test system event');
     
     const formatted = logger.formatCommand('test', '1234567890@s.whatsapp.net', '1234567890@g.us', true);
     assert(formatted.command === 'test', 'Logger: Format command');
     assert(formatted.chat === 'grup', 'Logger: Group detection (Indonesian)');
     assert(formatted.sender === '1234567890@s.whatsapp.net', 'Logger: Full sender ID');
+    
+    // New tracker pattern
+    const tracker = logger.commandStart('pinterest', '1234567890@s.whatsapp.net', '1234567890@g.us', true);
+    assert(tracker.commandName === 'pinterest', 'Logger: Tracker command name');
+    assert(tracker.senderNumber === '1234567890', 'Logger: Tracker sender number');
+    assert(tracker.isGroup === true, 'Logger: Tracker group flag');
+    assert(typeof tracker.startTime === 'number', 'Logger: Tracker start time');
+    
+    // commandEnd should not throw
+    logger.commandEnd(tracker, 'done');
+    logger.commandEnd(tracker, 'failed', new Error('test'));
+    logger.commandEnd(tracker, 'blocked', 'rate limited');
+    logger.commandEnd(null, 'done'); // null tracker should be safe
+    
+    assert(typeof logger.mode === 'string', 'Logger: Mode property exists');
+    assert(['simple', 'full'].includes(logger.mode), 'Logger: Mode is simple or full');
 } catch (error) {
+    console.error(error);
     assert(false, 'Logger: System failed');
 }
 
