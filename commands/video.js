@@ -144,6 +144,7 @@ class VideoCommand extends CommandBase {
 
             let videoTitle = 'Video';
             let videoDuration = 0;
+            let captionText = `📹 Video`;
 
             try {
                 const infoResult = await this.spawnYtDlpWithFallback(infoArgs, proxyArgs, networkArgs);
@@ -157,9 +158,40 @@ class VideoCommand extends CommandBase {
                 if (videoDuration > config.media.maxDuration) {
                     return await this.reply(sock, from, msg, '❌ Video terlalu panjang. Coba video yang lebih pendek ya!');
                 }
+
+                // Build rich metadata caption
+                let meta = `📹 *${videoTitle}*\n`;
+                if (videoInfo.uploader || videoInfo.channel) {
+                    meta += `👤 *Uploader:* ${videoInfo.uploader || videoInfo.channel}\n`;
+                }
+                if (videoInfo.upload_date && videoInfo.upload_date.length === 8) {
+                    const ud = videoInfo.upload_date;
+                    meta += `📅 *Date:* ${ud.substring(6,8)}-${ud.substring(4,6)}-${ud.substring(0,4)}\n`;
+                }
+                if (videoInfo.view_count) {
+                    meta += `👁️ *Views:* ${videoInfo.view_count.toLocaleString('id-ID')}\n`;
+                }
+                if (videoInfo.like_count) {
+                    meta += `❤️ *Likes:* ${videoInfo.like_count.toLocaleString('id-ID')}\n`;
+                }
+                if (videoInfo.duration_string || videoDuration) {
+                    const durStr = videoInfo.duration_string || `${Math.floor(videoDuration / 60)}:${(videoDuration % 60).toString().padStart(2, '0')}`;
+                    meta += `⏱️ *Duration:* ${durStr}\n`;
+                }
+                
+                // Add a small snippet of description if exists (max 100 chars, first line only)
+                if (videoInfo.description) {
+                    const desc = videoInfo.description.split('\n')[0].substring(0, 100).trim();
+                    if (desc.length > 0) {
+                        meta += `\n📝 ${desc}${videoInfo.description.length > 100 ? '...' : ''}`;
+                    }
+                }
+                
+                captionText = meta;
             } catch (infoError) {
                 // If info extraction fails, continue with download anyway
                 this.logError(infoError, context);
+                captionText = `📹 ${videoTitle}`; // Fallback caption
             }
 
             // Download video with highest quality available
@@ -206,7 +238,7 @@ class VideoCommand extends CommandBase {
             await sock.sendMessage(from, {
                 video: videoBuffer,
                 mimetype: 'video/mp4',
-                caption: `📹 ${videoTitle}`
+                caption: captionText
             }, { quoted: msg });
 
             await this.react(sock, msg, '✅');
