@@ -71,7 +71,8 @@ class PinterestCommand extends CommandBase {
                 allScrapedUrls = await this.searchPinterest(query);
 
                 if (allScrapedUrls.length === 0) {
-                    return await this.reply(sock, from, msg, '❌ No images found. Try a different search term.');
+                    this.setFailed(context, 'No images found or proxy timeout');
+                    return await this.reply(sock, from, msg, '❌ No images found. Try a different search term or check proxy connection.');
                 }
 
                 // Cache all scraped URLs for 30 minutes (pool of images)
