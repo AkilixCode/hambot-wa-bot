@@ -52,11 +52,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---- Install yt-dlp (media downloader) ----
 RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
 
-# ---- Tell Puppeteer & Playwright to use system Chromium ----
+# ---- Tell Puppeteer to use system Chromium (for browser-manager.js) ----
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # ---- Application Setup ----
 WORKDIR /app
@@ -66,6 +64,11 @@ COPY package.json package-lock.json* ./
 
 # Install Node.js dependencies (production only)
 RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev
+
+# ---- Install Playwright's matching Chromium (after npm install) ----
+# Playwright requires a specific Chromium version that matches its protocol.
+# System Chromium from apt-get is incompatible (causes crashpad_handler errors).
+RUN npx playwright install --with-deps chromium
 
 # Copy application source
 COPY . .
