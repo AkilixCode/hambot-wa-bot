@@ -68,6 +68,8 @@ RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev
 # ---- Install Playwright's matching Chromium (after npm install) ----
 # Playwright requires a specific Chromium version that matches its protocol.
 # System Chromium from apt-get is incompatible (causes crashpad_handler errors).
+# PLAYWRIGHT_BROWSERS_PATH ensures build (root) and runtime (hambot) use the same path.
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright
 RUN npx playwright install --with-deps chromium
 
 # Copy application source
