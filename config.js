@@ -51,7 +51,8 @@ class Config {
         };
 
         this.logging = {
-            level: process.env.LOG_LEVEL || 'info',
+            // 'simple' = clean command blocks, 'full' = verbose debug logs
+            level: process.env.LOG_LEVEL || 'simple',
             silent: process.env.LOG_SILENT === 'true'
         };
 

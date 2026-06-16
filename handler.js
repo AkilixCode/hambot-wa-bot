@@ -29,6 +29,7 @@ module.exports = async (sock, m) => {
     const startTime = Date.now();
     let isHeavyCommand = false;
     let command = null;
+    let tracker = null;
 
     try {
         const msg = m.messages[0];
@@ -103,8 +104,8 @@ module.exports = async (sock, m) => {
             startTime
         };
 
-        // Log command
-        logger.command(logger.formatCommand(commandName, sender, from, isGroup));
+        // Start tracking this command execution
+        tracker = logger.commandStart(commandName, sender, from, isGroup, command);
 
         // SECURITY: Validate command arguments
         const argsValidation = security.validateCommandArgs(commandName, args);
@@ -115,6 +116,7 @@ module.exports = async (sock, m) => {
                 reason: argsValidation.reason
             });
             
+            logger.commandEnd(tracker, 'blocked', argsValidation.reason);
             return await sock.sendMessage(from, { 
                 text: `⚠️ Keamanan: ${argsValidation.reason}` 
             }, { quoted: msg });
@@ -129,6 +131,7 @@ module.exports = async (sock, m) => {
                 reason: permission.reason
             });
             
+            logger.commandEnd(tracker, 'blocked', permission.reason);
             return await sock.sendMessage(from, { 
                 text: `🔒 Akses Ditolak: ${permission.reason}` 
             }, { quoted: msg });
@@ -138,6 +141,7 @@ module.exports = async (sock, m) => {
         const rateLimit = rateLimiter.check(sender);
         if (!rateLimit.allowed) {
             security.trackSuspiciousActivity(sender, 'rate_limit_exceeded');
+            logger.commandEnd(tracker, 'blocked', `Rate limit exceeded (retry in ${rateLimit.retryAfter}s)`);
             return sock.sendMessage(from, { 
                 text: `⏳ Batas request tercapai. Coba lagi dalam ${rateLimit.retryAfter} detik.` 
             }, { quoted: msg });
@@ -154,6 +158,7 @@ module.exports = async (sock, m) => {
         isHeavyCommand = command.isHeavy;
         if (isHeavyCommand) {
             if (activeProcesses >= config.performance.maxProcesses) {
+                logger.commandEnd(tracker, 'busy', `Server busy (${activeProcesses}/${config.performance.maxProcesses})`);
                 return sock.sendMessage(from, { 
                     text: `⚠️ Server sibuk (${activeProcesses}/${config.performance.maxProcesses}). Mohon tunggu...` 
                 }, { quoted: msg });
@@ -164,24 +169,29 @@ module.exports = async (sock, m) => {
         // --- Validate Command ---
         const validation = await command.validate(msg, context);
         if (!validation.valid) {
+            logger.commandEnd(tracker, 'failed', validation.error);
             return sock.sendMessage(from, { text: validation.error }, { quoted: msg });
         }
 
         // --- Execute Command ---
         await command.execute(sock, msg, args, context);
 
-        // Log performance
-        const duration = Date.now() - startTime;
-        command.log(context, duration, true);
+        // Command completed successfully
+        logger.commandEnd(tracker, 'done');
 
     } catch (err) {
-        logger.error(err, { 
-            command: command?.name || 'unknown',
-            sender: m.messages[0]?.key?.participant || 'unknown'
-        });
+        // Log the failure with the tracker if available
+        if (tracker) {
+            logger.commandEnd(tracker, 'failed', err);
+        } else {
+            logger.error(err, { 
+                command: command?.name || 'unknown',
+                sender: m.messages[0]?.key?.participant || 'unknown'
+            });
+        }
 
         // SECURITY: Track errors as potential security events
-        if (err.message.includes('injection') || err.message.includes('attack')) {
+        if (err.message && (err.message.includes('injection') || err.message.includes('attack'))) {
             const sender = m.messages[0]?.key?.participant || m.messages[0]?.key?.remoteJid;
             security.trackSuspiciousActivity(sender, 'error_based_attack');
         }
@@ -209,7 +219,7 @@ module.exports = async (sock, m) => {
 try {
     const commandsPath = path.join(__dirname, 'commands');
     commandRegistry.loadFromDirectory(commandsPath);
-    logger.info('Command system initialized');
+    logger.system(`Command system initialized (${commandsPath})`);
 } catch (error) {
     logger.error(error, { context: 'command-loading' });
 }

@@ -72,19 +72,7 @@ class CommandBase {
     }
 
     /**
-     * Log command execution
-     */
-    log(context, duration, success = true) {
-        logger.command({
-            command: this.name,
-            ...context,
-            duration: `${duration}ms`,
-            success
-        });
-    }
-
-    /**
-     * Log error
+     * Log error (used internally by commands)
      */
     logError(error, context) {
         logger.error(error, { command: this.name, ...context });

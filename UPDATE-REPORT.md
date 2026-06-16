@@ -1,5 +1,139 @@
 # HamBot Update Report
 
+**Date:** June 16, 2026  
+**Version:** 2.9.0  
+**Author:** Antigravity AI (Google DeepMind)
+
+---
+
+## 📋 Perubahan (v2.9.0) — Logging Overhaul + Pinterest Playwright Migration + Proxy Support
+
+### Overview
+
+Tiga perubahan besar dalam satu release:
+1. **Logging system overhaul** — mode `simple` dan `full` yang baru
+2. **Pinterest Playwright migration** — ganti Puppeteer yang deprecated dengan Playwright
+3. **Proxy integration** — dukungan Tailscale + EveryProxy untuk Pinterest scraping
+
+---
+
+### 1. Logging System Overhaul
+
+#### Masalah Sebelumnya
+- `LOG_LEVEL` menerima `error/warn/info/debug` — membingungkan
+- Semua log berupa satu baris JSON panjang — sulit dibaca
+- "Command executed" muncul DUA KALI: sekali sebelum eksekusi (handler.js:107) dan sekali setelah (command.log())
+- Error log tidak jelas menunjukkan command mana yang gagal
+- `success: true` selalu di-log bahkan ketika command sebenarnya gagal
+
+#### Solusi
+`LOG_LEVEL` sekarang menerima **`simple`** atau **`full`**:
+
+**Simple mode** (default) — Output bersih, satu blok per command:
+```
+📌 .pinterest
+   From    : 6281234567890 (pribadi)
+   Status  : ✅ Done (2847ms)
+
+🎵 .music
+   From    : 12345678901234 (pribadi)
+   Status  : ❌ Failed
+   Error   : No images found
+```
+
+**Full mode** — Verbose debug dengan timestamps dan JSON context (untuk debugging):
+```
+✅ [2026-06-16T14:11:43.161Z] [COMMAND] {"command":"pinterest","sender":"6281234567890","status":"done","duration":"2847ms"}
+```
+
+#### Perubahan Teknis
+
+| File | Perubahan |
+|------|-----------|
+| `utils/logger.js` | REWRITE — Dua mode (simple/full), `commandStart()`/`commandEnd()` tracker pattern, `system()` untuk event lifecycle, backward-compatible `info()`/`warn()`/`debug()`/`error()` |
+| `config.js` | `logging.level` default dari `'info'` → `'simple'` |
+| `handler.js` | Hapus duplicate logging. Satu `tracker = logger.commandStart()` di awal, satu `logger.commandEnd(tracker, status)` di setiap exit point (done/failed/blocked/busy) |
+| `commands/base.js` | Hapus `log()` method (handler yang handle). `logError()` tetap dipertahankan (dipakai 33+ commands) |
+| `index.js` | Ganti `logger.info()` → `logger.system()` untuk event startup/shutdown (selalu tampil di kedua mode) |
+| `test-system.js` | Tambah test untuk tracker pattern, `system()`, dan mode property |
+
+---
+
+### 2. Pinterest Playwright Migration (PR #34)
+
+#### Masalah
+- `puppeteer-extra-plugin-stealth` deprecated awal 2025
+- Pinterest anti-bot modern (TLS fingerprinting, behavioral analysis) memblokir Puppeteer
+- URL `/originals/` return 403 untuk unauthenticated requests
+- Download images diam-diam gagal (HTML error page dikirim sebagai "gambar")
+
+#### Solusi
+Full migration dari Puppeteer → Playwright:
+- Anti-detect manual: `navigator.webdriver` override, chrome runtime mock, permissions mock
+- Login wall dismissal (8 selector + Escape + JS overlay removal)
+- URL `/736x/` default (bukan `/originals/`), fallback cascade: 736x → 474x → 236x
+- Validasi magic-byte image buffer (JPEG/PNG/GIF/WebP)
+- Human-like scrolling (random distance + delay)
+- Lazy-loaded Playwright (tidak block bot startup)
+
+| File | Perubahan |
+|------|-----------|
+| `commands/pinterest.js` | REWRITE — Puppeteer → Playwright, self-managed browser lifecycle |
+| `utils/helpers.js` | Update User-Agents ke Chrome 125+, tambah `getRandomPinterestHeaders()` |
+| `package.json` | Tambah `playwright: ^1.52.0` |
+| `Dockerfile` | Tambah `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` |
+
+---
+
+### 3. Proxy Support (Tailscale + EveryProxy)
+
+#### Perubahan
+- Tambah `getPlaywrightProxyConfig()` di `config.js` — format Playwright (`{ server, username?, password? }`)
+- Pinterest sekarang menggunakan proxy jika `PROXY_ENABLED=true`
+- Fallback otomatis ke local IP jika proxy gagal (ketika `NETWORK_FALLBACK_TO_LOCAL=true`)
+- Refactor `searchPinterest()` menjadi orchestration layer + `_scrapeWithBrowser()` core
+
+#### Konfigurasi `.env`
+```env
+# Proxy ON (Tailscale + EveryProxy)
+PROXY_ENABLED=true
+PROXY_TYPE=socks5
+PROXY_HOST=100.x.x.x
+PROXY_PORT=1080
+
+# Proxy OFF
+PROXY_ENABLED=false
+
+# Log mode
+LOG_LEVEL=simple   # atau 'full' untuk debug
+```
+
+---
+
+### ⚠️ Saran untuk AI Session Berikutnya
+
+#### HARUS DIPERHATIKAN:
+1. **JANGAN kembalikan Pinterest ke Puppeteer/browserManager**. Pinterest sekarang menggunakan Playwright dengan browser lifecycle sendiri. `browser-manager.js` hanya dipakai oleh `index.js` untuk shutdown cleanup — tidak ada command yang menggunakannya untuk kerja.
+
+2. **JANGAN hapus backward-compatible methods di logger.js** (`info()`, `warn()`, `debug()`, `error()`, `formatCommand()`, `command()`, `performance()`). Banyak file di luar handler yang masih memakainya (browser-manager.js, security.js, registry.js, pinterest.js, dll).
+
+3. **Logger `logError()` di base.js WAJIB dipertahankan** — dipakai oleh 33+ commands. Jangan pindahkan ke handler.js. Handler hanya handle top-level tracking, commands handle internal errors sendiri.
+
+4. **Tracker flow di handler.js**: `tracker` di-declare di outer scope (`let tracker = null`) lalu di-assign di dalam try block. Ini supaya catch block bisa akses tracker. Jangan ubah jadi `const`.
+
+5. **`logger.system()` untuk lifecycle events** — selalu tampil di kedua mode (simple + full). Dipakai di `index.js` dan `handler.js` untuk startup/connect/shutdown. Jangan ganti dengan `logger.info()` karena itu tidak tampil di simple mode.
+
+6. **Docker rebuild setelah merge**: Wajib `docker-compose build --no-cache` untuk memastikan Playwright code yang baru ter-deploy, bukan cached Puppeteer code.
+
+7. **SOCKS5 proxy**: Jika menggunakan Tailscale + EveryProxy, gunakan `PROXY_TYPE=socks5` di `.env`. Default `http` mungkin tidak kompatibel.
+
+#### BOLEH:
+- Tambah emoji category baru di `CATEGORY_EMOJI` map di logger.js jika ada command category baru
+- Tambah field baru di tracker (misalnya `args`) jika perlu info tambahan
+- Extend simple mode format selama tetap bersih dan indented
+
+---
+
 **Date:** May 12, 2026  
 **Version:** 2.8.2  
 **Author:** Antigravity AI (Google DeepMind)
