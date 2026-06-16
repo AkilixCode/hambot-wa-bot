@@ -84,17 +84,6 @@ class CommandBase {
         }
         logger.error(error, { command: this.name });
     }
-
-    /**
-     * Gracefully mark a command as failed in the handler logs without throwing an error
-     * Useful when a command fails to find data (e.g. proxy timeout) but handles it nicely.
-     */
-    setFailed(context, reason) {
-        if (context && context.commandName) {
-            context._failed = true;
-            context._failError = reason;
-        }
-    }
 }
 
 module.exports = CommandBase;
