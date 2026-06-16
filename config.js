@@ -195,6 +195,28 @@ class Config {
     }
 
     /**
+     * Get proxy configuration for Playwright browser context
+     * Returns null if proxy is not enabled or not configured
+     * @returns {Object|null} Playwright proxy config { server, username?, password? }
+     */
+    getPlaywrightProxyConfig() {
+        if (!this.proxy.enabled || !this.proxy.host || !this.proxy.port) {
+            return null;
+        }
+
+        const proxyConfig = {
+            server: this.proxy.url || `${this.proxy.type || 'http'}://${this.proxy.host}:${this.proxy.port}`
+        };
+
+        if (this.proxy.user && this.proxy.pass) {
+            proxyConfig.username = this.proxy.user;
+            proxyConfig.password = this.proxy.pass;
+        }
+
+        return proxyConfig;
+    }
+
+    /**
      * Normalize single owner ID to accept both @s.whatsapp.net and @lid formats
      * @param {string} ownerId - Raw owner ID from env
      * @returns {string|null} Normalized owner ID (first ID if comma-separated)

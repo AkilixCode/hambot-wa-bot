@@ -18,6 +18,7 @@ const { getRandomUA, getRandomPinterestHeaders, sleep } = require('../utils/help
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const logger = require('../utils/logger');
+const config = require('../config');
 
 // Lazy-load Playwright to avoid blocking bot startup
 let chromium = null;
@@ -115,12 +116,46 @@ class PinterestCommand extends CommandBase {
 
     /**
      * Search Pinterest for images using Playwright.
-     * Uses anti-detect measures and login wall dismissal.
+     * Uses proxy if configured (via .env PROXY_ENABLED), with fallback to local IP.
      * 
      * @param {string} query - Search query
      * @returns {Promise<string[]>} Array of image URLs (736x resolution)
      */
     async searchPinterest(query) {
+        const proxyConfig = config.getPlaywrightProxyConfig();
+
+        if (proxyConfig) {
+            logger.info(`Pinterest scraping via proxy: ${proxyConfig.server}`);
+            try {
+                const results = await this._scrapeWithBrowser(query, proxyConfig);
+                if (results.length > 0) return results;
+                logger.warn('Pinterest proxy returned 0 images, falling back to local IP');
+            } catch (error) {
+                logger.warn(`Pinterest proxy failed: ${error.message}`);
+            }
+
+            // Fallback to local IP if enabled
+            if (config.network.fallbackToLocal) {
+                logger.info('Pinterest falling back to local IP');
+                return await this._scrapeWithBrowser(query, null);
+            }
+            return [];
+        }
+
+        // No proxy configured — scrape directly
+        logger.info('Pinterest scraping via local IP (no proxy configured)');
+        return await this._scrapeWithBrowser(query, null);
+    }
+
+    /**
+     * Core scraping logic using Playwright.
+     * Separated from searchPinterest() to support proxy/fallback switching.
+     * 
+     * @param {string} query - Search query
+     * @param {Object|null} proxyConfig - Playwright proxy config or null for direct
+     * @returns {Promise<string[]>} Array of image URLs
+     */
+    async _scrapeWithBrowser(query, proxyConfig) {
         const url = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
         let browser = null;
         let imageUrls = [];
@@ -143,12 +178,11 @@ class PinterestCommand extends CommandBase {
                 ]
             });
 
-            const context = await browser.newContext({
+            const contextOptions = {
                 userAgent: getRandomUA(),
                 viewport: { width: 1920, height: 1080 },
                 locale: 'en-US',
                 timezoneId: 'America/New_York',
-                // Bypass some anti-detect checks
                 javaScriptEnabled: true,
                 bypassCSP: true,
                 extraHTTPHeaders: {
@@ -157,8 +191,14 @@ class PinterestCommand extends CommandBase {
                     'Sec-CH-UA-Mobile': '?0',
                     'Sec-CH-UA-Platform': '"Windows"'
                 }
-            });
+            };
 
+            // Apply proxy if provided
+            if (proxyConfig) {
+                contextOptions.proxy = proxyConfig;
+            }
+
+            const context = await browser.newContext(contextOptions);
             const page = await context.newPage();
 
             // Anti-detect: Override navigator.webdriver
@@ -266,11 +306,11 @@ class PinterestCommand extends CommandBase {
                 imageUrls = Array.from(combined);
             }
 
-            logger.info(`Pinterest scrape for "${query}": found ${imageUrls.length} images`);
+            logger.info(`Pinterest scrape for "${query}": found ${imageUrls.length} images (${proxyConfig ? 'via proxy' : 'local IP'})`);
             return imageUrls;
         } catch (error) {
             logger.error(`Error scraping Pinterest: ${error.message}`);
-            return [];
+            throw error;
         } finally {
             if (browser) {
                 await browser.close().catch(() => {});
