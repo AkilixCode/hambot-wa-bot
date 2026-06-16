@@ -6,6 +6,7 @@
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
+const logger = require('../utils/logger');
 
 class WeatherCommand extends CommandBase {
     constructor() {
@@ -40,10 +41,12 @@ class WeatherCommand extends CommandBase {
 
         try {
             // Using wttr.in free weather API with proxy support
+            logger.info(`Weather: fetching data for "${location}"`);
             const { data } = await httpClient.get(
                 `https://wttr.in/${encodeURIComponent(location)}?format=j1`,
                 { timeout: 10000 }
             );
+            logger.info('Weather: data received');
 
             // Cache for 10 minutes
             cache.set(cacheKey, data, 600000);

@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 
 class PortCommand extends CommandBase {
     constructor() {
@@ -74,6 +75,7 @@ class PortCommand extends CommandBase {
         await this.react(sock, msg, '🔌');
 
         const query = args[0].toLowerCase();
+        logger.info(`Port: looking up ${query}`);
 
         try {
             // Cek apakah query adalah nomor port

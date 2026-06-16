@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 
 class NetInfoCommand extends CommandBase {
     constructor() {
@@ -66,6 +67,7 @@ class NetInfoCommand extends CommandBase {
         }
 
         try {
+            logger.info(`NetInfo: fetching topic '${topic}'`);
             const content = topicHandler();
             await this.reply(sock, from, msg, content);
             await this.react(sock, msg, '✅');

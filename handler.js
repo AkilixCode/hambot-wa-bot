@@ -176,8 +176,12 @@ module.exports = async (sock, m) => {
         // --- Execute Command ---
         await command.execute(sock, msg, args, context);
 
-        // Command completed successfully
-        logger.commandEnd(tracker, 'done');
+        // Check if command self-reported failure via logError()
+        if (context._failed) {
+            logger.commandEnd(tracker, 'failed', context._failError);
+        } else {
+            logger.commandEnd(tracker, 'done');
+        }
 
     } catch (err) {
         // Log the failure with the tracker if available

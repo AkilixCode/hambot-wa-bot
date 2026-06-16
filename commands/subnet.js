@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 
 class SubnetCommand extends CommandBase {
     constructor() {
@@ -45,6 +46,7 @@ class SubnetCommand extends CommandBase {
 
         try {
             const input = args[0];
+            logger.info(`Subnet: calculating for ${input}`);
             const result = this.calculateSubnet(input);
 
             if (!result.valid) {

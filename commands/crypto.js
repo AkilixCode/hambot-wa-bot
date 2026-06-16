@@ -6,6 +6,7 @@
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
+const logger = require('../utils/logger');
 
 class CryptoCommand extends CommandBase {
     constructor() {
@@ -35,10 +36,12 @@ class CryptoCommand extends CommandBase {
 
         try {
             // Using CoinGecko API (free, no key required) with proxy support
+            logger.info(`Crypto: fetching data for "${symbol}"`);
             const { data } = await httpClient.get(
                 `https://api.coingecko.com/api/v3/coins/${symbol}`,
                 { timeout: 10000 }
             );
+            logger.info(`Crypto: data received for ${data.name}`);
 
             // Cache for 5 minutes
             cache.set(cacheKey, data, 300000);

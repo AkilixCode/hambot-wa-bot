@@ -92,6 +92,7 @@ class MusicCommand extends CommandBase {
         await this.react(sock, msg, '🔍');
 
         const query = args.join(' ');
+        logger.info(`Music: searching "${query}"${isValidUrl(query) ? ' (direct URL)' : ''}`);
         const filePrefix = generateFilename('music', '');
         
         // Build proxy args from config - uses getYtDlpProxyArgs method
@@ -171,6 +172,7 @@ class MusicCommand extends CommandBase {
 
                 videoUrl = `https://youtu.be/${validVideo.id}`;
                 videoTitle = validVideo.title;
+                logger.info(`Music: found "${videoTitle}" (${validVideo.duration}s)`);
             }
 
             // Step 2: Download audio using "Let it Be" method
@@ -192,6 +194,7 @@ class MusicCommand extends CommandBase {
                 ...downloadPlatformArgs,
             ];
 
+            logger.info(`Music: downloading audio (proxy: ${proxyArgs.length > 0 ? 'enabled' : 'disabled'})`);
             await this.spawnYtDlpWithFallback(downloadArgs, proxyArgs, networkArgs);
 
             // Find downloaded file
@@ -217,6 +220,7 @@ class MusicCommand extends CommandBase {
             }
 
             // Send audio
+            logger.info(`Music: download complete, sending ${(stats.size / 1024 / 1024).toFixed(1)}MB audio`);
             const audioBuffer = await fsPromises.readFile(audioFile);
             await sock.sendMessage(from, {
                 audio: audioBuffer,

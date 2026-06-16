@@ -113,6 +113,7 @@ class VideoCommand extends CommandBase {
             // Just warn the user
         }
 
+        logger.info(`Video: processing URL "${url}" (platform: ${platformInfo ? platformInfo.platform : 'unknown'})`);
         await this.react(sock, msg, '⏳');
 
         const filePrefix = generateFilename('video', '');
@@ -150,6 +151,7 @@ class VideoCommand extends CommandBase {
                 
                 videoTitle = videoInfo.title || 'Video';
                 videoDuration = videoInfo.duration || 0;
+                logger.info(`Video: found "${videoTitle}" (${videoDuration}s)`);
                 
                 // Check duration limit
                 if (videoDuration > config.media.maxDuration) {
@@ -173,6 +175,7 @@ class VideoCommand extends CommandBase {
                 ...platformArgs,
             ];
 
+            logger.info(`Video: downloading (proxy: ${proxyArgs.length > 0 ? 'enabled' : 'disabled'})`);
             await this.spawnYtDlpWithFallback(downloadArgs, proxyArgs, networkArgs);
 
             // Find downloaded file
@@ -198,6 +201,7 @@ class VideoCommand extends CommandBase {
             }
 
             // Send video
+            logger.info(`Video: download complete, sending ${(stats.size / 1024 / 1024).toFixed(1)}MB video`);
             const videoBuffer = await fsPromises.readFile(videoFile);
             await sock.sendMessage(from, {
                 video: videoBuffer,

@@ -6,6 +6,7 @@
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
+const logger = require('../utils/logger');
 
 class GempaCommand extends CommandBase {
     constructor() {
@@ -34,10 +35,12 @@ class GempaCommand extends CommandBase {
 
         try {
             // BMKG API with proxy support
+            logger.info('Gempa: fetching latest earthquake data...');
             const { data } = await httpClient.get(
                 'https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json',
                 { timeout: 10000 }
             );
+            logger.info('Gempa: data received');
 
             const quake = data.Infogempa.gempa;
 

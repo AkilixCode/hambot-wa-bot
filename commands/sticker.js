@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 const sharp = require('sharp');
 const { downloadMedia } = require('../utils/helpers');
 
@@ -40,6 +41,7 @@ class StickerCommand extends CommandBase {
             const buffer = await downloadMedia(imageMessage, 'image');
 
             // Convert to sticker format
+            logger.info('Sticker: processing image...');
             const stickerBuffer = await sharp(buffer)
                 .resize(512, 512, {
                     fit: 'contain',
@@ -49,6 +51,7 @@ class StickerCommand extends CommandBase {
                 .toBuffer();
 
             // Send sticker
+            logger.info('Sticker: created successfully');
             await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: msg });
             await this.react(sock, msg, '✅');
 

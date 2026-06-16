@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 
 class FactCommand extends CommandBase {
     constructor() {
@@ -26,6 +27,7 @@ class FactCommand extends CommandBase {
         await this.react(sock, msg, '💡');
 
         try {
+            logger.info('Fact: fetching random fact...');
             const randomFact = this.facts[Math.floor(Math.random() * this.facts.length)];
 
             const response = 

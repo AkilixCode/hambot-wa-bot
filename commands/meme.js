@@ -5,6 +5,7 @@
 
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
+const logger = require('../utils/logger');
 
 class MemeCommand extends CommandBase {
     constructor() {
@@ -40,6 +41,7 @@ class MemeCommand extends CommandBase {
 
         try {
             // Try to fetch from Indonesian subreddits
+            logger.info('Meme: fetching random meme...');
             const meme = await this.fetchIndonesianMeme();
 
             if (meme && meme.url) {
@@ -48,6 +50,7 @@ class MemeCommand extends CommandBase {
                     throw new Error('Not an image post');
                 }
 
+                logger.info(`Meme: fetched from r/${meme.subreddit}`);
                 await sock.sendMessage(from, {
                     image: { url: meme.url },
                     caption: `😂 *${meme.title}*\n\n👤 By: u/${meme.author}\n⬆️ ${meme.ups} upvotes\n\n_Dari r/${meme.subreddit}_`
