@@ -73,9 +73,16 @@ class CommandBase {
 
     /**
      * Log error (used internally by commands)
+     * When called with handler's context (has commandName), marks command as failed
+     * so handler.js logs the correct status instead of 'done'
      */
     logError(error, context) {
-        logger.error(error, { command: this.name, ...context });
+        // Mark command as failed if this is the handler's context object
+        if (context && context.commandName) {
+            context._failed = true;
+            context._failError = error;
+        }
+        logger.error(error, { command: this.name });
     }
 }
 

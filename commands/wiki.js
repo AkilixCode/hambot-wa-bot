@@ -6,6 +6,7 @@
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
+const logger = require('../utils/logger');
 
 class WikiCommand extends CommandBase {
     constructor() {
@@ -40,8 +41,10 @@ class WikiCommand extends CommandBase {
 
         try {
             // Wikipedia API with proxy support
+            logger.info(`Wiki: searching "${query}"`);
             const searchUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
             const { data } = await httpClient.get(searchUrl, { timeout: 10000 });
+            logger.info('Wiki: article found');
 
             // Cache for 1 hour
             cache.set(cacheKey, data, 3600000);

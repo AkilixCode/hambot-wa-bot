@@ -8,6 +8,7 @@ const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const { fungsiTranslate, smartSearchIMDb, getValidPosterUrl } = require('../utils/helpers');
 const config = require('../config');
+const logger = require('../utils/logger');
 
 class MovieCommand extends CommandBase {
     constructor() {
@@ -52,11 +53,14 @@ class MovieCommand extends CommandBase {
                 : `http://www.omdbapi.com/?t=${encodeURIComponent(query)}&apikey=${config.apis.omdb.key}&plot=full`;
 
             // OMDb API with proxy support
+            logger.info(`Movie: searching "${query}"`);
             const { data } = await httpClient.get(url, { timeout: 10000 });
 
             if (data.Response === 'False') {
                 return await this.reply(sock, from, msg, `❌ Movie not found: "${query}"\n\nTry a different title or year.`);
             }
+
+            logger.info(`Movie: found "${data.Title}"`);
 
             // Cache for 1 hour
             cache.set(cacheKey, data, 3600000);

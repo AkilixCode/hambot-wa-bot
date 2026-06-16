@@ -5,6 +5,7 @@
 
 const CommandBase = require('./base');
 const { fungsiTranslate } = require('../utils/helpers');
+const logger = require('../utils/logger');
 
 class TranslateCommand extends CommandBase {
     constructor() {
@@ -48,7 +49,9 @@ class TranslateCommand extends CommandBase {
             const targetLang = args[0].toLowerCase();
             const text = args.slice(1).join(' ');
 
+            logger.info(`Translate: translating to ${targetLang}`);
             const translated = await fungsiTranslate(text, targetLang);
+            logger.info('Translate: done');
 
             const response = 
 `🌐 *Hasil Terjemahan*

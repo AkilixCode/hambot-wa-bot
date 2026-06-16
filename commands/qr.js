@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 
 class QRCommand extends CommandBase {
     constructor() {
@@ -29,6 +30,7 @@ class QRCommand extends CommandBase {
 
         try {
             const text = args.join(' ');
+            logger.info(`QR: generating code for content length=${text.length}`);
             
             // Using API to generate QR code
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(text)}`;
@@ -38,6 +40,7 @@ class QRCommand extends CommandBase {
                 caption: `📱 *QR Code Generated*\n\nContent: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`
             }, { quoted: msg });
 
+            logger.info('QR: code generated');
             await this.react(sock, msg, '✅');
 
         } catch (error) {

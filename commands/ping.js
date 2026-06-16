@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 const os = require('os');
 const { formatSize } = require('../utils/helpers');
 const cache = require('../utils/cache');
@@ -27,6 +28,7 @@ class PingCommand extends CommandBase {
         await this.react(sock, msg, '💻');
 
         try {
+            logger.info('Ping: measuring latency...');
             // Get system info
             const cpus = os.cpus();
             const mem = process.memoryUsage().rss;

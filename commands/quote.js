@@ -5,6 +5,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 
 class QuoteCommand extends CommandBase {
     constructor() {
@@ -27,6 +28,7 @@ class QuoteCommand extends CommandBase {
         await this.react(sock, msg, '💭');
 
         try {
+            logger.info('Quote: fetching random quote...');
             const randomQuote = this.quotes[Math.floor(Math.random() * this.quotes.length)];
 
             const response = 

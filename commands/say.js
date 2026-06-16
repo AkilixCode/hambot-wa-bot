@@ -5,6 +5,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 const httpClient = require('../utils/http-client');
 const config = require('../config');
 const { spawn } = require('child_process');
@@ -123,6 +124,7 @@ class SayCommand extends CommandBase {
 
         try {
             // Panggil ElevenLabs API
+            logger.info(`Say: generating TTS audio for language=${language}, text length=${text.length}`);
             const audioBuffer = await this.generateSpeech(text, language);
 
             if (!audioBuffer || audioBuffer.length === 0) {
@@ -141,6 +143,7 @@ class SayCommand extends CommandBase {
             
             // Read converted file
             const oggBuffer = await fsPromises.readFile(oggPath);
+            logger.info(`Say: audio generated, size=${(oggBuffer.length / 1024).toFixed(1)}KB`);
 
             // Kirim sebagai voice note (ptt = push to talk)
             // Using OGG Opus format for proper WhatsApp voice note playback

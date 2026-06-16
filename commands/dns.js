@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 const dns = require('dns').promises;
 
 class DNSCommand extends CommandBase {
@@ -55,6 +56,7 @@ class DNSCommand extends CommandBase {
         }
 
         try {
+            logger.info(`DNS: resolving ${domain}`);
             const results = await this.performLookup(domain);
             
             const sections = [];
@@ -128,6 +130,7 @@ class DNSCommand extends CommandBase {
                 sections.push('❌ Tidak ada DNS record yang ditemukan.');
             }
 
+            logger.info(`DNS: resolved ${domain}`);
             await this.reply(sock, from, msg, sections.join('\n'));
             await this.react(sock, msg, '✅');
 

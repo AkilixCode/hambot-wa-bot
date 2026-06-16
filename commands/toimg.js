@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 const { downloadMedia, generateFilename } = require('../utils/helpers');
 const { spawnPromise } = require('../utils/helpers');
 const fsPromises = require('fs').promises;
@@ -37,6 +38,7 @@ class ToImgCommand extends CommandBase {
 
         try {
             // Download sticker
+            logger.info('ToImg: converting sticker to image...');
             const stickerBuffer = await downloadMedia(quotedSticker, 'sticker');
 
             // Save as webp
@@ -51,6 +53,7 @@ class ToImgCommand extends CommandBase {
 
             // Read and send PNG
             const imageBuffer = await fsPromises.readFile(pngFile);
+            logger.info('ToImg: conversion done');
             await sock.sendMessage(from, {
                 image: imageBuffer,
                 caption: '✅ Sticker converted to image'

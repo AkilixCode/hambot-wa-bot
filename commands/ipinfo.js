@@ -6,6 +6,7 @@
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
+const logger = require('../utils/logger');
 
 class IPInfoCommand extends CommandBase {
     constructor() {
@@ -57,10 +58,12 @@ class IPInfoCommand extends CommandBase {
         try {
             // Use ip-api.com - Note: free tier only supports HTTP
             // For production with sensitive data, consider using ipinfo.io or ipdata.co
+            logger.info(`IPInfo: looking up ${ipAddress}`);
             const { data } = await httpClient.get(
                 `http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`,
                 { timeout: 10000 }
             );
+            logger.info('IPInfo: data received');
 
             if (data.status === 'fail') {
                 return await this.reply(sock, from, msg, 

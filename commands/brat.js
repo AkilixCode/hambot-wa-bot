@@ -5,6 +5,7 @@
  */
 
 const CommandBase = require('./base');
+const logger = require('../utils/logger');
 const { createCanvas, registerFont } = require('canvas');
 const sharp = require('sharp');
 const path = require('path');
@@ -95,6 +96,7 @@ class BratCommand extends CommandBase {
 
         try {
             // Step 1: Generate raw canvas with text
+            logger.info(`Brat: generating image for text length=${text.length}`);
             const rawBuffer = await this.generateCanvas(text);
 
             // Step 2: Apply Gyurmatag-style post-processing filter
@@ -106,6 +108,7 @@ class BratCommand extends CommandBase {
                 .toBuffer();
 
             // Step 3: Send as sticker
+            logger.info('Brat: image generated');
             await sock.sendMessage(from, {
                 sticker: finalBuffer
             }, { quoted: msg });

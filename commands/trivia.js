@@ -5,6 +5,7 @@
 
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
+const logger = require('../utils/logger');
 
 class TriviaCommand extends CommandBase {
     constructor() {
@@ -32,12 +33,14 @@ class TriviaCommand extends CommandBase {
 
         try {
             // Using Open Trivia Database with proxy support
+            logger.info('Trivia: fetching question...');
             const { data } = await httpClient.get(
                 `https://opentdb.com/api.php?amount=1&difficulty=${selectedDifficulty}&type=multiple`,
                 { timeout: 10000 }
             );
 
             if (data.results && data.results.length > 0) {
+                logger.info('Trivia: question loaded');
                 const question = data.results[0];
                 
                 // Decode HTML entities
