@@ -128,24 +128,89 @@ async function fungsiTranslate(text, targetLang = 'id') {
 }
 
 /**
- * Smart IMDb search via DuckDuckGo
+ * Smart IMDb search with multi-strategy fallback
+ * Tries multiple methods to find an IMDb ID for a given query:
+ *   1. IMDb Suggestion API (fastest, most reliable)
+ *   2. OMDB Search API (?s= returns list of results)
+ *   3. DuckDuckGo scrape (last resort)
+ * 
  * Uses HTTP client with proxy support
+ * @param {string} query - Movie title to search for
+ * @param {string} [omdbApiKey] - OMDB API key for strategy #2
+ * @returns {Promise<{id: string|null, method: string}>} IMDb ID and method used
  */
-async function smartSearchIMDb(query) {
+async function smartSearchIMDb(query, omdbApiKey = null) {
+    // Lazy-load logger to avoid circular dependency
+    const logger = require('./logger');
+
+    const sanitizedQuery = security.sanitizeInput(query, 100);
+
+    // --- Strategy 1: IMDb Suggestion API ---
     try {
-        // Sanitize query
-        const sanitizedQuery = security.sanitizeInput(query, 100);
-        
-        const url = `https://html.duckduckgo.com/html/?q=site:imdb.com/title ${encodeURIComponent(sanitizedQuery)}`;
-        const { data } = await httpClient.get(url, { 
+        // IMDb's autocomplete endpoint — keyed by first letter of the query
+        const firstChar = sanitizedQuery.charAt(0).toLowerCase();
+        const suggestUrl = `https://v2.sg.media-imdb.com/suggests/${firstChar}/${encodeURIComponent(sanitizedQuery)}.json`;
+        const { data: rawJsonp } = await httpClient.get(suggestUrl, {
+            headers: { 'User-Agent': getRandomUA() },
+            timeout: 5000,
+            responseType: 'text'
+        });
+
+        // Response is JSONP like: imdb$query({...})  — strip wrapper to get JSON
+        const jsonStr = rawJsonp.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, '');
+        const suggestData = JSON.parse(jsonStr);
+
+        if (suggestData.d && suggestData.d.length > 0) {
+            // Find the first result that is a movie/tvSeries (has an IMDb title ID)
+            const match = suggestData.d.find(item =>
+                item.id && item.id.startsWith('tt') &&
+                (!item.q || item.q === 'feature' || item.q === 'TV movie' ||
+                 item.q === 'TV series' || item.q === 'TV mini-series' ||
+                 item.q === 'short' || item.q === 'video')
+            );
+            if (match) {
+                logger.info(`smartSearchIMDb: found "${match.l}" (${match.id}) via IMDb Suggestion API`);
+                return { id: match.id, method: 'imdb-suggest' };
+            }
+        }
+    } catch (e) {
+        logger.debug?.(`smartSearchIMDb: IMDb Suggestion API failed: ${e.message}`);
+    }
+
+    // --- Strategy 2: OMDB Search API (?s=) ---
+    if (omdbApiKey) {
+        try {
+            const searchUrl = `http://www.omdbapi.com/?s=${encodeURIComponent(sanitizedQuery)}&apikey=${omdbApiKey}`;
+            const { data: searchData } = await httpClient.get(searchUrl, { timeout: 5000 });
+
+            if (searchData.Response === 'True' && searchData.Search && searchData.Search.length > 0) {
+                const firstResult = searchData.Search[0];
+                logger.info(`smartSearchIMDb: found "${firstResult.Title}" (${firstResult.imdbID}) via OMDB Search API`);
+                return { id: firstResult.imdbID, method: 'omdb-search' };
+            }
+        } catch (e) {
+            logger.debug?.(`smartSearchIMDb: OMDB Search API failed: ${e.message}`);
+        }
+    }
+
+    // --- Strategy 3: DuckDuckGo scrape (last resort) ---
+    try {
+        const ddgUrl = `https://html.duckduckgo.com/html/?q=site:imdb.com/title ${encodeURIComponent(sanitizedQuery)}`;
+        const { data: ddgHtml } = await httpClient.get(ddgUrl, {
             headers: { 'User-Agent': getRandomUA() },
             timeout: 5000
         });
-        const idMatch = data.match(/\/title\/(tt\d{6,10})\/?/);
-        return (idMatch && idMatch[1]) ? idMatch[1] : null;
-    } catch (e) { 
-        return null; 
+        const idMatch = ddgHtml.match(/\/title\/(tt\d{6,10})\/?/);
+        if (idMatch && idMatch[1]) {
+            logger.info(`smartSearchIMDb: found ${idMatch[1]} via DuckDuckGo scrape`);
+            return { id: idMatch[1], method: 'duckduckgo' };
+        }
+    } catch (e) {
+        logger.debug?.(`smartSearchIMDb: DuckDuckGo scrape failed: ${e.message}`);
     }
+
+    logger.warn(`smartSearchIMDb: all strategies exhausted for query "${sanitizedQuery}"`);
+    return { id: null, method: 'none' };
 }
 
 /**

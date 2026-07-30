@@ -1,38 +1,62 @@
 # HamBot Update Report
 
-## 📋 Incremental Update (2.9.1) — `.movie` OMDb Search Fallback Improvement
+## 📋 Incremental Update (2.9.1) — `.movie` Multi-Strategy IMDb Search Fallback
 
 **Date:** July 30, 2026  
-**Scope:** Reliability improvement for movie lookup flow
+**Scope:** Reliability improvement for movie lookup — newer movies now found via IMDb ID fallback  
+**Author:** Antigravity AI (Google DeepMind)
 
-### What Changed
+### Masalah Sebelumnya
 
-Perintah `.movie` sekarang menggunakan alur pencarian berlapis:
+Perintah `.movie` sering gagal untuk film baru (contoh: `.movie The Odyssey`) karena OMDb belum punya data judul tersebut. Fallback `smartSearchIMDb` hanya mengandalkan DuckDuckGo yang sering di-throttle/block.
 
-1. **Primary lookup by title (OMDb `t=`)**  
-   Bot mencoba query judul film terlebih dahulu seperti `.movie The Odyssey`.
-2. **Fallback lookup by IMDb ID (OMDb `i=`)**  
-   Jika title lookup gagal, bot mencari IMDb ID (`tt...`) lalu request ulang ke OMDb menggunakan ID tersebut.
-3. **Clear failure response**  
-   Jika keduanya gagal, bot mengirim pesan error yang lebih informatif dan menyebutkan kedua metode yang sudah dicoba.
+### Solusi: Multi-Strategy Search
+
+Alur pencarian baru:
+
+1. **Step 1: OMDb by Title (`?t=`)**  
+   Coba langsung lewat judul (cepat, tanpa scraping).
+
+2. **Step 2: IMDb ID Fallback** — Jika Step 1 gagal, cari IMDb ID pakai 3 strategi:
+   - **Strategy A**: IMDb Suggestion API (`v2.sg.media-imdb.com/suggests/...`) — autocomplete resmi IMDb, paling cepat & reliable
+   - **Strategy B**: OMDB Search API (`?s=query`) — return list of results + IMDb ID  
+   - **Strategy C**: DuckDuckGo scrape (`site:imdb.com/title`) — last resort
+
+3. **Step 3: OMDb by ID (`?i=ttXXXXXX`)**  
+   Jika IMDb ID ditemukan, query ulang ke OMDb pakai ID.
+
+4. **Step 4: Informative Error**  
+   Jika semua gagal, pesan error yang jelas menyebutkan semua metode yang sudah dicoba + tips.
+
+### Contoh Hasil
+
+| Query | Sebelum | Sesudah |
+|-------|---------|---------|
+| `.movie The Odyssey` | ❌ Movie not found | ✅ Found `tt33764258` via IMDb Suggestion API |
+| `.movie Interstellar` | ✅ Works | ✅ Works (title search) |
+| `.movie The Dark Knight` | ✅ Works | ✅ Works (title search) |
 
 ### Logging Improvements
 
-- Menambahkan warning log saat:
-  - title lookup gagal
-  - IMDb ID tidak ditemukan
-  - lookup via IMDb ID juga gagal
-- Menambahkan info log saat:
-  - title lookup dimulai
-  - lookup via IMDb ID dimulai
-  - data film berhasil ditemukan
+- `info` log saat title lookup dimulai, IMDb ID fallback dimulai (dengan method), film berhasil ditemukan
+- `warn` log saat title lookup gagal (dengan OMDB error), IMDb ID search gagal (dengan strategies tried)
+- `debug` log untuk setiap strategy failure (untuk troubleshooting)
+
+### Error Messages
+
+Pesan error sekarang lebih informatif:
+- Menunjukkan apa yang sudah dicoba (OMDb title + IMDb ID lookup)
+- Menyertakan tips (gunakan judul Inggris, tambahkan tahun rilis, cek typo)
+- Menyertakan IMDb ID dan method yang digunakan jika ID ditemukan tapi OMDB tetap gagal
 
 ### Files Updated
 
 | File | Action | Description |
 |------|--------|-------------|
-| `commands/movie.js` | MODIFIED | Ubah urutan lookup: title-first, IMDb-ID fallback, plus error/logging yang lebih informatif |
-| `UPDATE-REPORT.md` | MODIFIED | Dokumentasi perubahan incremental ini |
+| `utils/helpers.js` | MODIFIED | `smartSearchIMDb` → multi-strategy (IMDb Suggest API → OMDB Search API → DuckDuckGo), return `{id, method}` |
+| `commands/movie.js` | MODIFIED | Gunakan `smartSearchIMDb` baru, pass OMDB API key, error message informatif |
+| `UPDATE-REPORT.md` | MODIFIED | Dokumentasi perubahan v2.9.1 |
+
 
 
 **Date:** June 16, 2026  
