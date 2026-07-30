@@ -45,19 +45,47 @@ class MovieCommand extends CommandBase {
         }
 
         try {
-            // Try smart IMDb search first
-            const imdbId = await smartSearchIMDb(query);
-            
-            const url = imdbId 
-                ? `http://www.omdbapi.com/?i=${imdbId}&apikey=${config.apis.omdb.key}&plot=full`
-                : `http://www.omdbapi.com/?t=${encodeURIComponent(query)}&apikey=${config.apis.omdb.key}&plot=full`;
+            const titleUrl = `http://www.omdbapi.com/?t=${encodeURIComponent(query)}&apikey=${config.apis.omdb.key}&plot=full`;
 
-            // OMDb API with proxy support
-            logger.info(`Movie: searching "${query}"`);
-            const { data } = await httpClient.get(url, { timeout: 10000 });
+            // 1) Search by title first
+            logger.info(`Movie: searching by title "${query}"`);
+            let { data } = await httpClient.get(titleUrl, { timeout: 10000 });
 
+            // 2) Fallback to IMDb ID search when title lookup fails
             if (data.Response === 'False') {
-                return await this.reply(sock, from, msg, `❌ Movie not found: "${query}"\n\nTry a different title or year.`);
+                logger.warn('Movie title search failed, trying IMDb ID fallback', {
+                    query,
+                    omdbError: data.Error || 'Unknown error'
+                });
+
+                const imdbId = await smartSearchIMDb(query);
+                if (!imdbId) {
+                    logger.warn('IMDb ID fallback failed: no IMDb ID found', { query });
+                    return await this.reply(
+                        sock,
+                        from,
+                        msg,
+                        `❌ Movie not found for "${query}".\n\nTried:\n• OMDb title search\n• IMDb ID fallback search\n\nPlease try a more specific title (or include year).`
+                    );
+                }
+
+                const idUrl = `http://www.omdbapi.com/?i=${imdbId}&apikey=${config.apis.omdb.key}&plot=full`;
+                logger.info(`Movie: searching by IMDb ID "${imdbId}" for query "${query}"`);
+                ({ data } = await httpClient.get(idUrl, { timeout: 10000 }));
+
+                if (data.Response === 'False') {
+                    logger.warn('Movie IMDb ID lookup also failed', {
+                        query,
+                        imdbId,
+                        omdbError: data.Error || 'Unknown error'
+                    });
+                    return await this.reply(
+                        sock,
+                        from,
+                        msg,
+                        `❌ Movie not found for "${query}".\n\nTried:\n• OMDb title search\n• OMDb IMDb-ID search (${imdbId})\n\nPlease try another title or add release year.`
+                    );
+                }
             }
 
             logger.info(`Movie: found "${data.Title}"`);
