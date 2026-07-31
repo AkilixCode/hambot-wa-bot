@@ -447,11 +447,29 @@ class MenuCommand extends CommandBase {
             },
 
             security: {
-                title: '🔒 Security',
-                description: 'Status dan kontrol keamanan bot.',
-                usage: ['.security'],
-                examples: ['.security'],
-                notes: ['• Menampilkan status keamanan sistem']
+                title: '🔒 Security — Owner Control Panel',
+                description: 'Panel informasi dan kontrol penuh bot. Khusus owner.',
+                usage: [
+                    '.security help',
+                    '.security <subcommand> [args]'
+                ],
+                examples: [
+                    '.security status',
+                    '.security health',
+                    '.security env',
+                    '.security audit 20',
+                    '.security threats',
+                    '.security lock',
+                    '.security cmd disable spam',
+                    '.security block 62812345678 60'
+                ],
+                notes: [
+                    '• Hanya owner yang bisa memakai perintah ini',
+                    '• Output sensitif dikirim ke chat pribadi, bukan grup',
+                    '• Kunci API tidak pernah ditampilkan, hanya status & sidik jari',
+                    '• Aksi berbahaya butuh konfirmasi token sekali pakai',
+                    '• Percobaan akses berulang oleh non-owner diblokir otomatis'
+                ]
             },
 
             // === NETWORKING COMMANDS ===
@@ -530,27 +548,42 @@ class MenuCommand extends CommandBase {
         };
     }
 
+    /**
+     * Hide owner-only commands from everyone but the owner.
+     * Advertising the owner control panel to every user is free reconnaissance
+     * for anyone looking for a way in.
+     * @param {Array} commands - Commands to filter
+     * @param {boolean} isOwnerViewer - Whether the requester is the bot owner
+     * @returns {Array} Commands the requester is allowed to see
+     * @private
+     */
+    _visibleCommands(commands, isOwnerViewer) {
+        if (isOwnerViewer) return commands;
+        return commands.filter(cmd => !config.isOwnerOnlyCommand(cmd.name));
+    }
+
     async execute(sock, msg, args, context) {
         const { from } = context;
+        const isOwnerViewer = context.isOwner ?? config.isOwner(context.sender);
 
         await this.react(sock, msg, '📋');
 
         // If argument provided
         if (args[0]) {
             const query = args[0].toLowerCase();
-            
+
             // First, check if it's a command name
             const command = commandRegistry.get(query);
-            if (command) {
+            if (command && (isOwnerViewer || !config.isOwnerOnlyCommand(command.name))) {
                 return await this.sendCommandHelp(sock, from, msg, command);
             }
-            
+
             // Second, check if it's a category
-            const categoryCommands = commandRegistry.getByCategory(query);
+            const categoryCommands = this._visibleCommands(commandRegistry.getByCategory(query), isOwnerViewer);
             if (categoryCommands.length > 0) {
-                return await this.sendCategoryHelp(sock, from, msg, query);
+                return await this.sendCategoryHelp(sock, from, msg, query, isOwnerViewer);
             }
-            
+
             // Not found - suggest similar commands
             return await this.reply(sock, from, msg, 
                 `❌ Perintah atau kategori "${args[0]}" tidak ditemukan.\n\n` +
@@ -574,7 +607,7 @@ class MenuCommand extends CommandBase {
 
         // Commands per category
         for (const category of categories.sort()) {
-            const commands = commandRegistry.getByCategory(category);
+            const commands = this._visibleCommands(commandRegistry.getByCategory(category), isOwnerViewer);
             if (commands.length === 0) continue;
 
             const categoryName = this.getCategoryNameID(category);
@@ -695,9 +728,12 @@ class MenuCommand extends CommandBase {
         await this.reply(sock, from, msg, sections.join('\n'));
     }
 
-    async sendCategoryHelp(sock, from, msg, category) {
-        const commands = commandRegistry.getByCategory(category.toLowerCase());
-        
+    async sendCategoryHelp(sock, from, msg, category, isOwnerViewer = false) {
+        const commands = this._visibleCommands(
+            commandRegistry.getByCategory(category.toLowerCase()),
+            isOwnerViewer
+        );
+
         if (commands.length === 0) {
             return await this.reply(sock, from, msg, `❌ Kategori "${category}" tidak ditemukan.`);
         }
@@ -740,7 +776,8 @@ class MenuCommand extends CommandBase {
             'group': '👥',
             'fun': '🎉',
             'technical': '🖥️',
-            'networking': '🌐'
+            'networking': '🌐',
+            'security': '🔒'
         };
         return emojis[category.toLowerCase()] || '📌';
     }
@@ -757,7 +794,8 @@ class MenuCommand extends CommandBase {
             'group': 'Grup',
             'fun': 'Seru-seruan',
             'technical': 'Teknikal',
-            'networking': 'Jaringan'
+            'networking': 'Jaringan',
+            'security': 'Keamanan (Owner)'
         };
         return names[category.toLowerCase()] || category;
     }
