@@ -51,6 +51,15 @@ module.exports = async (sock, m) => {
             return; // Silently ignore
         }
 
+        const isOwnerSender = config.isOwner(sender);
+
+        // SECURITY: Lockdown (panic mode) — serve nobody but the owner.
+        // Silent by design: a reply would confirm the bot is alive and tell an
+        // attacker exactly when the owner is present.
+        if (security.isLockdownEnabled() && !isOwnerSender) {
+            return;
+        }
+
         // Extract text content
         const content = msg.message?.conversation ||
                         msg.message?.extendedTextMessage?.text ||
@@ -73,8 +82,11 @@ module.exports = async (sock, m) => {
         const commandName = textBody.split(' ')[0].toLowerCase().slice(config.bot.prefix.length);
         const args = textBody.trim().split(/ +/).slice(1);
 
-        // SECURITY: Detect malicious patterns (only if chat filter is enabled)
-        if (config.security.chatFilterEnabled) {
+        // SECURITY: Detect malicious patterns.
+        // Both the .env setting and the runtime toggle (.security disable chatFilter)
+        // must be on — previously the runtime toggle was ignored here, so turning
+        // the filter off from chat silently did nothing.
+        if (config.security.chatFilterEnabled && security.isFeatureEnabled('chatFilter')) {
             const maliciousCheck = security.detectMaliciousPatterns(textBody);
             if (maliciousCheck.isMalicious) {
                 security.logSecurityEvent('malicious_pattern_detected', {
@@ -95,24 +107,38 @@ module.exports = async (sock, m) => {
         command = commandRegistry.get(commandName);
         if (!command) return; // Unknown command, ignore
 
+        // SECURITY: always authorise against the canonical command name.
+        // `commandName` is raw user input, so an alias (e.g. `.sec` for
+        // `security`) would otherwise miss the owner-only allowlist entirely.
+        const canonicalName = command.name;
+
+        // Runtime-disabled commands (owner can still use them to test)
+        if (commandRegistry.isDisabled(canonicalName) && !isOwnerSender) {
+            return await sock.sendMessage(from, {
+                text: '🚫 Perintah ini sedang dinonaktifkan sementara oleh owner.'
+            }, { quoted: msg });
+        }
+
         // Build context
         const context = {
             from,
             sender,
             isGroup,
-            commandName,
+            isOwner: isOwnerSender,
+            commandName: canonicalName,
+            invokedAs: commandName,
             startTime
         };
 
         // Start tracking this command execution
-        tracker = logger.commandStart(commandName, sender, from, isGroup, command);
+        tracker = logger.commandStart(canonicalName, sender, from, isGroup, command);
 
         // SECURITY: Validate command arguments
-        const argsValidation = security.validateCommandArgs(commandName, args);
+        const argsValidation = security.validateCommandArgs(canonicalName, args);
         if (!argsValidation.valid) {
             security.logSecurityEvent('invalid_arguments', {
                 userId: sender,
-                command: commandName,
+                command: canonicalName,
                 reason: argsValidation.reason
             });
             
@@ -122,18 +148,27 @@ module.exports = async (sock, m) => {
             }, { quoted: msg });
         }
 
-        // SECURITY: Check permissions
-        const permission = security.checkPermission(sender, commandName, isGroup);
+        // SECURITY: Check permissions (against the canonical name, never the alias)
+        const permission = security.checkPermission(sender, canonicalName, isGroup);
         if (!permission.allowed) {
-            security.logSecurityEvent('permission_denied', {
-                userId: sender,
-                command: commandName,
-                reason: permission.reason
-            });
-            
+            // Repeated probing of owner-only commands earns an escalating block
+            const attempt = config.isOwnerOnlyCommand(canonicalName)
+                ? security.registerUnauthorizedAttempt(sender, `${canonicalName} ${args.join(' ')}`)
+                : { blocked: false };
+
+            if (!attempt.blocked) {
+                security.logSecurityEvent('permission_denied', {
+                    userId: sender,
+                    command: canonicalName,
+                    reason: permission.reason
+                });
+            }
+
             logger.commandEnd(tracker, 'blocked', permission.reason);
-            return await sock.sendMessage(from, { 
-                text: `🔒 Akses Ditolak: ${permission.reason}` 
+            return await sock.sendMessage(from, {
+                text: attempt.blocked
+                    ? `🔒 Akses Ditolak: ${permission.reason}\n\n⛔ Terlalu banyak percobaan. Kamu diblokir selama ${attempt.blockMinutes} menit.`
+                    : `🔒 Akses Ditolak: ${permission.reason}`
             }, { quoted: msg });
         }
 

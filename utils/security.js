@@ -5,6 +5,18 @@
 
 const logger = require('./logger');
 const config = require('../config');
+const redact = require('./redact');
+
+// How many audit entries are kept in memory (ring buffer).
+const AUDIT_LOG_MAX = 200;
+
+// Unauthorized attempts on owner-only commands: window and escalating penalties.
+const UNAUTHORIZED_WINDOW_MS = 10 * 60 * 1000;
+const UNAUTHORIZED_PENALTIES = [
+    { attempts: 8, blockMs: 12 * 60 * 60 * 1000 },
+    { attempts: 5, blockMs: 2 * 60 * 60 * 1000 },
+    { attempts: 3, blockMs: 30 * 60 * 1000 }
+];
 
 class SecurityManager {
     constructor() {
@@ -41,8 +53,150 @@ class SecurityManager {
         this.runtimeSettings = {
             chatFilterEnabled: true,  // Can be toggled at runtime
             rateLimitEnabled: true,   // Can be toggled at runtime
-            autoBlockEnabled: true    // Auto-block on suspicious activity
+            autoBlockEnabled: true,   // Auto-block on suspicious activity
+            lockdownEnabled: false    // Panic mode: only the owner is served
         };
+
+        // Rolling audit trail of security-relevant events and owner actions.
+        // In-memory only — never persisted, so it cannot be exfiltrated from disk.
+        this.auditLog = [];
+
+        // Failed owner-only command attempts, keyed by user ID.
+        this.unauthorizedAttempts = new Map();
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  AUDIT TRAIL
+    // ─────────────────────────────────────────────────────
+
+    /**
+     * Append an entry to the in-memory audit trail.
+     * All free-text detail is redacted on the way in so a secret can never be
+     * stored and later replayed by `.security audit`.
+     *
+     * @param {string} action - Short action key, e.g. 'owner.restart'
+     * @param {Object} details - { actor, target, outcome, detail }
+     * @returns {Object} The stored entry
+     */
+    recordAudit(action, details = {}) {
+        const entry = {
+            timestamp: Date.now(),
+            action: String(action).slice(0, 64),
+            actor: details.actor ? redact.maskJid(details.actor) : 'system',
+            target: details.target ? redact.maskJid(details.target) : null,
+            outcome: details.outcome || 'ok',
+            detail: details.detail ? redact.redact(String(details.detail)).slice(0, 200) : null
+        };
+
+        this.auditLog.push(entry);
+        if (this.auditLog.length > AUDIT_LOG_MAX) {
+            this.auditLog.splice(0, this.auditLog.length - AUDIT_LOG_MAX);
+        }
+
+        return entry;
+    }
+
+    /**
+     * Read the most recent audit entries (newest first).
+     * @param {number} limit - Maximum number of entries
+     * @returns {Array}
+     */
+    getAuditLog(limit = 20) {
+        const safeLimit = Math.min(Math.max(parseInt(limit) || 20, 1), AUDIT_LOG_MAX);
+        return this.auditLog.slice(-safeLimit).reverse();
+    }
+
+    /**
+     * Clear the audit trail.
+     * @returns {number} Number of entries removed
+     */
+    clearAuditLog() {
+        const count = this.auditLog.length;
+        this.auditLog = [];
+        return count;
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  LOCKDOWN (PANIC MODE)
+    // ─────────────────────────────────────────────────────
+
+    /**
+     * Enable or disable lockdown. While locked down the bot silently ignores
+     * every message that does not come from an owner ID.
+     * @param {boolean} enabled
+     * @param {string} [actor] - Who flipped the switch (for the audit trail)
+     * @returns {boolean} New state
+     */
+    setLockdown(enabled, actor = null) {
+        this.runtimeSettings.lockdownEnabled = Boolean(enabled);
+        this.recordAudit(enabled ? 'lockdown.enabled' : 'lockdown.disabled', { actor });
+        logger.warn(`Lockdown mode ${enabled ? 'ENABLED' : 'disabled'}`);
+        return this.runtimeSettings.lockdownEnabled;
+    }
+
+    /**
+     * @returns {boolean} Whether lockdown mode is active
+     */
+    isLockdownEnabled() {
+        return this.runtimeSettings.lockdownEnabled === true;
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  OWNER-COMMAND BRUTE FORCE PROTECTION
+    // ─────────────────────────────────────────────────────
+
+    /**
+     * Record a non-owner trying to run an owner-only command and apply an
+     * escalating temporary block once the attempts pass a threshold.
+     *
+     * Without this, an attacker can probe `.security` endlessly for free —
+     * every failed attempt is a chance to find a gap in the owner check.
+     *
+     * @param {string} userId - Sender JID
+     * @param {string} attemptedCommand - What they tried to run (redacted before storage)
+     * @returns {Object} { attempts: number, blocked: boolean, blockMinutes: number|null }
+     */
+    registerUnauthorizedAttempt(userId, attemptedCommand = '') {
+        // Owners can never lock themselves out via this path.
+        if (!userId || config.isOwner(userId)) {
+            return { attempts: 0, blocked: false, blockMinutes: null };
+        }
+
+        const now = Date.now();
+        const previous = (this.unauthorizedAttempts.get(userId) || [])
+            .filter(ts => now - ts < UNAUTHORIZED_WINDOW_MS);
+        previous.push(now);
+        this.unauthorizedAttempts.set(userId, previous);
+
+        this.logSecurityEvent('unauthorized_owner_command', {
+            userId,
+            attemptedCommand: String(attemptedCommand).slice(0, 100),
+            attempts: previous.length
+        });
+
+        if (!this.runtimeSettings.autoBlockEnabled) {
+            return { attempts: previous.length, blocked: false, blockMinutes: null };
+        }
+
+        const penalty = UNAUTHORIZED_PENALTIES.find(p => previous.length >= p.attempts);
+        if (!penalty) {
+            return { attempts: previous.length, blocked: false, blockMinutes: null };
+        }
+
+        const result = this.blockUser(userId, penalty.blockMs, 'Percobaan akses perintah owner berulang');
+        return {
+            attempts: previous.length,
+            blocked: result.success,
+            blockMinutes: result.success ? Math.round(penalty.blockMs / 60000) : null
+        };
+    }
+
+    /**
+     * Forget recorded unauthorized attempts for a user (used when unblocking).
+     * @param {string} userId
+     */
+    clearUnauthorizedAttempts(userId) {
+        this.unauthorizedAttempts.delete(userId);
     }
 
     /**
@@ -411,6 +565,14 @@ class SecurityManager {
             this.securityEvents.set(key, 0);
         }
         this.securityEvents.set(key, this.securityEvents.get(key) + 1);
+
+        // Mirror into the audit trail so `.security audit` shows threats too
+        const { userId, ...rest } = context;
+        this.recordAudit(`event.${event}`, {
+            actor: userId,
+            outcome: 'blocked',
+            detail: Object.keys(rest).length > 0 ? JSON.stringify(rest) : null
+        });
     }
 
     /**
@@ -476,6 +638,9 @@ class SecurityManager {
             blockedUsers: this.blockedUsers.size,
             suspiciousActivityTracked: this.suspiciousActivity.size,
             securityEvents: this.securityEvents.size,
+            auditEntries: this.auditLog.length,
+            unauthorizedTracked: this.unauthorizedAttempts.size,
+            lockdownEnabled: this.isLockdownEnabled(),
             runtimeSettings: { ...this.runtimeSettings },
             recentBlocks: Array.from(this.blockedUsers.entries()).map(([id, info]) => ({
                 userId: id.split('@')[0],
@@ -483,6 +648,53 @@ class SecurityManager {
                 expiresIn: Math.max(0, info.until - Date.now())
             }))
         };
+    }
+
+    /**
+     * Summarise current threat activity for the owner panel.
+     * IDs are returned masked — the panel never needs full numbers to be useful.
+     * @param {number} limit - Max entries per list
+     * @returns {Object}
+     */
+    getThreatSummary(limit = 10) {
+        const now = Date.now();
+
+        const suspicious = Array.from(this.suspiciousActivity.entries())
+            .map(([userId, activities]) => {
+                const recent = activities.filter(a => now - a.timestamp < 3600000);
+                const types = {};
+                for (const activity of recent) {
+                    types[activity.type] = (types[activity.type] || 0) + 1;
+                }
+                return {
+                    userId: redact.maskJid(userId),
+                    total: activities.length,
+                    lastHour: recent.length,
+                    types,
+                    lastSeen: activities.length ? activities[activities.length - 1].timestamp : null
+                };
+            })
+            .filter(entry => entry.total > 0)
+            .sort((a, b) => b.lastHour - a.lastHour || b.total - a.total)
+            .slice(0, limit);
+
+        const probes = Array.from(this.unauthorizedAttempts.entries())
+            .map(([userId, timestamps]) => ({
+                userId: redact.maskJid(userId),
+                attempts: timestamps.length,
+                lastSeen: timestamps[timestamps.length - 1] || null
+            }))
+            .sort((a, b) => b.attempts - a.attempts)
+            .slice(0, limit);
+
+        const events = Array.from(this.securityEvents.entries())
+            .map(([key, count]) => ({ event: key.split('_').slice(0, -1).join('_') || key, count }))
+            .reduce((acc, item) => {
+                acc[item.event] = (acc[item.event] || 0) + item.count;
+                return acc;
+            }, {});
+
+        return { suspicious, probes, events };
     }
 
     /**
@@ -552,13 +764,20 @@ class SecurityManager {
             }
         }
         
+        // Reset the unauthorized-attempt counter too, otherwise the next probe
+        // immediately re-triggers the escalating block the owner just lifted.
+        this.clearUnauthorizedAttempts(userId);
+        for (const normalizedId of normalizedIds) {
+            this.clearUnauthorizedAttempts(normalizedId);
+        }
+
         if (unblocked) {
-            logger.info(`User manually unblocked`, { 
+            logger.info(`User manually unblocked`, {
                 userId: userId.split('@')[0],
                 allUnblockedIds: [userId, ...normalizedIds]
             });
         }
-        
+
         return unblocked;
     }
 
@@ -569,6 +788,7 @@ class SecurityManager {
     clearAllBlocks() {
         const count = this.blockedUsers.size;
         this.blockedUsers.clear();
+        this.unauthorizedAttempts.clear();
         logger.info(`All user blocks cleared`, { count });
         return count;
     }
@@ -606,6 +826,16 @@ class SecurityManager {
                 this.suspiciousActivity.delete(userId);
             } else {
                 this.suspiciousActivity.set(userId, recent);
+            }
+        }
+
+        // Drop unauthorized-attempt counters that fell out of the window
+        for (const [userId, timestamps] of this.unauthorizedAttempts.entries()) {
+            const recent = timestamps.filter(ts => now - ts < UNAUTHORIZED_WINDOW_MS);
+            if (recent.length === 0) {
+                this.unauthorizedAttempts.delete(userId);
+            } else {
+                this.unauthorizedAttempts.set(userId, recent);
             }
         }
     }

@@ -115,7 +115,7 @@ Role-based access control for sensitive commands.
 3. **Owner Only** - Requires bot owner authentication
 
 **Owner-Only Commands:**
-- `.security` - View security statistics
+- `.security` - Owner control panel (see section 11)
 
 **Admin-Only Commands (in groups):**
 - `.tagall` - Mention all members
@@ -125,6 +125,11 @@ Role-based access control for sensitive commands.
 BOT_OWNER_ID=6281234567890@s.whatsapp.net
 OWNER_ONLY_COMMANDS=security,custom1,custom2
 ```
+
+**Authorization is always checked against the canonical command name**, never
+the alias the user typed. `.sec` and `.secstatus` resolve to `security` before
+the owner-only allowlist is consulted, so an alias cannot slip past the gate.
+Owner-only commands are also hidden from `.menu` for non-owners.
 
 ### 8. File Validation
 
@@ -174,6 +179,56 @@ All security events are logged with context.
 }
 ```
 
+Every security event is also mirrored into an in-memory **audit trail**
+(`.security audit`), together with owner actions such as restarts, blocks,
+broadcasts and setting changes. The trail keeps the last 200 entries, is never
+written to disk, and stores all identifiers masked and all free text redacted.
+
+### 11. Owner Control Panel Hardening
+
+`.security` is the highest-value target in the bot: it can read logs, describe
+the configuration, silence the bot, message arbitrary chats and stop the
+process. It is built on the assumption that someone will eventually try to
+reach it who should not.
+
+**Defence layers**
+
+| Layer | Protection |
+|-------|-----------|
+| Double authorization | `handler.js` gates on the canonical command name **and** the command re-checks `config.isOwner()` itself. Neither trusts the other. |
+| Fail closed | With no `BOT_OWNER_ID` configured, the panel is disabled entirely instead of being open. |
+| Anti-probing | Repeated attempts by a non-owner escalate to an automatic block: 3 attempts → 30 min, 5 → 2 h, 8 → 12 h (10-minute window). |
+| No credential disclosure | API keys are **never** printed. `.security env` reports presence, length and a SHA-256 fingerprint only. Proxy passwords are never rendered in any form. |
+| Output redaction | Logs, error messages and audit detail pass through `utils/redact.js`, which strips known env secrets by value plus generic secret shapes (Bearer, JWT, `AIza…`, `sk-…`, `?api_key=`, `user:pass@host`). |
+| Channel control | Sensitive subcommands run in a group deliver their output to the owner's private chat and post only a neutral notice in the group. |
+| Confirmation tokens | `restart`, `stop`, `unblock all`, `broadcast`, `setprefix` and disabling a security feature require a single-use, 90-second, sender-bound token. A wrong token cancels the action. |
+| Bounded reads | Log tails are capped at 512 KB and 200 lines, so a huge PM2 log cannot exhaust memory. |
+| Strict input validation | Broadcast targets must match a real WhatsApp JID shape (no `status@broadcast`, no newsletters); prefixes must be punctuation only; block durations, cooldowns and process limits are range-clamped. |
+| No shell | Every `spawn()` call passes arguments as an array with `shell: false`. |
+| Protected commands | `security` and `menu` cannot be disabled at runtime, so the owner cannot lock themselves out. |
+
+**Panel subcommands**
+
+```
+Info      .security help | status | uptime | health | env [full] | whoami
+          .security audit [n] | threats | list | logs [n]
+Security  .security enable <fitur> | disable <fitur> | lock | unlock
+Commands  .security cmd list | cmd disable <nama> | cmd enable <nama> | cmd enableall
+Settings  .security owneronly <on|off> | setcooldown <ms> | setprefix <p> | setmaxproc <n>
+Users     .security block <target> <menit> | unblock <target|all>
+Ops       .security clearcache | broadcast <jid> <pesan> | restart | stop
+Flow      .security confirm <token> | cancel
+```
+
+**Lockdown (panic mode)** — `.security lock` makes the bot silently ignore
+every message that is not from an owner. The silence is deliberate: a reply
+would confirm the bot is alive and reveal when the owner is present.
+
+**Runtime vs `.env`** — everything the panel changes lives in memory only.
+Nothing is written back to `.env`, and a restart returns the bot to its
+configured baseline. That is intentional: a compromised panel session cannot
+leave a persistent backdoor.
+
 ---
 
 ## 🔐 Security Best Practices
@@ -201,10 +256,21 @@ All security events are logged with context.
    npm update
    ```
 
-5. **Use Security Command**
+5. **Use the Owner Control Panel**
    ```
-   .security  # View current security status
+   .security status    # Security overview
+   .security health    # Subsystem health check
+   .security audit     # Who did what, recently
+   .security threats   # Who is probing the bot
+   .security lock      # Panic mode during an incident
    ```
+   Run it from a private chat with the bot. In a group, sensitive output is
+   redirected to your DM instead of being posted where everyone can screenshot it.
+
+6. **Never Read Keys Through the Bot**
+   The panel is built so that no subcommand can print a credential. If you need
+   to check which key is loaded, compare the fingerprint from `.security env`
+   against your own copy — do not add a command that echoes `.env` values.
 
 ### For Users
 
@@ -319,14 +385,15 @@ MAX_PROCESSES=3
 ### View Security Status (Owner Only)
 
 ```
-.security
+.security status
 ```
 
 **Output:**
-- Number of blocked users
-- Suspicious activity count
-- Security event log
-- Recent blocks with reasons
+- Uptime and lockdown state
+- Blocked users, suspicious activity, security events, owner-probe attempts
+- Runtime feature toggles vs `.env` configuration
+- Runtime-disabled commands
+- Active blocks with masked IDs and remaining time
 
 ### Manual User Block (Code)
 
@@ -348,23 +415,37 @@ if (security.isUserBlocked('user_id@s.whatsapp.net')) {
 
 ### If You Detect an Attack:
 
-1. **Check Security Logs**
-   - Review `/logs/` directory
-   - Look for security events
-
-2. **View Security Status**
+1. **Contain first**
    ```
-   .security
+   .security lock
+   ```
+   Panic mode: the bot serves only you until you run `.security unlock`.
+
+2. **See what happened**
+   ```
+   .security threats
+   .security audit 50
+   .security logs 100
+   ```
+   All three are redacted and, if you are in a group, delivered to your DM.
+
+3. **Identify and block**
+   ```
+   .security list
+   .security block <nomor> <menit>
    ```
 
-3. **Identify Attacker**
-   - Check blocked users list
-   - Review suspicious activity
+4. **Restore**
+   ```
+   .security unlock
+   .security status
+   ```
+   Then rotate any credential you believe was exposed, and restart the bot so
+   runtime overrides fall back to your `.env` baseline.
 
-4. **Take Action**
-   - User is automatically blocked
-   - Review and adjust security settings if needed
-   - Report to authorities if severe
+**If you suspect a key leaked:** rotate it at the provider, update `.env`, and
+restart. The panel cannot show you a key, so a leak means it escaped through
+some other path — check custom commands that log request URLs.
 
 ### Reporting Security Issues
 
