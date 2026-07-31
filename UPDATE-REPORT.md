@@ -1,5 +1,112 @@
 # HamBot Update Report
 
+## Update (2.10.0) — Perombakan `.security` menjadi Owner Control Panel yang Diperketat
+
+**Date:** July 31, 2026  
+**Version:** 2.10.0  
+**Scope:** Perombakan perintah `.security`, penambahan lapisan keamanan pada handler, registry, dan menu  
+**Author:** Claude Opus 5 (Anthropic), via Claude Code  
+**Pull Request:** [#49](https://github.com/AkilixCode/hambot-wa-bot/pull/49)
+
+### Latar Belakang
+
+`.security` adalah perintah dengan kewenangan tertinggi di bot: bisa membaca log, menampilkan konfigurasi, membungkam bot, mengirim pesan ke chat manapun, dan mematikan proses. Versi sebelumnya (v2.7.0) menambah banyak subcommand tetapi tidak menambah pengamanan yang setara. Update ini menutup celah-celah tersebut sekaligus menambah subcommand informatif yang selama ini harus dicek langsung di server.
+
+Asumsi yang dipakai saat menulis ulang: cepat atau lambat akan ada pihak yang mencoba menjangkau perintah ini padahal tidak berhak.
+
+### Kerentanan yang Diperbaiki
+
+| # | Masalah | Perbaikan |
+|---|---------|-----------|
+| 1 | **Alias melewati gerbang owner.** `handler.js` memeriksa izin memakai nama perintah mentah dari input user, sehingga `.sec` dan `.secstatus` tidak pernah dicocokkan ke daftar `OWNER_ONLY_COMMANDS`. Hanya pemeriksaan di dalam perintah yang menahannya. | Pemeriksaan izin selalu diresolusi ke nama kanonik lebih dulu lewat `registry.resolveName()`. |
+| 2 | **`.security logs` mengirim isi file log mentah ke chat.** Log PM2 rutin memuat URL proxy berikut password dan URL request berisi `?apikey=`. | Semua keluaran melewati modul baru `utils/redact.js`. |
+| 3 | **`readFileSync` pada file log.** Log PM2 bisa mencapai ukuran gigabyte dan membuat proses kehabisan memori. | Pembacaan dibatasi pada bagian akhir file: maksimal 512 KB dan 200 baris. |
+| 4 | **Output sensitif tampil di tempat perintah diketik.** `.security env` yang dijalankan di grup memperlihatkan seluruh konfigurasi ke semua anggota. | Subcommand sensitif dikirim ke chat pribadi owner; di grup hanya muncul pemberitahuan singkat. |
+| 5 | **Toggle `chatFilter` runtime tidak berfungsi.** `handler.js` hanya membaca flag dari `.env`, sehingga `.security disable chatFilter` tidak berdampak apa pun. | Handler kini mensyaratkan flag `.env` dan toggle runtime sama-sama aktif. |
+| 6 | **Percobaan akses tidak berkonsekuensi.** Upaya gagal hanya dicatat, sehingga panel bisa diprobe berulang tanpa biaya. | Blokir otomatis bertingkat: 3 percobaan → 30 menit, 5 → 2 jam, 8 → 12 jam, dalam jendela 10 menit. |
+| 7 | **`setprefix` menerima huruf dan spasi.** Prefix seperti itu membuat bot merespons percakapan biasa atau merusak parsing perintah. | Hanya simbol, 1–3 karakter. Karakter yang justru ditolak oleh filter chat (`$ & \| ; ( )`) dikecualikan, karena prefix dari karakter tersebut membuat bot tidak bisa dipanggil sama sekali. |
+| 8 | **`broadcast` menerima string apa pun yang mengandung `@`.** | Hanya bentuk JID yang sah. `status@broadcast` dan newsletter ditolak. Tetap satu tujuan per perintah agar bot tidak bisa dipakai sebagai alat spam. |
+| 9 | **`restart` dan `stop` langsung dieksekusi.** | Aksi destruktif memerlukan token konfirmasi sekali pakai, berlaku 90 detik, dan terikat ke pengirim. |
+| 10 | **`.menu` menampilkan perintah owner ke semua orang**, yang berarti memberi peta serangan secara cuma-cuma. | Perintah owner-only disembunyikan dari non-owner. |
+
+### Penanganan Data Sensitif
+
+Kunci API tetap tidak pernah ditampilkan. Sebelumnya `.security env` hanya menunjukkan status terpasang/tidak, dan jaminan itu dipertahankan. Yang berubah, informasinya kini lebih berguna tanpa menjadi lebih longgar: setiap kunci dilaporkan sebagai status, panjang karakter, dan sidik jari SHA-256 sepanjang 8 karakter. Sidik jari cukup untuk memastikan kunci mana yang sedang dipakai dengan membandingkan ke salinan sendiri, tetapi tidak bisa dibalik menjadi kunci aslinya.
+
+Host proxy dan ID owner disamarkan secara default. `.security env full` menampilkan detail infrastruktur tersebut tanpa mask, tetapi tetap tidak menyentuh material kunci. Password proxy tidak pernah ditampilkan dalam bentuk apa pun.
+
+`utils/redact.js` bekerja dalam dua lapis:
+
+1. **Berbasis nilai** — setiap variabel environment yang namanya mengandung pola kredensial (`KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH`, dan sejenisnya) nilainya dicari dan diganti di mana pun muncul.
+2. **Berbasis pola** — bentuk rahasia umum tetap tersaring meski nilainya tidak pernah ada di environment bot: header `Bearer`/`Basic`, JWT, `AIza…`, `sk-…`, `ghp_…`, `xox…`, parameter query `?api_key=`, dan kredensial yang menempel di URL (`skema://user:pass@host`).
+
+Modul ini sengaja tidak mengimpor modul lain dari proyek, agar tidak pernah menjadi bagian dari require cycle dan bisa dipakai dari mana saja.
+
+### Subcommand
+
+| Kelompok | Subcommand |
+|----------|------------|
+| Informasi | `help`, `status`, `uptime`, `health`, `env [full]`, `whoami`, `audit [n]`, `threats`, `list`, `logs [n]` |
+| Keamanan | `enable <fitur>`, `disable <fitur>`, `lock`, `unlock` |
+| Kontrol perintah | `cmd list`, `cmd disable <nama>`, `cmd enable <nama>`, `cmd enableall` |
+| Pengaturan | `owneronly <on\|off>`, `setcooldown <ms>`, `setprefix <p>`, `setmaxproc <n>` |
+| Pengguna | `block <target> <menit>`, `unblock <target>`, `unblock all` |
+| Operasi | `clearcache`, `broadcast <jid> <pesan>`, `restart`, `stop` |
+| Alur konfirmasi | `confirm <token>`, `cancel` |
+
+Yang baru pada update ini:
+
+- **`health`** — pemeriksaan subsistem: koneksi socket, lag event loop, tekanan heap dan memori proses, ukuran cache, status fitur keamanan, dan jumlah owner terdaftar.
+- **`audit [n]`** — jejak 200 entri terakhir berisi aksi owner dan event keamanan. Hanya di memori, tidak pernah ditulis ke disk, ID disamarkan, dan teks bebas disensor sebelum disimpan.
+- **`threats`** — ringkasan siapa yang sedang memprobe bot dan dengan pola apa.
+- **`whoami`** — menampilkan JID pengirim, tipenya, dan status owner. Berguna untuk kasus yang paling sering terjadi saat setup: ID `@lid` di grup tidak cocok dengan `@s.whatsapp.net` yang terdaftar di `BOT_OWNER_ID`.
+- **`lock` / `unlock`** — mode panik. Saat aktif, bot mengabaikan semua pesan selain dari owner tanpa membalas apa pun. Diamnya disengaja: balasan justru mengonfirmasi bot masih hidup dan menunjukkan kapan owner sedang aktif.
+- **`cmd disable|enable|enableall`** — menonaktifkan perintah tertentu saat runtime. `security` dan `menu` dilindungi agar owner tidak bisa mengunci dirinya sendiri.
+
+Perubahan perilaku pada subcommand lama: `disable <fitur>` dan `setprefix` sekarang meminta konfirmasi, dan subcommand yang tidak dikenal mengembalikan pesan kesalahan alih-alih diam-diam menampilkan help.
+
+### Perubahan File
+
+| File | Action | Description |
+|------|--------|-------------|
+| `utils/redact.js` | NEW | Penyensoran rahasia dua lapis, plus helper `maskJid`, `maskHost`, `describeSecret`, `fingerprint` |
+| `commands/security.js` | REWRITTEN | Panel owner: verifikasi ganda, pengiriman ke DM untuk output sensitif, token konfirmasi, validasi input, subcommand baru |
+| `utils/security.js` | MODIFIED | Jejak audit, mode lockdown, pelacakan percobaan akses owner, `getThreatSummary()` |
+| `commands/registry.js` | MODIFIED | `resolveName()`, enable/disable perintah saat runtime, daftar perintah yang dilindungi |
+| `handler.js` | MODIFIED | Otorisasi memakai nama kanonik, penegakan lockdown, gerbang perintah nonaktif, perbaikan toggle `chatFilter` |
+| `commands/menu.js` | MODIFIED | Menyembunyikan perintah owner-only dari non-owner, entri panduan `.security` diperbarui |
+| `SECURITY.md` | MODIFIED | Dokumentasi lapisan pertahanan panel dan alur respons insiden |
+| `UPDATE-REPORT.md` | MODIFIED | Dokumentasi perubahan v2.10.0 |
+
+### Pengujian
+
+Verifikasi memakai skrip uji fungsional ad-hoc berisi 63 pemeriksaan, mencakup penyensoran terhadap bentuk kunci yang nyata, penolakan non-owner beserta eskalasi blokirnya, `env` yang tidak membocorkan apa pun pada kedua mode, pengalihan output dari grup ke DM, alur token konfirmasi termasuk kasus token salah, validasi input, kontrol perintah, dan pemeriksaan bahwa setiap subcommand informasi tidak memuat rahasia. Skrip ini tidak ikut di-commit karena bergantung pada environment palsu; hasilnya 63 lulus, 0 gagal.
+
+Suite yang sudah ada tidak berubah hasilnya:
+
+| Suite | Hasil |
+|-------|-------|
+| `test-system.js` | 60 lulus, 0 gagal |
+| `test-integration.cjs` | 25 lulus, 0 gagal |
+| `test-quality.cjs` | 10 lulus, 0 gagal |
+| `test-security.cjs` | 36 lulus, 2 gagal |
+
+Dua kegagalan pada `test-security.cjs` sudah ada sebelum update ini dan sudah diverifikasi terhadap baseline. Keduanya adalah ekspektasi tes yang usang, bukan bug kode:
+
+1. Tes mengharapkan `.security` **diizinkan** untuk pengguna biasa dalam kondisi "dev mode". Perilaku sekarang menolaknya, dan penolakan itu yang benar.
+2. Tes mengharapkan `.tagall` ditolak untuk non-admin di grup, padahal `adminOnlyInGroups` di `utils/security.js` masih array kosong.
+
+Keduanya tidak disentuh karena memperbaikinya berarti memutuskan perilaku mana yang diinginkan, dan itu keputusan pemilik proyek.
+
+### Catatan
+
+- **Semua perubahan runtime hanya hidup di memori.** Tidak ada yang ditulis kembali ke `.env`, dan restart mengembalikan bot ke baseline konfigurasi. Ini disengaja: sesi panel yang disalahgunakan tidak bisa meninggalkan backdoor permanen.
+- **Panel gagal dalam keadaan tertutup.** Jika `BOT_OWNER_ID` tidak dikonfigurasi, panel dinonaktifkan sepenuhnya, bukan dibiarkan terbuka.
+- **Setiap `spawn()` memakai array argumen dengan `shell: false`**, sehingga nilai seperti `PM2_PROCESS_NAME` tidak bisa berubah menjadi command injection.
+- Jika ada kecurigaan kunci bocor, rotasi kunci di sisi penyedia, perbarui `.env`, lalu restart. Panel tidak bisa menampilkan kunci, jadi kebocoran berarti jalurnya ada di tempat lain — periksa perintah kustom yang mencatat URL request.
+
+---
+
 ## 📋 Incremental Update (2.9.1) — `.movie` Multi-Strategy IMDb Search Fallback
 
 **Date:** July 30, 2026  
