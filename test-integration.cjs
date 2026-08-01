@@ -198,12 +198,12 @@ assert(executionTestsPassed === testableCommands.length,
 // Test 9: Check command dependencies
 console.log('\n📦 Checking External Dependencies...\n');
 
-// Browser automation is Playwright only — the Puppeteer stack was removed in
-// v3.1.0 once .pinterest migrated and nothing else launched a browser.
+// No browser dependency any more. `.pinterest` was the only command that
+// launched one, and it now uses Pinterest's JSON endpoint over plain HTTP —
+// so Playwright was dropped in v3.2.0, following Puppeteer in v3.1.0.
 const dependencyChecks = [
     { name: 'axios', required: true },
     { name: 'sharp', required: true },
-    { name: 'playwright', required: true },
     { name: 'socks-proxy-agent', required: true }
 ];
 

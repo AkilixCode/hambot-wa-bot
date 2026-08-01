@@ -6,6 +6,8 @@ const config = require('./config');
 const logger = require('./utils/logger');
 const cache = require('./utils/cache');
 const security = require('./utils/security');
+const egress = require('./utils/egress');
+const tempdir = require('./utils/tempdir');
 
 // Use the modular handler directly
 const handler = require('./handler');
@@ -27,7 +29,16 @@ async function startBot() {
 
         // Validate configuration
         config.validate();
-        
+
+        // Reapply the persisted proxy toggle before any command can run, so
+        // `.security proxy on` survives a restart instead of silently reverting
+        // to whatever PROXY_ENABLED happens to say.
+        egress.restore();
+
+        // Remove scratch files an earlier crash left behind. Non-blocking:
+        // a failed sweep must never prevent the bot from starting.
+        tempdir.sweepStale().catch(() => {});
+
         // Safety fallback: Clear any blocks on owner IDs on startup
         // This prevents owner from being locked out if accidentally blocked
         const clearedBlocks = security.clearOwnerBlocks();

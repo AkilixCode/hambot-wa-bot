@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 
 class InfoCommand extends CommandBase {
     constructor() {
@@ -37,32 +38,35 @@ class InfoCommand extends CommandBase {
                     year: 'numeric'
                 });
 
-            const description = metadata.desc || 'Tidak ada deskripsi';
-            const descTrimmed = description.length > 200 
-                ? description.substring(0, 200) + '...' 
-                : description;
+            // Subject and description are group-controlled text, so they are
+            // stripped of markdown before being echoed back.
+            const description = ui.safe(metadata.desc || '', 200) || 'Tidak ada deskripsi';
 
-            const info = 
-`📋 *INFORMASI GRUP*
-
-👥 *${metadata.subject}*
-
-🆔 ID Grup: ${metadata.id}
-📅 Dibuat: ${creationDate}
-👥 Anggota: ${metadata.participants.length}
-👑 Admin: ${admins}
-🔒 Terbatas: ${metadata.restrict ? 'Ya' : 'Tidak'}
-📢 Pengumuman: ${metadata.announce ? 'Ya' : 'Tidak'}
-
-📝 *Deskripsi:*
-${descTrimmed}`;
+            const info = ui.card({
+                icon: '📋',
+                title: ui.safe(metadata.subject, 60),
+                lines: [
+                    ui.kv('Anggota', ui.number(metadata.participants.length), '👥'),
+                    ui.kv('Admin', String(admins), '👑'),
+                    ui.kv('Dibuat', creationDate, '📅'),
+                    ui.kv('Terbatas', metadata.restrict ? 'Ya' : 'Tidak', '🔒'),
+                    ui.kv('Pengumuman', metadata.announce ? 'Ya' : 'Tidak', '📢'),
+                    ui.kv('ID Grup', ui.mono(metadata.id), '🆔'),
+                    '',
+                    `📝 ${ui.bold('Deskripsi')}`,
+                    description
+                ],
+                footer: ui.clock()
+            });
 
             await this.reply(sock, from, msg, info);
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.replyError(sock, from, msg, 'Gagal mendapatkan informasi grup.');
+            await this.replyError(sock, from, msg, 'Gagal mendapatkan informasi grup.', {
+                hint: ['Coba lagi sebentar lagi']
+            });
         }
     }
 }

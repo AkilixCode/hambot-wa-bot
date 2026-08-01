@@ -41,9 +41,19 @@ class Config {
             cacheExpiration: parseInt(process.env.CACHE_EXPIRATION) || 300000 // 5 minutes
         };
 
+        // MAX_FILE_SIZE was previously parsed here and then never read — both
+        // media commands hardcoded '200M'. Two problems with that number:
+        // WhatsApp will not accept inline media anywhere near it, and a file
+        // that size was being read into a Buffer whole, against a 2GB heap cap.
+        // MAX_MEDIA_SIZE is the current knob; MAX_FILE_SIZE is still honoured
+        // so existing .env files keep working.
+        const rawMaxSize = process.env.MAX_MEDIA_SIZE || process.env.MAX_FILE_SIZE || '64M';
         this.media = {
             maxDuration: parseInt(process.env.MAX_MUSIC_DURATION) || 600, // 10 minutes
-            maxFileSize: process.env.MAX_FILE_SIZE || '200M', // 200MB limit for data saving
+            // yt-dlp form, e.g. '64M' — passed straight to --max-filesize
+            maxFileSize: rawMaxSize,
+            // Byte form, for the post-download check
+            maxFileBytes: this._parseSize(rawMaxSize),
             proxyUrl: this._buildProxyUrl()
         };
 
@@ -102,6 +112,23 @@ class Config {
             // This ensures commands still work even if the proxy is temporarily unavailable
             fallbackToLocal: process.env.NETWORK_FALLBACK_TO_LOCAL !== 'false'
         };
+    }
+
+    /**
+     * Parse a yt-dlp style size string ('64M', '1.5G', '500K') into bytes.
+     * Falls back to 64MB when the value is unparseable, so a typo in .env
+     * degrades to a sane default instead of NaN or an unbounded download.
+     * @param {string} value - Size with an optional K/M/G suffix
+     * @returns {number} Bytes
+     */
+    _parseSize(value) {
+        const match = String(value).trim().match(/^(\d+(?:\.\d+)?)\s*([KMG])?B?$/i);
+        if (!match) return 64 * 1024 * 1024;
+
+        const amount = parseFloat(match[1]);
+        const unit = (match[2] || '').toUpperCase();
+        const multiplier = { K: 1024, M: 1024 ** 2, G: 1024 ** 3 }[unit] || 1;
+        return Math.floor(amount * multiplier);
     }
 
     /**

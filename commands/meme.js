@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const httpClient = require('../utils/http-client');
 const logger = require('../utils/logger');
 
@@ -51,10 +52,26 @@ class MemeCommand extends CommandBase {
                 }
 
                 logger.info(`Meme: fetched from r/${meme.subreddit}`);
-                await sock.sendMessage(from, {
-                    image: { url: meme.url },
-                    caption: `😂 *${meme.title}*\n\n👤 By: u/${meme.author}\n⬆️ ${meme.ups} upvotes\n\n_Dari r/${meme.subreddit}_`
-                }, { quoted: msg });
+
+                // Fetched into a Buffer rather than passing { url } to Baileys.
+                // Baileys would fetch the URL itself, bypassing utils/http-client
+                // and therefore the proxy — so with the proxy on, this one
+                // request would still have gone out over the datacenter IP.
+                const buffer = await this.downloadImage(meme.url);
+                if (!buffer) throw new Error('Meme image download failed');
+
+                await this.replyMedia(sock, from, msg, {
+                    image: buffer,
+                    caption: ui.card({
+                        icon: '😂',
+                        title: ui.safe(ui.truncate(meme.title, 70)),
+                        lines: [
+                            ui.kv('Oleh', `u/${ui.safe(meme.author, 30)}`, '👤'),
+                            ui.kv('Upvote', ui.compactNumber(meme.ups || 0), '⬆️')
+                        ],
+                        footer: `r/${meme.subreddit} ${ui.SYM.dot} ${ui.clock()}`
+                    })
+                });
 
                 await this.react(sock, msg, '✅');
             } else {
@@ -218,6 +235,44 @@ class MemeCommand extends CommandBase {
         } catch {
             // Invalid URL
             return false;
+        }
+    }
+
+    /**
+     * Fetch a meme image through the shared HTTP client.
+     *
+     * Goes through utils/http-client so the request honours the proxy setting
+     * and the magic-byte check below can reject Reddit's HTML error pages,
+     * which are served with a 200 and would otherwise reach WhatsApp labelled
+     * as an image.
+     *
+     * @param {string} url - Image URL
+     * @returns {Promise<Buffer|null>} Image bytes, or null on failure
+     */
+    async downloadImage(url) {
+        try {
+            const response = await httpClient.get(url, {
+                responseType: 'arraybuffer',
+                timeout: 15000,
+                headers: {
+                    'User-Agent': 'HamBot/3.2 (WhatsApp Bot)',
+                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+                }
+            });
+
+            const buffer = Buffer.from(response.data);
+            if (buffer.length < 12) return null;
+
+            const isJpeg = buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF;
+            const isPng = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47;
+            const isGif = buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46;
+            const isWebp = buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+                buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50;
+
+            return (isJpeg || isPng || isGif || isWebp) ? buffer : null;
+        } catch (error) {
+            logger.debug(`Meme: image download failed - ${error.message}`);
+            return null;
         }
     }
 

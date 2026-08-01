@@ -1,6 +1,6 @@
 {
   "name": "hambot",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "description": "WhatsApp bot with a modular command system, media downloading, and networking tools",
   "main": "index.js",
@@ -18,8 +18,9 @@
     "test": "node test-system.js",
     "test:integration": "node test-integration.cjs",
     "test:security": "node test-security.cjs",
-    "test:all": "npm run test && npm run test:integration && npm run test:security",
-    "test:verbose": "LOG_LEVEL=debug node test-system.js"
+    "test:all": "npm run test && npm run test:integration && npm run test:security && npm run test:media",
+    "test:verbose": "LOG_LEVEL=debug node test-system.js",
+    "test:media": "node test-media.cjs"
   },
   "keywords": [
     "whatsapp",
@@ -37,7 +38,6 @@
     "canvas": "^3.2.3",
     "dotenv": "^17.4.2",
     "pino": "^10.3.1",
-    "playwright": "^1.62.1",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.35.3",
     "socks-proxy-agent": "^10.1.0"

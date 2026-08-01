@@ -23,13 +23,18 @@ services:
     # Override critical container settings
     environment:
       - NODE_ENV=production
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      # Point yt-dlp at the PO token provider below. Uncomment together with
+      # the `pot-provider` service to raise the YouTube success rate when
+      # running without a residential proxy.
+      # - POT_PROVIDER_URL=http://pot-provider:4416
 
     volumes:
       # Persist WhatsApp auth session (survives container restarts)
       - hambot_auth:/app/auth_info_baileys
       # Persist logs
       - hambot_logs:/app/logs
+      # Persist the runtime egress (proxy) toggle across restarts
+      - hambot_data:/app/data
       # Mount fonts directory (if customized locally)
       # - ./fonts:/app/fonts:ro
 
@@ -44,10 +49,11 @@ services:
           cpus: "0.5"
 
     # Security: drop unnecessary Linux capabilities
+    # SYS_ADMIN used to be granted here for the Chromium sandbox. `.pinterest`
+    # no longer runs a browser, so the container now needs no capabilities at
+    # all — this is a real reduction in blast radius, not a cosmetic one.
     cap_drop:
       - ALL
-    cap_add:
-      - SYS_ADMIN  # Required by Chromium sandbox
     security_opt:
       - no-new-privileges:true
 
@@ -58,8 +64,30 @@ services:
         max-size: "50m"
         max-file: "3"
 
+  # ---- Optional: YouTube PO token provider ----
+  # YouTube rejects requests from datacenter IPs at the player layer ("Sign in
+  # to confirm you're not a bot"). A proof-of-origin token makes the traffic
+  # look legitimate and materially raises the success rate — though it is not a
+  # guarantee, and a residential proxy (`.security proxy on`) remains the
+  # stronger fix.
+  #
+  # To enable: uncomment this service and POT_PROVIDER_URL above.
+  # pot-provider:
+  #   image: brainicism/bgutil-ytdlp-pot-provider:latest
+  #   container_name: hambot-pot
+  #   restart: unless-stopped
+  #   init: true
+  #   expose:
+  #     - "4416"
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 512M
+
 volumes:
   hambot_auth:
     name: hambot_auth
   hambot_logs:
     name: hambot_logs
+  hambot_data:
+    name: hambot_data

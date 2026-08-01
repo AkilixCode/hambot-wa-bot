@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 
 // In-memory storage for active reminders
 const activeReminders = new Map();
@@ -48,22 +49,31 @@ class ReminderCommand extends CommandBase {
         // Parse time
         const duration = this.parseTime(timeArg);
         if (duration === null) {
-            return await this.reply(sock, from, msg, 
-                '❌ Format waktu salah!\n\n' +
-                'Gunakan: 10s, 5m, 1h, atau 1d\n' +
-                's = detik, m = menit, h = jam, d = hari'
-            );
+            return await this.replyError(sock, from, msg, 'Format waktunya salah.', {
+                title: 'Format Salah',
+                hint: [
+                    'Gunakan: 10s, 5m, 1h, atau 1d',
+                    's = detik, m = menit, h = jam, d = hari',
+                    '.reminder 5m minum air'
+                ]
+            });
         }
 
         // Limit reminder duration (max 7 days)
         const maxDuration = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
         if (duration > maxDuration) {
-            return await this.replyError(sock, from, msg, 'Maksimal waktu reminder adalah 7 hari!');
+            return await this.replyError(sock, from, msg, 'Maksimal waktu reminder adalah 7 hari.', {
+                title: 'Terlalu Lama',
+                hint: ['Coba yang lebih pendek, misalnya 1d']
+            });
         }
 
         // Minimum 10 seconds
         if (duration < 10000) {
-            return await this.replyError(sock, from, msg, 'Minimal waktu reminder adalah 10 detik!');
+            return await this.replyError(sock, from, msg, 'Minimal waktu reminder adalah 10 detik.', {
+                title: 'Terlalu Cepat',
+                hint: ['Coba 10s atau lebih']
+            });
         }
 
         await this.react(sock, msg, '⏰');
@@ -76,7 +86,14 @@ class ReminderCommand extends CommandBase {
             try {
                 // Send reminder message
                 await sock.sendMessage(from, {
-                    text: `⏰ *REMINDER!*\n\n${message}\n\n_Reminder set ${this.formatDuration(duration)} ago_`
+                    text: ui.clamp(ui.card({
+                        icon: '⏰',
+                        title: 'Pengingat',
+                        // The message is the user's own text echoed back into
+                        // the chat, so markdown is stripped.
+                        lines: [ui.safe(message, 800)],
+                        footer: `Dipasang ${this.formatDuration(duration)} lalu`
+                    }))
                 });
                 
                 // Clean up from active reminders
@@ -99,12 +116,17 @@ class ReminderCommand extends CommandBase {
 
         // Confirm reminder set
         const readableTime = this.formatDuration(duration);
-        await this.reply(sock, from, msg, 
-            `✅ Reminder set!\n\n` +
-            `📝 *Pesan:* ${message}\n` +
-            `⏱️ *Waktu:* ${readableTime} dari sekarang\n\n` +
-            `_Bot akan mengingatkanmu nanti!_`
-        );
+        const dueAt = new Date(Date.now() + duration);
+
+        await this.reply(sock, from, msg, ui.success('Pengingat Dipasang', [
+            ui.kv('Pesan', ui.safe(ui.truncate(message, 120)), '📝'),
+            ui.kv('Waktu', `${readableTime} dari sekarang`, '⏱️'),
+            ui.kv('Jatuh tempo', ui.clock(dueAt), '🔔'),
+            '',
+            // Reminders live in a setTimeout, not on disk. Saying so up front
+            // is better than silently losing one on a restart.
+            ui.italic('Pengingat hilang kalau bot direstart.')
+        ]));
     }
 
     /**

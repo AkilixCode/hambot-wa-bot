@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const logger = require('../utils/logger');
 
 class SubnetCommand extends CommandBase {
@@ -45,35 +46,44 @@ class SubnetCommand extends CommandBase {
             const result = this.calculateSubnet(input);
 
             if (!result.valid) {
-                return await this.reply(sock, from, msg, `❌ ${result.error}`);
+                return await this.replyError(sock, from, msg, ui.safe(result.error, 120), {
+                    title: 'Input Tidak Valid',
+                    hint: ['.subnet 192.168.1.0/24', 'Format: <ip>/<cidr>']
+                });
             }
 
-            const response = 
-`🖥️ *HASIL KALKULASI SUBNET*
-
-📥 *Input:* ${input}
-
-📊 *Informasi Network*
-• Network: ${result.network}
-• Broadcast: ${result.broadcast}
-• Subnet Mask: ${result.subnetMask}
-• Wildcard: ${result.wildcardMask}
-• CIDR: /${result.cidr}
-• Usable Range: ${result.firstHost} - ${result.lastHost}
-• Total Hosts: ${result.totalHosts.toLocaleString()}
-• Kelas IP: ${result.ipClass}
-• Jenis: ${result.ipType}
-
-💡 *Rumus:*
-• Total IP = 2^(32-${result.cidr}) = ${result.totalAddresses.toLocaleString()}
-• Usable = Total - 2 = ${result.totalHosts.toLocaleString()}`;
+            const response = ui.card({
+                icon: '🖥️',
+                title: ui.safe(input, 40),
+                lines: [
+                    `📊 ${ui.bold('Informasi Network')}`,
+                    ui.kv('Network', ui.mono(result.network), '🌐'),
+                    ui.kv('Broadcast', ui.mono(result.broadcast), '📡'),
+                    ui.kv('Subnet Mask', ui.mono(result.subnetMask), '🎭'),
+                    ui.kv('Wildcard', ui.mono(result.wildcardMask), '🃏'),
+                    ui.kv('CIDR', ui.mono(`/${result.cidr}`), '✂️'),
+                    ui.kv('Range Usable', ui.mono(`${result.firstHost} - ${result.lastHost}`), '↔️'),
+                    ui.kv('Total Host', ui.number(result.totalHosts), '🔢'),
+                    ui.kv('Kelas IP', result.ipClass, '🏷️'),
+                    ui.kv('Jenis', result.ipType, '🔖'),
+                    '',
+                    `${ui.EMOJI.tip} ${ui.bold('Rumus')}`,
+                    ...ui.bullets([
+                        `Total IP = 2^(32-${result.cidr}) = ${ui.number(result.totalAddresses)}`,
+                        `Usable = Total - 2 = ${ui.number(result.totalHosts)}`
+                    ])
+                ],
+                footer: ui.clock()
+            });
 
             await this.reply(sock, from, msg, response);
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.replyError(sock, from, msg, 'Gagal menghitung subnet.');
+            await this.replyError(sock, from, msg, 'Gagal menghitung subnet.', {
+                hint: ['.subnet 192.168.1.0/24']
+            });
         }
     }
 

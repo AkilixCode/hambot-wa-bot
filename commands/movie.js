@@ -145,10 +145,12 @@ class MovieCommand extends CommandBase {
                 footer: `${ui.sourceBadge(fromCache)} ${ui.SYM.dot} OMDb`
             });
 
-            await sock.sendMessage(from, {
+            // Via replyMedia so the caption gets clamped to WhatsApp's 1024-char
+            // limit — a long synopsis plus a full metadata card can exceed it.
+            await this.replyMedia(sock, from, msg, {
                 image: { url: poster },
                 caption: info
-            }, { quoted: msg });
+            });
 
             await this.react(sock, msg, '✅');
 

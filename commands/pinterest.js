@@ -1,41 +1,58 @@
 /**
  * Pinterest Command
- * Search and download images from Pinterest
- * 
- * Uses Playwright with anti-detect measures to bypass
- * Pinterest's aggressive login wall and bot detection.
- * 
- * Strategy: 
- *   1. Launch Playwright Chromium with anti-detect patches
- *   2. Navigate to Pinterest search page
- *   3. Dismiss login wall if detected
- *   4. Extract image URLs from page data or DOM
- *   5. Download images using /736x/ (reliable without auth)
+ * Search and send aesthetic images.
+ *
+ * HISTORY — worth reading before "improving" this file.
+ *
+ * This command has been rewritten three times. It was plain HTTP scraping
+ * (blocked by the login wall), then Puppeteer + stealth plugin (blocked by
+ * fingerprinting), then Playwright with anti-detect patches, human-like
+ * scrolling and login-wall dismissal (slow, fragile, needed a 400MB Chromium
+ * and the SYS_ADMIN capability in Docker).
+ *
+ * All of that was working around the wrong layer. Pinterest's search page is
+ * client-rendered, which is why scraping the HTML returned nothing — but the
+ * XHR endpoint the page itself calls is unauthenticated and answers plain HTTP
+ * requests from a datacenter IP quite happily. Measured from the production
+ * VPS: HTTP 200, 25 pins, ~677 image URLs, no cookies and no CSRF token. The
+ * browser was never needed; only the right endpoint was.
+ *
+ * Strategy now:
+ *   Tier 1  Pinterest's internal BaseSearchResource JSON API
+ *   Tier 2  Wallhaven (SFW-locked), so the command still returns images when
+ *           Pinterest changes something
+ *
+ * The tiers run through utils/providers.js, so a dead tier is skipped after a
+ * few failures instead of costing every user its full timeout.
  */
 
 const CommandBase = require('./base');
 const ui = require('../utils/ui');
-const { getRandomUA, getRandomPinterestHeaders, sleep } = require('../utils/helpers');
+const { getRandomUA, sleep } = require('../utils/helpers');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const logger = require('../utils/logger');
-const config = require('../config');
+const { runProviders } = require('../utils/providers');
 
-// Lazy-load Playwright to avoid blocking bot startup
-let chromium = null;
+// How many images one invocation sends.
+const BATCH_SIZE = 5;
 
-async function getChromium() {
-    if (!chromium) {
-        try {
-            const pw = require('playwright');
-            chromium = pw.chromium;
-        } catch (err) {
-            logger.error('Playwright not installed. Run: npm install playwright');
-            throw new Error('Playwright dependency missing');
-        }
-    }
-    return chromium;
-}
+// The scraped URL pool and the "already sent" list share this TTL, so a repeat
+// query keeps serving fresh images from one scrape instead of re-hitting
+// Pinterest every time.
+const POOL_TTL_MS = 30 * 60 * 1000;
+
+const SEARCH_TIMEOUT_MS = 20000;
+const IMAGE_TIMEOUT_MS = 15000;
+
+// Upper bound for a single Wallhaven image. Comfortably above the ~1MB median
+// so quality is untouched, but below the point where a send stalls on mobile.
+const MAX_WALLHAVEN_BYTES = 8 * 1024 * 1024;
+
+// Pinterest rejects requests that do not look like its own web app. These
+// headers are what the real page sends; the app version is a build hash that
+// Pinterest tolerates being stale.
+const PINTEREST_APP_VERSION = '8c1c090';
 
 class PinterestCommand extends CommandBase {
     constructor() {
@@ -46,7 +63,10 @@ class PinterestCommand extends CommandBase {
             usage: '.pinterest <search query>',
             category: 'media',
             cooldown: 5000,
-            isHeavy: true
+            // No longer heavy: this is a couple of HTTP calls now, not a
+            // headless browser. Keeping it heavy would pointlessly occupy one
+            // of only three concurrent slots.
+            isHeavy: false
         });
     }
 
@@ -70,55 +90,42 @@ class PinterestCommand extends CommandBase {
         const sentKey = `pinterest_sent:${query.toLowerCase()}`;
 
         try {
-            // Get all scraped URLs from cache (full pool of images)
-            let allScrapedUrls = cache.get(cacheKey);
-            
-            if (!allScrapedUrls || !Array.isArray(allScrapedUrls) || allScrapedUrls.length === 0) {
-                // Scrape fresh images via Playwright
-                allScrapedUrls = await this.searchPinterest(query);
+            let pool = cache.get(cacheKey);
+            let sourceLabel = null;
 
-                if (allScrapedUrls.length === 0) {
-                    this.setFailed(context, 'No images found or proxy timeout');
+            if (!pool || !Array.isArray(pool.urls) || pool.urls.length === 0) {
+                const outcome = await this.searchImages(query);
+
+                if (!outcome.result || outcome.result.length === 0) {
+                    this.setFailed(context, 'No images found');
                     return await this.replyError(sock, from, msg, 'Tidak ada gambar yang cocok.', {
                         title: 'Tidak Ditemukan',
                         hint: ['Coba kata kunci yang lain', '.pinterest wallpaper anime']
                     });
                 }
 
-                // Cache all scraped URLs for 30 minutes (pool of images)
-                cache.set(cacheKey, allScrapedUrls, 1800000);
-                
-                // Reset sent images tracking for this query
+                pool = { urls: outcome.result, source: outcome.providerLabel, degraded: outcome.degraded };
+                cache.set(cacheKey, pool, POOL_TTL_MS);
                 cache.delete(sentKey);
             }
 
-            // Get previously sent images for this query
-            let sentImages = cache.get(sentKey) || [];
-            
-            // Filter out already sent images to get different ones
-            let availableUrls = allScrapedUrls.filter(url => !sentImages.includes(url));
-            
-            // If we've sent all images, reset and start over
-            if (availableUrls.length < 5) {
-                sentImages = [];
-                availableUrls = allScrapedUrls;
+            sourceLabel = pool.degraded ? pool.source : null;
+
+            // Prefer images this query has not shown yet, so repeated calls
+            // keep feeling fresh rather than cycling the same five pins.
+            let sent = cache.get(sentKey) || [];
+            let available = pool.urls.filter(url => !sent.includes(url));
+
+            if (available.length < BATCH_SIZE) {
+                sent = [];
+                available = pool.urls;
                 cache.delete(sentKey);
             }
 
-            // Randomly select 5 images from available pool using Fisher-Yates shuffle
-            const shuffled = [...availableUrls];
-            for (let i = shuffled.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-            }
-            const results = shuffled.slice(0, 5);
+            const picks = this.shuffle(available).slice(0, BATCH_SIZE);
+            cache.set(sentKey, [...sent, ...picks], POOL_TTL_MS);
 
-            // Track these images as sent
-            const newSentImages = [...sentImages, ...results];
-            cache.set(sentKey, newSentImages, 1800000);
-
-            await this.sendResults(sock, from, msg, results, query);
-
+            await this.sendResults(sock, from, msg, picks, query, sourceLabel);
         } catch (error) {
             this.logError(error, context);
             await this.replyError(sock, from, msg, 'Gagal mengambil gambar dari Pinterest.', {
@@ -128,488 +135,315 @@ class PinterestCommand extends CommandBase {
     }
 
     /**
-     * Search Pinterest for images using Playwright.
-     * Uses proxy if configured (via .env PROXY_ENABLED), with fallback to local IP.
-     * 
-     * @param {string} query - Search query
-     * @returns {Promise<string[]>} Array of image URLs (736x resolution)
+     * Run the provider cascade for a query.
+     * @param {string} query - Search terms
+     * @returns {Promise<Object>} runProviders outcome
+     */
+    async searchImages(query) {
+        return runProviders('pinterest', [
+            {
+                id: 'pinterest-api',
+                label: 'Pinterest',
+                run: () => this.searchPinterest(query)
+            },
+            {
+                id: 'wallhaven',
+                label: 'Wallhaven',
+                run: () => this.searchWallhaven(query)
+            }
+        ]);
+    }
+
+    /**
+     * Tier 1 — Pinterest's own search XHR endpoint.
+     *
+     * This is the same request the web app makes after the page loads. It needs
+     * no session, but it does need to look like it came from the app, hence the
+     * X-Pinterest-* headers and the matching Referer.
+     *
+     * @param {string} query - Search terms
+     * @returns {Promise<string[]>} Image URLs, highest resolution first
      */
     async searchPinterest(query) {
-        const proxyConfig = config.getPlaywrightProxyConfig();
+        const sourceUrl = `/search/pins/?q=${encodeURIComponent(query)}`;
+        const data = JSON.stringify({
+            options: {
+                query,
+                scope: 'pins',
+                bookmarks: [''],
+                page_size: 25
+            },
+            context: {}
+        });
 
-        if (proxyConfig) {
-            logger.info(`Pinterest scraping via proxy: ${proxyConfig.server}`);
-            try {
-                const results = await this._scrapeWithBrowser(query, proxyConfig);
-                if (results.length > 0) return results;
-                logger.warn('Pinterest proxy returned 0 images, falling back to local IP');
-            } catch (error) {
-                logger.warn(`Pinterest proxy failed: ${error.message}`);
-            }
+        const url = 'https://www.pinterest.com/resource/BaseSearchResource/get/' +
+            `?source_url=${encodeURIComponent(sourceUrl)}&data=${encodeURIComponent(data)}`;
 
-            // Fallback to local IP if enabled
-            if (config.network.fallbackToLocal) {
-                logger.info('Pinterest falling back to local IP');
-                return await this._scrapeWithBrowser(query, null);
+        const response = await httpClient.get(url, {
+            timeout: SEARCH_TIMEOUT_MS,
+            headers: {
+                'User-Agent': getRandomUA(),
+                'Accept': 'application/json, text/javascript, */*, q=0.01',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-APP-VERSION': PINTEREST_APP_VERSION,
+                'X-Pinterest-AppState': 'active',
+                'X-Pinterest-Source-Url': sourceUrl,
+                'X-Pinterest-PWS-Handler': 'www/search/[scope].js',
+                'Referer': `https://www.pinterest.com${sourceUrl}`
             }
-            return [];
+        });
+
+        const results = response.data?.resource_response?.data?.results;
+        if (!Array.isArray(results)) {
+            throw new Error('Unexpected Pinterest response shape');
         }
 
-        // No proxy configured — scrape directly
-        logger.info('Pinterest scraping via local IP (no proxy configured)');
-        return await this._scrapeWithBrowser(query, null);
-    }
-
-    /**
-     * Core scraping logic using Playwright.
-     * Separated from searchPinterest() to support proxy/fallback switching.
-     * 
-     * @param {string} query - Search query
-     * @param {Object|null} proxyConfig - Playwright proxy config or null for direct
-     * @returns {Promise<string[]>} Array of image URLs
-     */
-    async _scrapeWithBrowser(query, proxyConfig) {
-        const url = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
-        let browser = null;
-        let imageUrls = [];
-
-        try {
-            const chromiumBrowser = await getChromium();
-            
-            browser = await chromiumBrowser.launch({
-                headless: true,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-features=IsolateOrigins,site-per-process'
-                ]
-            });
-
-            const contextOptions = {
-                userAgent: getRandomUA(),
-                viewport: { width: 1920, height: 1080 },
-                locale: 'en-US',
-                timezoneId: 'America/New_York',
-                javaScriptEnabled: true,
-                bypassCSP: true,
-                extraHTTPHeaders: {
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Sec-CH-UA': '"Chromium";v="125", "Google Chrome";v="125", "Not-A.Brand";v="24"',
-                    'Sec-CH-UA-Mobile': '?0',
-                    'Sec-CH-UA-Platform': '"Windows"'
-                }
-            };
-
-            // Apply proxy if provided
-            if (proxyConfig) {
-                contextOptions.proxy = proxyConfig;
-            }
-
-            const context = await browser.newContext(contextOptions);
-            const page = await context.newPage();
-
-            // Anti-detect: Override navigator.webdriver
-            await page.addInitScript(() => {
-                // Remove webdriver flag
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                
-                // Override plugins to look like a real browser
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-                
-                // Override languages
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en']
-                });
-                
-                // Override platform
-                Object.defineProperty(navigator, 'platform', {
-                    get: () => 'Win32'
-                });
-
-                // Override chrome runtime
-                window.chrome = {
-                    runtime: {},
-                    loadTimes: function() {},
-                    csi: function() {},
-                    app: {}
-                };
-
-                // Override permissions query
-                const originalQuery = window.navigator.permissions?.query;
-                if (originalQuery) {
-                    window.navigator.permissions.query = (parameters) => {
-                        if (parameters.name === 'notifications') {
-                            return Promise.resolve({ state: 'denied' });
-                        }
-                        return originalQuery(parameters);
-                    };
-                }
-            });
-
-            // Navigate with a reasonable timeout
-            await page.goto(url, {
-                waitUntil: 'domcontentloaded',
-                timeout: 30000
-            });
-
-            // Wait a bit for initial content to load
-            await sleep(2000 + Math.random() * 1000);
-
-            // Attempt to dismiss login wall if present
-            await this.dismissLoginWall(page);
-
-            // Try to extract from page data (inline JSON) first
-            const html = await page.content();
-            imageUrls = this.extractFromPageData(html);
-
-            // If not enough, try scrolling and extracting from DOM
-            if (imageUrls.length < 10) {
-                // Human-like scrolling with random delays
-                for (let i = 0; i < 4; i++) {
-                    const scrollAmount = 800 + Math.floor(Math.random() * 600);
-                    await page.evaluate((amount) => window.scrollBy(0, amount), scrollAmount);
-                    await sleep(1500 + Math.random() * 1500);
-                    
-                    // Try to dismiss login wall again (Pinterest re-shows it after scroll)
-                    await this.dismissLoginWall(page);
-                }
-
-                const domUrls = await page.evaluate(() => {
-                    const urls = new Set();
-                    const images = document.querySelectorAll('img[src*="pinimg.com"]');
-                    
-                    for (const img of images) {
-                        if (img.src) {
-                            // Convert to high-res. 736x is reliable for JPG, but breaks PNG/GIF
-                            let cleaned = img.src;
-                            if (/\.(jpg|jpeg|webp)$/i.test(cleaned)) {
-                                cleaned = cleaned
-                                    .replace(/\/originals\//, '/736x/')
-                                    .replace(/\/236x\//, '/736x/')
-                                    .replace(/\/474x\//, '/736x/');
-                            } else {
-                                // For PNG/GIF, use originals
-                                cleaned = cleaned
-                                    .replace(/\/236x\//, '/originals/')
-                                    .replace(/\/474x\//, '/originals/')
-                                    .replace(/\/736x\//, '/originals/');
-                            }
-                            
-                            // Skip tiny icons and avatars
-                            if (/\/\d{1,2}x\d{1,2}\//.test(cleaned)) continue;
-                            if (/\/30x30_RS\/|\/75x75_RS\/|\/140x140_RS\//.test(cleaned)) continue;
-                            
-                            urls.add(cleaned);
-                        }
-                    }
-                    return Array.from(urls);
-                });
-                
-                // Merge and deduplicate
-                const combined = new Set([...imageUrls, ...domUrls]);
-                imageUrls = Array.from(combined);
-            }
-
-            // Fallback to regex scan if still not enough
-            if (imageUrls.length < 5) {
-                const updatedHtml = await page.content();
-                const regexUrls = this.extractFromRegex(updatedHtml);
-                const combined = new Set([...imageUrls, ...regexUrls]);
-                imageUrls = Array.from(combined);
-            }
-
-            logger.info(`Pinterest scrape for "${query}": found ${imageUrls.length} images (${proxyConfig ? 'via proxy' : 'local IP'})`);
-            return imageUrls;
-        } catch (error) {
-            logger.error(`Error scraping Pinterest: ${error.message}`);
-            throw error;
-        } finally {
-            if (browser) {
-                await browser.close().catch(() => {});
-            }
-        }
-    }
-
-    /**
-     * Attempt to dismiss Pinterest's login wall / signup modal.
-     * Pinterest shows various overlay modals to force login.
-     * @param {Object} page - Playwright page instance
-     */
-    async dismissLoginWall(page) {
-        try {
-            // Common selectors for Pinterest's login/signup wall
-            const dismissSelectors = [
-                // Close buttons on modals
-                'button[aria-label="close"]',
-                'button[aria-label="Close"]',
-                '[data-test-id="login-modal-close-button"]',
-                '[data-test-id="signup-modal-close-button"]',
-                // Generic close/dismiss patterns
-                'div[role="dialog"] button[aria-label="close"]',
-                'div[role="dialog"] button[aria-label="Close"]',
-                // The "X" button on the unauth banner
-                '.UnauthBanner button',
-                '.Closeup button[aria-label="Close"]'
-            ];
-
-            for (const selector of dismissSelectors) {
-                const btn = await page.$(selector);
-                if (btn) {
-                    await btn.click().catch(() => {});
-                    await sleep(500);
-                    logger.debug(`Pinterest: Dismissed login wall via ${selector}`);
-                    return;
-                }
-            }
-
-            // Fallback: Press Escape key to dismiss any modal
-            await page.keyboard.press('Escape').catch(() => {});
-            await sleep(300);
-
-            // Fallback: Try to remove overlay elements via JS
-            await page.evaluate(() => {
-                // Remove any full-screen modal overlays
-                const modals = document.querySelectorAll('[role="dialog"], .Modal, .Closeup');
-                modals.forEach(m => m.remove());
-                
-                // Remove any backdrop/overlay
-                const overlays = document.querySelectorAll('.Modal__overlay, [class*="overlay"]');
-                overlays.forEach(o => o.remove());
-                
-                // Re-enable scrolling on body
-                document.body.style.overflow = 'auto';
-            }).catch(() => {});
-        } catch {
-            // Silently continue — login wall dismissal is best-effort
-        }
-    }
-
-    /**
-     * Extract image URLs from Pinterest's inline page data.
-     * Looks for __PWS_DATA__, __PWS_INITIAL_PROPS__, and other JSON data.
-     * @param {string} html - Raw HTML string
-     * @returns {string[]} Array of deduplicated image URLs
-     */
-    extractFromPageData(html) {
         const urls = new Set();
 
-        // Try multiple known script tag IDs that Pinterest uses
-        const scriptPatterns = [
-            /<script\s+id="__PWS_DATA__"[^>]*>([\s\S]*?)<\/script>/,
-            /<script\s+id="__PWS_INITIAL_PROPS__"[^>]*>([\s\S]*?)<\/script>/,
-            /<script\s+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/,
-            /<script\s+type="application\/json"[^>]*>([\s\S]*?)<\/script>/g
-        ];
-
-        for (const pattern of scriptPatterns) {
-            const matches = html.match(pattern);
-            if (matches) {
-                // For global patterns, matches is an array of full matches
-                const matchList = Array.isArray(matches) ? matches : [matches[0]];
-                for (const match of matchList) {
-                    // Extract content between script tags
-                    const contentMatch = match.match(/>([^<]+)</);
-                    if (contentMatch) {
-                        this._extractPinimgUrls(contentMatch[1], urls);
-                    }
-                }
-            }
+        for (const pin of results) {
+            const picked = this.pickBestImage(pin);
+            if (picked) urls.add(picked);
         }
 
+        logger.debug(`[Pinterest] API returned ${urls.size} image(s) for "${query}"`);
         return Array.from(urls);
     }
 
     /**
-     * Extract i.pinimg.com image URLs from a JSON string and add to the Set.
-     * Converts all sizes to 736x (reliable without authentication).
-     * @param {string} jsonStr - Raw JSON string to scan
-     * @param {Set} urls - Set to add discovered URLs to
+     * Choose the largest usable image from a pin object.
+     *
+     * Pinterest returns a map of size buckets per pin. 736x is the sweet spot:
+     * large enough to look good in WhatsApp, small enough to send quickly, and
+     * reliably present. `orig` exists but is sometimes many megabytes.
+     *
+     * @param {Object} pin - A pin from the API response
+     * @returns {string|null} Image URL, or null when the pin carries no usable image
      */
-    _extractPinimgUrls(jsonStr, urls) {
-        // Match all pinimg.com URLs in the JSON
-        const matches = jsonStr.match(/https?:\/\/i\.pinimg\.com\/[^"\\)\s}]+/g);
-        if (!matches) return;
+    pickBestImage(pin) {
+        const images = pin?.images;
+        if (!images || typeof images !== 'object') return null;
 
-        for (const rawUrl of matches) {
-            // Clean URL (remove trailing punctuation artifacts from regex)
-            let cleanUrl = rawUrl.replace(/[,;}\]]+$/, '');
-
-            // Only keep actual image files
-            if (!/\.(jpg|jpeg|png|webp|gif)$/i.test(cleanUrl)) continue;
-
-            // Skip tiny icons, avatars, and UI assets
-            if (/\/\d{1,2}x\d{1,2}\//.test(cleanUrl)) continue;
-            if (/\/30x30_RS\/|\/75x75_RS\/|\/140x140_RS\//.test(cleanUrl)) continue;
-
-            // Convert to high-res. 736x is reliable for JPG, but breaks PNG/GIF
-            if (/\.(jpg|jpeg|webp)$/i.test(cleanUrl)) {
-                cleanUrl = cleanUrl
-                    .replace(/\/originals\//, '/736x/')
-                    .replace(/\/236x\//, '/736x/')
-                    .replace(/\/474x\//, '/736x/');
-            } else {
-                // For PNG/GIF, use originals
-                cleanUrl = cleanUrl
-                    .replace(/\/236x\//, '/originals/')
-                    .replace(/\/474x\//, '/originals/')
-                    .replace(/\/736x\//, '/originals/');
+        // Ordered by preference, not by size — see above on `orig`.
+        for (const key of ['736x', '564x', 'orig', '474x', '236x']) {
+            const url = images[key]?.url;
+            if (typeof url === 'string' && this.isUsableImageUrl(url)) {
+                return url;
             }
-
-            urls.add(cleanUrl);
         }
+        return null;
     }
 
     /**
-     * Fallback: Extract image URLs via regex scan of raw HTML.
-     * Used when page data parsing fails or yields too few results.
-     * @param {string} html - Raw HTML string
-     * @returns {string[]} Array of image URLs
+     * Reject avatars, sprites and other non-content images.
+     * @param {string} url
+     * @returns {boolean}
      */
-    extractFromRegex(html) {
-        const urls = new Set();
-        
-        // Match all pinimg.com URLs anywhere in the HTML
-        const matches = html.match(/https?:\/\/i\.pinimg\.com\/[^"'\\)\s}>]+/g);
-        if (!matches) return [];
-
-        for (const rawUrl of matches) {
-            let cleanUrl = rawUrl.replace(/[,;}\]]+$/, '');
-
-            if (!/\.(jpg|jpeg|png|webp|gif)$/i.test(cleanUrl)) continue;
-            if (/\/\d{1,2}x\d{1,2}\//.test(cleanUrl)) continue;
-            if (/\/30x30_RS\/|\/75x75_RS\/|\/140x140_RS\//.test(cleanUrl)) continue;
-
-            // Convert to high-res. 736x is reliable for JPG, but breaks PNG/GIF
-            if (/\.(jpg|jpeg|webp)$/i.test(cleanUrl)) {
-                cleanUrl = cleanUrl
-                    .replace(/\/originals\//, '/736x/')
-                    .replace(/\/236x\//, '/736x/')
-                    .replace(/\/474x\//, '/736x/');
-            } else {
-                // For PNG/GIF, use originals
-                cleanUrl = cleanUrl
-                    .replace(/\/236x\//, '/originals/')
-                    .replace(/\/474x\//, '/originals/')
-                    .replace(/\/736x\//, '/originals/');
-            }
-
-            urls.add(cleanUrl);
-        }
-
-        return Array.from(urls);
+    isUsableImageUrl(url) {
+        if (!/^https:\/\/i\.pinimg\.com\//.test(url)) return false;
+        // Profile pictures and UI chrome live in these buckets.
+        if (/\/\d{1,2}x\d{1,2}\//.test(url)) return false;
+        if (/\/(30x30|75x75|140x140|150x150|60x60)(_RS)?\//.test(url)) return false;
+        return /\.(jpg|jpeg|png|webp|gif)$/i.test(url);
     }
 
     /**
-     * Download image as buffer with validation.
-     * Validates that the response is actually an image, not an HTML error page.
+     * Tier 2 — Wallhaven.
+     *
+     * Key-free and, unlike Pinterest and YouTube, entirely uninterested in
+     * whether the caller is a datacenter. `purity=100` restricts results to
+     * SFW, which is not optional for a bot that sits in group chats.
+     *
+     * @param {string} query - Search terms
+     * @returns {Promise<string[]>} Image URLs
+     */
+    async searchWallhaven(query) {
+        const params = new URLSearchParams({
+            q: query,
+            categories: '111',  // general + anime + people
+            purity: '100',      // SFW only — never widen this
+            sorting: 'relevance',
+            order: 'desc'
+        });
+
+        // A key is not required, but raises the rate limit if the owner adds one.
+        const apiKey = (process.env.WALLHAVEN_API_KEY || '').trim();
+        if (apiKey) params.set('apikey', apiKey);
+
+        const response = await httpClient.get(
+            `https://wallhaven.cc/api/v1/search?${params.toString()}`,
+            {
+                timeout: SEARCH_TIMEOUT_MS,
+                headers: { 'User-Agent': getRandomUA(), 'Accept': 'application/json' }
+            }
+        );
+
+        const data = response.data?.data;
+        if (!Array.isArray(data)) {
+            throw new Error('Unexpected Wallhaven response shape');
+        }
+
+        const urls = data
+            // Belt and braces: honour the purity flag on each item too, in case
+            // the query parameter is ever ignored.
+            .filter(item => item?.purity === 'sfw' && typeof item.path === 'string')
+            // Wallhaven serves true originals — mostly ~1MB, but the occasional
+            // 4592x3448 desktop wallpaper runs to 12MB+, which is slow to send
+            // and unpleasant on mobile data. The API hands us file_size for
+            // free, so oversized entries are dropped here rather than being
+            // discovered after downloading them. The thumbnails are only ~35KB
+            // and far too small to substitute.
+            .filter(item => !item.file_size || item.file_size <= MAX_WALLHAVEN_BYTES)
+            .map(item => item.path);
+
+        logger.debug(`[Pinterest] Wallhaven returned ${urls.length} image(s) for "${query}"`);
+        return urls;
+    }
+
+    /**
+     * Fisher-Yates shuffle on a copy.
+     * @param {Array} items
+     * @returns {Array} Shuffled copy
+     */
+    shuffle(items) {
+        const out = [...items];
+        for (let i = out.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [out[i], out[j]] = [out[j], out[i]];
+        }
+        return out;
+    }
+
+    /**
+     * Download an image, verifying it really is one.
+     *
+     * Pinterest answers a missing or rate-limited image with an HTML error page
+     * and a 200, so the magic-byte check is what stops WhatsApp being handed a
+     * chunk of HTML labelled as a JPEG.
+     *
      * @param {string} url - Image URL
-     * @returns {Promise<Buffer|null>} - Image buffer or null on failure
+     * @returns {Promise<Buffer|null>} Image bytes, or null on any failure
      */
     async downloadImage(url) {
-        try {
-            const response = await httpClient.get(url, {
-                responseType: 'arraybuffer',
-                timeout: 15000,
-                headers: {
-                    'User-Agent': getRandomUA(),
-                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
-                }
-            });
+        // A batch is five downloads fired back to back, and image hosts
+        // rate-limit that. A single retry after a short pause recovers those.
+        const attempts = 2;
 
-            const buffer = Buffer.from(response.data);
-            
-            // Validate this is actually an image, not an HTML error page
-            if (!this.isValidImageBuffer(buffer)) {
-                logger.debug(`[Pinterest] Invalid image data from URL: ${url}`);
-                return null;
-            }
-
-            return buffer;
-        } catch (error) {
-            logger.debug(`[Pinterest Fetch Error] Failed to download from URL: ${url}`);
-            logger.error(error, { context: 'pinterest-downloadImage' });
-            return null;
+        // The referer must match the host being fetched. Both CDNs run
+        // hotlink protection, so sending Pinterest's referer to Wallhaven
+        // gets a hard 403 — which is exactly how this was first found.
+        const headers = {
+            'User-Agent': getRandomUA(),
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+        };
+        if (url.includes('pinimg.com')) {
+            headers.Referer = 'https://www.pinterest.com/';
+        } else if (url.includes('wallhaven.cc')) {
+            headers.Referer = 'https://wallhaven.cc/';
         }
+
+        for (let attempt = 0; attempt < attempts; attempt++) {
+            try {
+                const response = await httpClient.get(url, {
+                    responseType: 'arraybuffer',
+                    timeout: IMAGE_TIMEOUT_MS,
+                    headers
+                });
+
+                const buffer = Buffer.from(response.data);
+                if (this.isValidImageBuffer(buffer)) return buffer;
+
+                // Not image data — retrying will not change that.
+                logger.debug(`[Pinterest] Not image data: ${url}`);
+                return null;
+            } catch (error) {
+                const isLast = attempt === attempts - 1;
+                if (isLast) {
+                    // Individual failures are expected; the caller falls back to
+                    // a lower resolution or simply sends fewer images.
+                    logger.debug(`[Pinterest] Download failed: ${url} - ${error.message}`);
+                    return null;
+                }
+                await sleep(400);
+            }
+        }
+
+        return null;
     }
 
     /**
-     * Validate that a buffer contains actual image data.
-     * Checks magic bytes (file signatures) for common image formats.
-     * @param {Buffer} buffer - Buffer to validate
-     * @returns {boolean} true if buffer appears to be a valid image
+     * Validate image data by magic bytes.
+     * @param {Buffer} buffer
+     * @returns {boolean}
      */
     isValidImageBuffer(buffer) {
-        if (!buffer || buffer.length < 8) return false;
+        if (!buffer || buffer.length < 12) return false;
 
-        // Check magic bytes for common image formats
         // JPEG: FF D8 FF
         if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return true;
         // PNG: 89 50 4E 47
         if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return true;
         // GIF: 47 49 46
         if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return true;
-        // WebP: 52 49 46 46 ... 57 45 42 50
+        // WebP: RIFF....WEBP
         if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
             buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return true;
 
         return false;
     }
 
-    async sendResults(sock, from, msg, results, query) {
-        let successCount = 0;
-        const totalRequested = results.length;
-        
-        for (const url of results) {
+    /**
+     * Download and send the selected images.
+     *
+     * @param {Object} sock - Baileys socket
+     * @param {string} from - Chat JID
+     * @param {Object} msg - Original message
+     * @param {string[]} urls - Image URLs to send
+     * @param {string} query - Original search terms, used in the caption
+     * @param {string|null} sourceLabel - Set when a fallback tier served, for the badge
+     */
+    async sendResults(sock, from, msg, urls, query, sourceLabel) {
+        let sent = 0;
+
+        for (const url of urls) {
             try {
-                // Download image as buffer to avoid URL fetch issues
-                let imageBuffer = await this.downloadImage(url);
-                
-                // If 736x failed, try 474x as fallback
-                if (!imageBuffer) {
-                    const fallbackUrl = url.replace('/736x/', '/474x/');
-                    if (fallbackUrl !== url) {
-                        imageBuffer = await this.downloadImage(fallbackUrl);
+                let buffer = await this.downloadImage(url);
+
+                // Step down the resolution ladder before giving up on a pin.
+                if (!buffer) {
+                    for (const smaller of ['/564x/', '/474x/', '/236x/']) {
+                        const alt = url.replace(/\/(736x|orig|564x|474x)\//, smaller);
+                        if (alt === url) continue;
+                        buffer = await this.downloadImage(alt);
+                        if (buffer) break;
                     }
                 }
 
-                // If 474x also failed, try 236x as last resort
-                if (!imageBuffer) {
-                    const lastResortUrl = url.replace('/736x/', '/236x/');
-                    if (lastResortUrl !== url) {
-                        imageBuffer = await this.downloadImage(lastResortUrl);
-                    }
-                }
+                if (buffer && buffer.length > 0) {
+                    const caption = sourceLabel
+                        ? `📌 ${ui.safe(query)}\n${ui.SYM.dot} via ${sourceLabel}`
+                        : `📌 ${ui.safe(query)}`;
 
-                if (imageBuffer && imageBuffer.length > 0) {
-                    await sock.sendMessage(from, { 
-                        image: imageBuffer,
-                        caption: `📌 ${query}`
-                    }, { quoted: msg });
-                    successCount++;
+                    await this.replyMedia(sock, from, msg, { image: buffer, caption });
+                    sent++;
                 }
             } catch (error) {
-                // Skip this image silently
                 this.logError(error, { context: 'pinterest-send' });
             }
         }
 
-        if (successCount === totalRequested) {
-            await this.react(sock, msg, '✅');
-        } else if (successCount > 0) {
-            await this.react(sock, msg, '✅');
-            if (successCount < totalRequested) {
-                await this.reply(sock, from, msg, ui.info('Sebagian Terkirim', [`Berhasil mengirim ${successCount} dari ${totalRequested} gambar.`]));
-            }
-        } else {
-            await this.replyError(sock, from, msg, 'Gambar gagal diunduh.', {
+        if (sent === 0) {
+            return await this.replyError(sock, from, msg, 'Gambar gagal diunduh.', {
                 hint: ['Coba kata kunci yang lain']
             });
+        }
+
+        await this.react(sock, msg, '✅');
+
+        if (sent < urls.length) {
+            await this.reply(sock, from, msg, ui.info('Sebagian Terkirim', [
+                `Berhasil mengirim ${sent} dari ${urls.length} gambar.`
+            ]));
         }
     }
 }

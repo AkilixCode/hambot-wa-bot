@@ -7,6 +7,7 @@ const { spawn } = require('child_process');
 const fsPromises = require('fs').promises;
 const httpClient = require('./http-client');
 const security = require('./security');
+const tempdir = require('./tempdir');
 
 // Baileys is ESM-only since v7 — lazy-load via dynamic import
 let _downloadContentFromMessage = null;
@@ -23,25 +24,63 @@ async function _loadBaileysHelper() {
 
 /**
  * Spawn Promise (Safe async process execution)
+ *
+ * Every spawn gets a timeout. Previously there was none, so a wedged ffmpeg or
+ * yt-dlp held its heavy-command slot for the lifetime of the process — three of
+ * those and the bot stopped accepting media commands until a restart.
+ *
+ * @param {string} command - Must be on the allowlist
+ * @param {string[]} args - Process arguments
+ * @param {Object} [options]
+ * @param {number} [options.timeout=120000] - Milliseconds before termination
+ * @returns {Promise<string>} stdout
  */
-function spawnPromise(command, args) {
+function spawnPromise(command, args, options = {}) {
+    const timeout = options.timeout || 120000;
+    // SIGTERM lets ffmpeg finish writing/removing its partial output; SIGKILL
+    // is the escalation for a process that ignores it.
+    const KILL_GRACE_MS = 5000;
+
     return new Promise((resolve, reject) => {
         // Validate command to prevent injection
-        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node', 'python3'];
+        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node', 'python3', 'deno'];
         if (!allowedCommands.includes(command)) {
             return reject(new Error('Command not allowed'));
         }
 
-        const proc = spawn(command, args);
+        const proc = spawn(command, args, { shell: false });
         let stdout = '';
         let stderr = '';
+        let settled = false;
+        let killTimer = null;
+
+        const finish = (fn, arg) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (killTimer) clearTimeout(killTimer);
+            fn(arg);
+        };
+
+        const timer = setTimeout(() => {
+            if (settled) return;
+            proc.kill('SIGTERM');
+            killTimer = setTimeout(() => {
+                try { proc.kill('SIGKILL'); } catch { /* already exited */ }
+            }, KILL_GRACE_MS);
+
+            const error = new Error(`${command} timeout after ${Math.round(timeout / 1000)}s`);
+            error.timedOut = true;
+            finish(reject, error);
+        }, timeout);
+
         proc.stdout.on('data', (data) => stdout += data);
         proc.stderr.on('data', (data) => stderr += data);
         proc.on('close', (code) => {
-            if (code === 0) resolve(stdout);
-            else reject(new Error(stderr || `Command failed with code ${code}`));
+            if (code === 0) finish(resolve, stdout);
+            else finish(reject, new Error(stderr || `Command failed with code ${code}`));
         });
-        proc.on('error', (err) => reject(err));
+        proc.on('error', (err) => finish(reject, err));
     });
 }
 
@@ -259,16 +298,17 @@ function generateFilename(prefix = 'file', extension = '') {
 
 /**
  * Clean up temporary files
+ *
+ * Delegates to utils/tempdir, which is scoped to tmp/. This used to scan the
+ * process working directory — the repo root — so a short or empty prefix could
+ * match project files. Kept as a re-export because several commands import it
+ * from here.
+ *
+ * @param {string} prefix - Filename prefix to remove
+ * @returns {Promise<number>} Number of files removed
  */
 async function cleanupFiles(prefix) {
-    try {
-        const files = await fsPromises.readdir('./');
-        const junk = files.filter(x => x.startsWith(prefix));
-        await Promise.all(junk.map(j => fsPromises.unlink(j).catch(() => {})));
-        return junk.length;
-    } catch (e) {
-        return 0;
-    }
+    return tempdir.cleanupTemp(prefix);
 }
 
 /**

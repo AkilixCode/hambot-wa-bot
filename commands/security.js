@@ -33,6 +33,7 @@
  *   Settings  owneronly <on|off> · setcooldown <ms> · setprefix <p> · setmaxproc <n>
  *   Users     block <target> <menit> · unblock <target|all>
  *   Ops       clearcache · broadcast <jid> <pesan> · restart · stop
+ *   Media     proxy <status|on|off|test> · media
  *   Flow      confirm <token> · cancel
  */
 
@@ -42,6 +43,12 @@ const config = require('../config');
 const cache = require('../utils/cache');
 const registry = require('./registry');
 const redact = require('../utils/redact');
+const ui = require('../utils/ui');
+const egress = require('../utils/egress');
+const ytdlp = require('../utils/ytdlp');
+const providers = require('../utils/providers');
+const tempdir = require('../utils/tempdir');
+const { formatSize } = require('../utils/helpers');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const os = require('os');
@@ -54,8 +61,12 @@ const botStartTime = Date.now();
 // Subcommands whose output describes the bot's internals. Never posted in a
 // group — a single screenshot of `.security env` in a group chat hands an
 // attacker the bot's whole attack surface.
+// `proxy` and `media` are included: both print the proxy host and the bot's
+// public IP, which is exactly the kind of infrastructure detail that should not
+// be screenshotted out of a group chat.
 const SENSITIVE_SUBCOMMANDS = new Set([
-    'status', 'env', 'logs', 'log', 'audit', 'threats', 'list', 'whoami', 'health'
+    'status', 'env', 'logs', 'log', 'audit', 'threats', 'list', 'whoami', 'health',
+    'proxy', 'media'
 ]);
 
 // Actions that need an explicit second step before they run.
@@ -210,6 +221,12 @@ class SecurityCommand extends CommandBase {
 
                 case 'clearcache':
                     return await this.handleClearCache(sock, from, msg, context);
+
+                case 'proxy':
+                    return await this.handleProxy(sock, from, msg, context, rest);
+
+                case 'media':
+                    return await this.handleMediaDoctor(sock, from, msg, context);
 
                 case 'block':
                     return await this.handleBlock(sock, from, msg, context, rest);
@@ -493,6 +510,12 @@ Lanjut ke pengaturan & operasi: \`${p}security help ops\``;
 \`${p}security setprefix <prefix>\` — simbol, maks 3 karakter
 \`${p}security setmaxproc <n>\` — 1–20
 
+*🛰️ Media & Jalur Keluar*
+\`${p}security proxy status\` — kondisi proxy sekarang
+\`${p}security proxy on|off\` — ganti jalur keluar (langsung)
+\`${p}security proxy test\` — bandingkan IP proxy vs server
+\`${p}security media\` — diagnosa yt-dlp, sumber, penyimpanan
+
 *🗑️ Maintenance*
 \`${p}security clearcache\`
 
@@ -508,7 +531,8 @@ Lanjut ke pengaturan & operasi: \`${p}security help ops\``;
 \`${p}security confirm <token>\` — jalankan aksi tertunda
 \`${p}security cancel\` — batalkan aksi tertunda
 
-_Catatan: perubahan runtime tidak menulis ke .env dan hilang saat bot restart._`;
+_Catatan: perubahan runtime tidak menulis ke .env dan hilang saat bot restart._
+_Kecuali \`proxy on|off\`, yang sengaja disimpan agar bertahan setelah restart._`;
     }
 
     async showUnknownSubcommand(sock, from, msg, subcommand) {
@@ -1392,6 +1416,225 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
             `• Hits / Misses sebelumnya: ${statsBefore.hits} / ${statsBefore.misses}\n` +
             `• Hit rate: ${statsBefore.hitRate}`);
         await this.react(sock, msg, '✅');
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  MEDIA / EGRESS
+    // ─────────────────────────────────────────────────────
+
+    /**
+     * `.security proxy <status|on|off|test>`
+     *
+     * The bot runs on a datacenter IP, which YouTube and similar sites treat as
+     * a bot. Routing media traffic through a residential connection is the one
+     * measure that reliably fixes that, so it is a live toggle rather than an
+     * .env edit plus a restart.
+     */
+    async handleProxy(sock, from, msg, context, args) {
+        const action = (args[0] || 'status').toLowerCase();
+
+        switch (action) {
+            case 'on':
+            case 'enable': {
+                const result = await egress.enable();
+                if (!result.ok) {
+                    return await this.replyError(sock, from, msg, result.reason, {
+                        title: 'Proxy Belum Siap',
+                        hint: ['Isi PROXY_HOST dan PROXY_PORT di .env', 'Lalu restart bot sekali']
+                    });
+                }
+                this._audit('owner.proxy.enabled', context, { detail: 'proxy on' });
+                await this.react(sock, msg, '✅');
+                return await this._deliver(sock, from, msg, context, ui.success('Proxy Aktif', [
+                    'Semua trafik media sekarang lewat proxy.',
+                    '',
+                    `${ui.EMOJI.tip} Cek dengan ${ui.mono('.security proxy test')}`
+                ]));
+            }
+
+            case 'off':
+            case 'disable': {
+                await egress.disable();
+                this._audit('owner.proxy.disabled', context, { detail: 'proxy off' });
+                await this.react(sock, msg, '✅');
+                return await this._deliver(sock, from, msg, context, ui.success('Proxy Nonaktif', [
+                    'Trafik media kembali lewat IP server.',
+                    '',
+                    `${ui.EMOJI.warn} YouTube bisa memblokir lagi dari IP ini.`
+                ]));
+            }
+
+            case 'test': {
+                await this.react(sock, msg, '⏳');
+                const result = await egress.test();
+                await this.react(sock, msg, '✅');
+                return await this._deliver(sock, from, msg, context, this._renderProxyTest(result));
+            }
+
+            case 'status':
+                return await this._deliver(sock, from, msg, context, this._renderProxyStatus());
+
+            default:
+                return await this.replyError(sock, from, msg,
+                    `Subperintah proxy ${ui.mono(String(action).slice(0, 20))} tidak dikenal.`, {
+                        title: 'Tidak Dikenal',
+                        hint: ['.security proxy status', '.security proxy on', '.security proxy test']
+                    });
+        }
+    }
+
+    /**
+     * Render the current egress configuration.
+     * @returns {string}
+     */
+    _renderProxyStatus() {
+        const s = egress.status();
+
+        const lines = [
+            ui.kv('Status', s.enabled ? 'Aktif' : 'Nonaktif', s.enabled ? '🟢' : '⚪'),
+            ui.kv('Dikonfigurasi', s.configured ? 'Ya' : 'Belum', '⚙️')
+        ];
+
+        if (s.configured) {
+            lines.push(ui.kv('Tipe', s.type, '🔌'));
+            // Host is infrastructure detail; this output is owner-only and
+            // auto-DM'd out of groups by _deliver.
+            lines.push(ui.kv('Host', `${s.host}:${s.port}`, '🖥️'));
+            lines.push(ui.kv('Autentikasi', s.authenticated ? 'Ya' : 'Tidak', '🔑'));
+        }
+
+        lines.push(ui.kv('Fallback ke lokal', s.fallbackToLocal ? 'Ya' : 'Tidak', '↩️'));
+
+        if (!s.configured) {
+            lines.push('', `${ui.EMOJI.tip} ${ui.bold('Cara pasang:')}`,
+                ...ui.bullets([
+                    'Jalankan Every Proxy di HP (atau proxy di PC rumah)',
+                    'Sambungkan server dan HP lewat Tailscale',
+                    'Isi PROXY_HOST / PROXY_PORT di .env'
+                ]));
+        }
+
+        return ui.card({
+            icon: '🛰️',
+            title: 'Status Proxy',
+            lines,
+            footer: `${ui.clock()}`
+        });
+    }
+
+    /**
+     * Render the result of a live proxy probe.
+     *
+     * The important line is whether the two exit IPs actually differ. A proxy
+     * that reports "connected" but exits from the same address has not changed
+     * anything, and would otherwise look like success right up until YouTube
+     * blocks the bot again.
+     *
+     * @param {Object} result - egress.test() output
+     * @returns {string}
+     */
+    _renderProxyTest(result) {
+        const lines = [];
+
+        lines.push(`🖥️ ${ui.bold('Langsung (IP server)')}`);
+        lines.push(result.direct.ok
+            ? `${ui.SYM.bullet} ${ui.mono(result.direct.ip)} ${ui.SYM.dot} ${result.direct.ms}ms`
+            : `${ui.SYM.bullet} Gagal: ${ui.truncate(result.direct.error || 'tidak diketahui', 60)}`);
+
+        lines.push('');
+        lines.push(`🛰️ ${ui.bold('Lewat proxy')}`);
+        lines.push(result.proxy.ok
+            ? `${ui.SYM.bullet} ${ui.mono(result.proxy.ip)} ${ui.SYM.dot} ${result.proxy.ms}ms`
+            : `${ui.SYM.bullet} Gagal: ${ui.truncate(result.proxy.error || 'tidak diketahui', 60)}`);
+
+        lines.push('');
+        if (result.distinct) {
+            lines.push(`${ui.EMOJI.ok} IP berbeda — proxy bekerja.`);
+        } else if (result.proxy.ok && result.direct.ok) {
+            lines.push(`${ui.EMOJI.warn} IP sama — proxy tidak mengubah jalur keluar.`);
+        } else if (!result.configured) {
+            lines.push(`${ui.EMOJI.info} Proxy belum dikonfigurasi.`);
+        } else {
+            lines.push(`${ui.EMOJI.fail} Proxy tidak bisa dihubungi.`);
+        }
+
+        return ui.card({
+            icon: '🧪',
+            title: 'Tes Proxy',
+            lines,
+            footer: `${egress.isEnabled() ? 'Proxy aktif' : 'Proxy nonaktif'} ${ui.SYM.dot} ${ui.clock()}`
+        });
+    }
+
+    /**
+     * `.security media` — diagnostics for the media stack.
+     *
+     * When `.music` or `.pinterest` stops working, the question is always
+     * "which layer broke". This answers it in one message: toolchain versions,
+     * egress, and which providers the circuit breaker has taken out of
+     * rotation.
+     */
+    async handleMediaDoctor(sock, from, msg, context) {
+        await this.react(sock, msg, '⏳');
+
+        const [version, temp] = await Promise.all([
+            ytdlp.getVersion(),
+            tempdir.usage()
+        ]);
+
+        const lines = [`🔧 ${ui.bold('Toolchain')}`];
+
+        if (version.installed) {
+            // yt-dlp releases are date-stamped, and YouTube fixes ship
+            // continuously — a stale copy is a leading cause of sudden failure.
+            const stale = version.ageDays !== undefined && version.ageDays > 45;
+            lines.push(ui.kv('yt-dlp', version.version, stale ? '⚠️' : '✅'));
+            if (version.ageDays !== undefined) {
+                lines.push(ui.kv('Umur versi', `${version.ageDays} hari${stale ? ' (perlu update)' : ''}`, '📅'));
+            }
+        } else {
+            lines.push(ui.kv('yt-dlp', 'Tidak terpasang', '❌'));
+        }
+
+        const clients = process.env.YTDLP_PLAYER_CLIENTS ?? 'default,web_safari';
+        lines.push(ui.kv('Player client', clients || 'bawaan yt-dlp', '🎛️'));
+        lines.push(ui.kv('PO token', process.env.POT_PROVIDER_URL ? 'Dikonfigurasi' : 'Tidak diset', '🎫'));
+
+        lines.push('');
+        lines.push(`🛰️ ${ui.bold('Jalur keluar')}`);
+        const eg = egress.status();
+        lines.push(ui.kv('Proxy', eg.enabled ? 'Aktif' : 'Nonaktif', eg.enabled ? '🟢' : '⚪'));
+        if (!eg.enabled) {
+            lines.push(`${ui.SYM.bullet} _IP datacenter — YouTube bisa memblokir_`);
+        }
+
+        const health = providers.getHealth();
+        if (health.length > 0) {
+            lines.push('');
+            lines.push(`📡 ${ui.bold('Sumber media')}`);
+            for (const p of health) {
+                const icon = p.open ? '🔴' : (p.successes > 0 ? '🟢' : '⚪');
+                const detail = p.open
+                    ? `dijeda ${Math.ceil(p.opensInMs / 1000)}s`
+                    : `${p.successes} ok / ${p.totalFailures} gagal`;
+                lines.push(ui.kv(p.id, detail, icon));
+            }
+        }
+
+        lines.push('');
+        lines.push(`💾 ${ui.bold('Penyimpanan')}`);
+        lines.push(ui.kv('Batas file', formatSize(config.media.maxFileBytes), '📦'));
+        lines.push(ui.kv('Durasi maks', `${Math.floor(config.media.maxDuration / 60)} menit`, '⏱️'));
+        lines.push(ui.kv('File sementara', `${temp.files} (${formatSize(temp.bytes)})`, '🗂️'));
+
+        await this.react(sock, msg, '✅');
+
+        await this._deliver(sock, from, msg, context, ui.card({
+            icon: '🩺',
+            title: 'Diagnosa Media',
+            lines,
+            footer: ui.clock()
+        }));
     }
 
     // ─────────────────────────────────────────────────────

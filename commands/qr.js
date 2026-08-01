@@ -6,6 +6,10 @@
 const CommandBase = require('./base');
 const ui = require('../utils/ui');
 const logger = require('../utils/logger');
+const httpClient = require('../utils/http-client');
+
+// Longer content produces a denser code; the API rejects anything huge.
+const MAX_QR_LENGTH = 900;
 
 class QRCommand extends CommandBase {
     constructor() {
@@ -34,15 +38,32 @@ class QRCommand extends CommandBase {
 
         await this.react(sock, msg, '📱');
 
+        const text = args.join(' ');
+
+        if (text.length > MAX_QR_LENGTH) {
+            return await this.replyError(sock, from, msg,
+                `Teksnya kepanjangan (${text.length} karakter).`, {
+                    title: 'Terlalu Panjang',
+                    hint: [`Maksimal ${MAX_QR_LENGTH} karakter`]
+                });
+        }
+
         try {
-            const text = args.join(' ');
             logger.info(`QR: generating code for content length=${text.length}`);
-            
-            // Using API to generate QR code
+
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(text)}`;
 
+            // Fetched here rather than handing { url } to Baileys, which would
+            // fetch it outside utils/http-client and so ignore the proxy. It
+            // also means an API failure surfaces as a proper error card instead
+            // of a silently missing image.
+            const response = await httpClient.get(qrUrl, {
+                responseType: 'arraybuffer',
+                timeout: 15000
+            });
+
             await this.replyMedia(sock, from, msg, {
-                image: { url: qrUrl },
+                image: Buffer.from(response.data),
                 caption: ui.card({
                     icon: '📱',
                     title: 'QR Code',

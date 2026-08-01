@@ -6,32 +6,17 @@
 FROM node:20-bookworm-slim AS base
 
 # ---- System Dependencies ----
-# canvas (libcairo, libpango), sharp (libvips), Playwright (chromium runtime
-# libraries), yt-dlp (python3), ffmpeg, fonts.
+# canvas (libcairo, libpango), sharp (libvips), yt-dlp (python3), ffmpeg, fonts.
 #
-# Note: the `chromium` apt package is deliberately NOT installed. Playwright
-# downloads its own matching build below, and the system one is protocol
-# incompatible with it. It was only ever here for Puppeteer, which was removed.
+# No browser is installed. `.pinterest` used to drive a headless Chromium; it
+# now calls Pinterest's own JSON endpoint over plain HTTP, which removed ~400MB
+# of image, the SYS_ADMIN capability, and roughly 30s of latency per search.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Chromium runtime deps (shared libraries Playwright's build links against)
     ca-certificates \
+    curl \
+    unzip \
+    # Fonts for the .brat sticker renderer (Liberation Sans Narrow)
     fonts-liberation \
-    libappindicator3-1 \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    xdg-utils \
     # Canvas native deps (cairo, pango, libjpeg, giflib, librsvg)
     libcairo2-dev \
     libpango1.0-dev \
@@ -53,7 +38,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Install yt-dlp (media downloader) ----
-RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
+# Pinned rather than floating: yt-dlp ships breaking extractor changes often,
+# and an unpinned rebuild can silently swap in a version that behaves
+# differently. Bump this deliberately — a stale yt-dlp is itself a leading
+# cause of YouTube failures, so do not let it drift for long.
+# `.security media` reports the installed version and its age.
+ARG YTDLP_VERSION=2026.07.09
+RUN pip3 install --no-cache-dir --break-system-packages "yt-dlp==${YTDLP_VERSION}"
+
+# ---- JavaScript runtime for yt-dlp ----
+# YouTube requires solving a JS "n-signature" challenge to get playable stream
+# URLs. yt-dlp needs an external JS runtime for this; without one it falls back
+# to a slow Python interpreter that fails more often. Deno is yt-dlp's default
+# choice and is preferred over the bundled Node.
+ENV DENO_INSTALL=/usr/local
+RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y \
+    && deno --version
 
 # ---- Application Setup ----
 WORKDIR /app
@@ -64,20 +64,15 @@ COPY package.json package-lock.json* ./
 # Install Node.js dependencies (production only)
 RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev
 
-# ---- Install Playwright's matching Chromium (after npm install) ----
-# Playwright requires a specific Chromium version that matches its protocol.
-# System Chromium from apt-get is incompatible (causes crashpad_handler errors).
-# PLAYWRIGHT_BROWSERS_PATH ensures build (root) and runtime (hambot) use the same path.
-ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright
-RUN npx playwright install --with-deps chromium
-
 # Copy application source
 COPY . .
 
 # ---- Runtime Configuration ----
 # Create non-root user for security
+# tmp/ holds yt-dlp and ffmpeg scratch files; data/ holds the persisted egress
+# toggle. Both must be writable by the runtime user.
 RUN groupadd -r hambot && useradd -r -g hambot -G audio,video hambot \
-    && mkdir -p /app/auth_info_baileys /app/logs \
+    && mkdir -p /app/auth_info_baileys /app/logs /app/tmp /app/data \
     && chown -R hambot:hambot /app
 
 USER hambot

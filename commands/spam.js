@@ -9,6 +9,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const { sleep } = require('../utils/helpers');
 const config = require('../config');
 
@@ -175,29 +176,33 @@ class SpamCommand extends CommandBase {
 
         // Gunakan pengecekan owner terpusat dari config
         if (!config.isOwner(sender)) {
-            return await this.reply(sock, from, msg, 
-                '🔒 *Akses Ditolak*\n\n' +
-                'Perintah ini hanya untuk owner bot.\n' +
-                `Pengirim: ${sender}`);
+            return await this.replyError(sock, from, msg,
+                'Perintah ini hanya untuk owner bot.', {
+                    icon: ui.EMOJI.locked,
+                    title: 'Akses Ditolak'
+                });
         }
 
         // Tampilkan cara pakai jika tidak ada argumen
         if (args.length < 3) {
-            return await this.reply(sock, from, msg,
-                '📨 *Perintah Spam*\n\n' +
-                '📝 *Cara Pakai:*\n' +
-                '`.spam <target> <jumlah> <pesan>`\n\n' +
-                '📌 *Contoh:*\n' +
-                '• `.spam - 10 Halo!` - Spam ke chat ini\n' +
-                '• `.spam self 5 Test` - Spam ke chat ini\n' +
-                '• `.spam @mention 10 Hi!` - Spam ke user\n' +
-                '• `.spam 081234567890 5 Test` - Spam ke nomor\n' +
-                '• `.spam 6281234567890 20 Hi` - Spam ke nomor\n\n' +
-                '⚠️ *Batasan:*\n' +
-                `• Maksimal ${this.MAX_LIMIT} pesan\n` +
-                '• Khusus owner\n' +
-                '• Delay acak human-like (1.5-5 detik)\n' +
-                '• Simulasi typing indicator');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '📨',
+                title: 'Perintah Spam',
+                description: 'Kirim pesan berulang ke sebuah tujuan.',
+                usage: ['.spam <target> <jumlah> <pesan>'],
+                examples: [
+                    '.spam - 10 Halo!',
+                    '.spam self 5 Test',
+                    '.spam @mention 10 Hi!',
+                    '.spam 081234567890 5 Test'
+                ],
+                notes: [
+                    `Maksimal ${this.MAX_LIMIT} pesan`,
+                    'Khusus owner',
+                    'Delay acak human-like (1.5–5 detik)',
+                    'Simulasi typing indicator'
+                ]
+            });
         }
 
         // Parse argumen
@@ -208,12 +213,14 @@ class SpamCommand extends CommandBase {
         // Validasi target dengan smart detection
         const targetResult = this.parseTarget(targetInput, from, msg);
         if (!targetResult) {
-            return await this.reply(sock, from, msg,
-                '❌ Format target tidak valid!\n\n' +
-                '*Gunakan:*\n' +
-                '• `-` atau `self` untuk chat ini\n' +
-                '• `@mention` untuk mention user\n' +
-                '• Nomor telepon (081xxx atau 62xxx)');
+            return await this.replyError(sock, from, msg, 'Format target tidak valid.', {
+                title: 'Target Salah',
+                hint: [
+                    '`-` atau `self` untuk chat ini',
+                    '`@mention` untuk mention user',
+                    'Nomor telepon (081xxx atau 62xxx)'
+                ]
+            });
         }
 
         const targetJid = targetResult.jid;
@@ -221,34 +228,45 @@ class SpamCommand extends CommandBase {
 
         // Validasi jumlah
         if (isNaN(amountInput) || amountInput < 1) {
-            return await this.replyError(sock, from, msg, 'Jumlah harus angka positif!');
+            return await this.replyError(sock, from, msg, 'Jumlah harus angka positif.', {
+                title: 'Jumlah Salah',
+                hint: ['.spam - 10 Halo!']
+            });
         }
 
         // Terapkan batas maksimal
         let amount = amountInput;
-        let limitWarning = '';
+        let limited = false;
         if (amount > this.MAX_LIMIT) {
             amount = this.MAX_LIMIT;
-            limitWarning = `\n⚠️ Dibatasi ke ${this.MAX_LIMIT} pesan`;
+            limited = true;
         }
 
         // Validasi pesan
         if (!message || message.trim().length === 0) {
-            return await this.replyError(sock, from, msg, 'Pesan tidak boleh kosong!');
+            return await this.replyError(sock, from, msg, 'Pesan tidak boleh kosong.', {
+                title: 'Pesan Kosong'
+            });
         }
 
         // React untuk menunjukkan proses
         await this.react(sock, msg, '🚀');
 
         // Kirim pesan mulai
-        await this.reply(sock, from, msg,
-            `📨 *Spam Dimulai*\n\n` +
-            `🎯 Target: ${targetDisplay}\n` +
-            `📝 Pesan: ${message.substring(0, 30)}${message.length > 30 ? '...' : ''}\n` +
-            `🔢 Jumlah: ${amount}${limitWarning}\n` +
-            `⏱️ Delay: 1.5-5 detik (human-like)\n` +
-            `✨ Mode: Typing indicator aktif\n\n` +
-            `⏳ Mengirim...`);
+        await this.reply(sock, from, msg, ui.card({
+            icon: '📨',
+            title: 'Spam Dimulai',
+            lines: [
+                ui.kv('Target', ui.safe(targetDisplay, 40), '🎯'),
+                ui.kv('Pesan', ui.safe(ui.truncate(message, 30)), '📝'),
+                ui.kv('Jumlah', String(amount), '🔢'),
+                limited && `${ui.EMOJI.warn} Dibatasi ke ${this.MAX_LIMIT} pesan`,
+                ui.kv('Delay', '1.5–5 detik (human-like)', '⏱️'),
+                '',
+                `${ui.EMOJI.wait} Mengirim...`
+            ],
+            footer: ui.clock()
+        }));
 
         // Kirim pesan spam dengan delay acak dan human-like behavior
         let successCount = 0;
@@ -277,24 +295,27 @@ class SpamCommand extends CommandBase {
                 }
                 
                 // Berhenti jika terlalu banyak error
-                await this.reply(sock, from, msg,
-                    `⚠️ *Dihentikan karena error*\n\n` +
-                    `🎯 Target: ${targetDisplay}\n` +
-                    `✅ Terkirim: ${successCount}\n` +
-                    `❌ Gagal: ${failCount}\n\n` +
-                    `Error: ${error.message || 'Error tidak dikenal'}`);
-                
+                await this.reply(sock, from, msg, ui.warn('Dihentikan karena error', {
+                    title: 'Dihentikan',
+                    hint: [
+                        `Target: ${ui.safe(targetDisplay, 40)}`,
+                        `Terkirim: ${successCount}`,
+                        `Gagal: ${failCount}`,
+                        ui.truncate(error.message || 'Error tidak dikenal', 80)
+                    ]
+                }));
+
                 await this.react(sock, msg, '⚠️');
                 return;
             }
         }
 
         // Kirim pesan selesai
-        await this.reply(sock, from, msg,
-            `✅ *Spam Selesai*\n\n` +
-            `🎯 Target: ${targetDisplay}\n` +
-            `✅ Terkirim: ${successCount}\n` +
-            `❌ Gagal: ${failCount}`);
+        await this.reply(sock, from, msg, ui.success('Spam Selesai', [
+            ui.kv('Target', ui.safe(targetDisplay, 40), '🎯'),
+            ui.kv('Terkirim', String(successCount), '✅'),
+            ui.kv('Gagal', String(failCount), '❌')
+        ]));
 
         await this.react(sock, msg, '✅');
     }

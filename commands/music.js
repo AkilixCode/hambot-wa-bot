@@ -1,19 +1,42 @@
 /**
  * Music Command
- * Search and download music from YouTube and other platforms
- * Uses python3 -m yt_dlp with proxy and android client strategy
- * Supports 30+ platforms including short URLs
+ * Search and download music, then send it as an MP3.
+ *
+ * THE BLOCKING PROBLEM, AND WHAT THIS DOES ABOUT IT.
+ *
+ * The bot runs on a datacenter VPS. YouTube rejects those IPs at the player
+ * layer — measured directly from this server, an InnerTube player request
+ * returns UNPLAYABLE with zero formats. No amount of header spoofing, cookie
+ * juggling or stealth browsing changes that, because the IP's ASN is the
+ * signal being used. Previous attempts at all three failed for that reason.
+ *
+ * So there are two real levers, and this command uses both:
+ *
+ *   1. A residential exit. `.security proxy on` routes yt-dlp through the
+ *      owner's home connection (see utils/egress.js). This is the fix that
+ *      actually works, which is why it is a live toggle rather than a
+ *      redeploy.
+ *
+ *   2. A different source. SoundCloud does not gate on datacenter IPs and
+ *      yt-dlp searches it natively. When YouTube returns a bot check, the
+ *      cascade falls through and the user still gets their song — which is
+ *      what makes this command usable with the proxy switched off.
+ *
+ * PO tokens and a current yt-dlp (see utils/ytdlp.js) raise the odds on tier 1
+ * but do not guarantee it, so the fallback is not optional.
  */
 
 const CommandBase = require('./base');
-const { spawn } = require('child_process');
-const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers');
+const { generateFilename, isValidUrl } = require('../utils/helpers');
 const security = require('../utils/security');
 const ui = require('../utils/ui');
-const { identifyPlatform, isAudioSupported, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
-const fsPromises = require('fs').promises;
 const config = require('../config');
 const logger = require('../utils/logger');
+const ytdlp = require('../utils/ytdlp');
+const media = require('../utils/media');
+const tempdir = require('../utils/tempdir');
+const { runProviders } = require('../utils/providers');
+const { identifyPlatform, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
 
 class MusicCommand extends CommandBase {
     constructor() {
@@ -28,55 +51,11 @@ class MusicCommand extends CommandBase {
         });
     }
 
-    /**
-     * Execute yt-dlp using python3 -m yt_dlp for plugin support
-     * This uses python3 which is in the allowed commands list in helpers.js
-     */
-    spawnYtDlp(args) {
-        return new Promise((resolve, reject) => {
-            // python3 is in the allowed commands list in helpers.js
-            const proc = spawn('python3', ['-m', 'yt_dlp', ...args]);
-            let stdout = '';
-            let stderr = '';
-            proc.stdout.on('data', (data) => stdout += data);
-            proc.stderr.on('data', (data) => stderr += data);
-            proc.on('close', (code) => {
-                if (code === 0) resolve(stdout);
-                else reject(new Error(stderr || `yt-dlp failed with code ${code}`));
-            });
-            proc.on('error', (err) => reject(err));
-        });
-    }
-
-    /**
-     * Execute yt-dlp with proxy fallback support
-     * If proxy is enabled and the command fails, retries without proxy using local IP
-     * @param {string[]} baseArgs - Base yt-dlp arguments (without proxy/network args)
-     * @param {string[]} proxyArgs - Proxy arguments from config
-     * @param {string[]} networkArgs - Network arguments (e.g., --force-ipv4)
-     */
-    async spawnYtDlpWithFallback(baseArgs, proxyArgs, networkArgs) {
-        const fullArgs = [...baseArgs, ...networkArgs, ...proxyArgs];
-        try {
-            return await this.spawnYtDlp(fullArgs);
-        } catch (error) {
-            // If proxy was used and fallback is enabled, retry without proxy
-            if (proxyArgs.length > 0 && config.network.fallbackToLocal) {
-                logger.warn('Proxy failed for yt-dlp, falling back to local IP');
-                const fallbackArgs = [...baseArgs, ...networkArgs];
-                return await this.spawnYtDlp(fallbackArgs);
-            }
-            throw error;
-        }
-    }
-
     async execute(sock, msg, args, context) {
         const { from } = context;
 
-        // Get supported platforms for help message
-        const supportedPlatforms = getSupportedPlatformsText();
-
         if (!args[0]) {
+            const supported = getSupportedPlatformsText();
             return await this.replyUsage(sock, from, msg, {
                 icon: '🎵',
                 title: 'Music Downloader',
@@ -89,8 +68,9 @@ class MusicCommand extends CommandBase {
                     '.music https://soundcloud.com/artist/track'
                 ],
                 notes: [
-                    'Durasi maksimal 10 menit',
-                    `Platform: ${ui.truncate(supportedPlatforms.audio, 180)}`
+                    `Durasi maksimal ${Math.floor(config.media.maxDuration / 60)} menit`,
+                    `Ukuran maksimal ${media.sizeLimitLabel()}`,
+                    `Platform: ${ui.truncate(supported.audio, 180)}`
                 ]
             });
         }
@@ -98,20 +78,11 @@ class MusicCommand extends CommandBase {
         await this.react(sock, msg, '🔍');
 
         const query = args.join(' ');
-        logger.info(`Music: searching "${query}"${isValidUrl(query) ? ' (direct URL)' : ''}`);
-        const filePrefix = generateFilename('music', '');
-        
-        // Build proxy args from config - uses getYtDlpProxyArgs method
-        const proxyArgs = config.getYtDlpProxyArgs();
-        // Build network args from config (e.g., --force-ipv4)
-        const networkArgs = config.getYtDlpNetworkArgs();
-
-        // Check if input is a URL
         const isUrl = isValidUrl(query);
+        const filePrefix = generateFilename('music', '');
 
-        // A direct URL is fetched by yt-dlp, so it needs the same SSRF guard the
-        // video command uses. A plain search query never reaches the network as
-        // a URL, so it skips this.
+        // A direct URL gets fetched by yt-dlp, so it needs the SSRF guard. A
+        // plain search term never reaches the network as a URL.
         if (isUrl) {
             const reachable = await security.resolvesToPublicHost(query);
             if (!reachable.safe) {
@@ -119,155 +90,251 @@ class MusicCommand extends CommandBase {
             }
         }
 
-
-        // Get platform info and args if URL
-        let platformInfo = null;
-        let platformArgs = [];
-        if (isUrl) {
-            platformInfo = identifyPlatform(query);
-            platformArgs = getPlatformArgs(query);
-        }
+        logger.info(`Music: searching "${query}"${isUrl ? ' (direct URL)' : ''}`);
 
         try {
-            let videoUrl;
-            let videoTitle = 'Audio';
+            await this.react(sock, msg, '🎵');
 
-            if (isUrl) {
-                // If URL provided, use it directly
-                if (platformInfo) {
-                    await this.react(sock, msg, '🎵');
-                }
-                videoUrl = query;
-                
-                // Try to get video info with platform-specific args
-                try {
-                    const infoArgs = [
-                        videoUrl,
-                        '--dump-json',
-                        '--no-playlist',
-                        ...platformArgs,
-                    ];
-                    const infoResult = await this.spawnYtDlpWithFallback(infoArgs, proxyArgs, networkArgs);
-                    const videoInfo = JSON.parse(infoResult.trim().split('\n')[0]);
-                    
-                    if (videoInfo.duration && videoInfo.duration > config.media.maxDuration) {
-                        return await this.replyError(sock, from, msg, 'Lagu terlalu panjang. Coba lagu yang lebih pendek ya!');
-                    }
-                    
-                    videoTitle = videoInfo.title || 'Audio';
-                } catch (infoError) {
-                    // If info extraction fails, continue with download
-                    this.logError(infoError, context);
-                }
-            } else {
-                // Step 1: Search for videos and check duration
-                await this.react(sock, msg, '🎵');
+            const track = isUrl
+                ? await this.resolveUrl(query)
+                : await this.resolveSearch(query);
 
-                const searchArgs = [
-                    `ytsearch5:${query}`,
-                    '--dump-json',
-                    '--no-playlist',
-                    '--flat-playlist',
-                    '--extractor-args', 'youtube:player_client=android',
-                ];
-
-                const searchResult = await this.spawnYtDlpWithFallback(searchArgs, proxyArgs, networkArgs);
-
-                const videos = searchResult.trim().split('\n').map(line => {
-                    try { return JSON.parse(line); } 
-                    catch { return null; }
-                }).filter(v => v !== null);
-
-                // Find video with duration < max duration
-                const validVideo = videos.find(v => 
-                    v.duration && v.duration < config.media.maxDuration
-                );
-
-                if (!validVideo) {
-                    return await this.replyError(sock, from, msg, 'Lagu terlalu panjang atau tidak ditemukan. Coba lagu lain ya!');
-                }
-
-                videoUrl = `https://youtu.be/${validVideo.id}`;
-                videoTitle = validVideo.title;
-                logger.info(`Music: found "${videoTitle}" (${validVideo.duration}s)`);
+            if (track.duration && track.duration > config.media.maxDuration) {
+                return await this.replyError(sock, from, msg,
+                    'Lagunya kepanjangan. Coba yang lebih pendek ya!', {
+                        title: 'Terlalu Panjang',
+                        hint: [`Maksimal ${Math.floor(config.media.maxDuration / 60)} menit`]
+                    });
             }
 
-            // Step 2: Download audio using "Let it Be" method
-            // Let yt-dlp download whatever stream is best, then convert to mp3
-            const outputPath = `${filePrefix}.%(ext)s`;
-            
-            // Build download args - use platform-specific args if available (for URLs)
-            // For search queries, use YouTube-specific args
-            const downloadPlatformArgs = isUrl ? platformArgs : ['--extractor-args', 'youtube:player_client=android'];
-            
-            const downloadArgs = [
-                videoUrl,
-                '-x',                          // Extract audio
-                '--audio-format', 'mp3',       // Auto-convert to mp3
-                '--audio-quality', '0',        // Best quality
-                '-o', outputPath,
-                '--max-filesize', '200M',      // Safety cap for 3GB data limit
-                '--no-warnings',
-                ...downloadPlatformArgs,
-            ];
+            const file = await this.downloadAudio(track, filePrefix);
 
-            logger.info(`Music: downloading audio (proxy: ${proxyArgs.length > 0 ? 'enabled' : 'disabled'})`);
-            await this.spawnYtDlpWithFallback(downloadArgs, proxyArgs, networkArgs);
-
-            // Find downloaded file
-            const files = await fsPromises.readdir('./');
-            const audioFile = files.find(x => 
-                x.startsWith(filePrefix) && x.endsWith('.mp3')
-            );
-
-            if (!audioFile) {
-                // Check if file was too large
-                const anyFile = files.find(x => x.startsWith(filePrefix));
-                if (!anyFile) {
-                    throw new Error('Downloaded file not found. The file might be too large (>200MB). Try a shorter song! 📦');
-                }
-                throw new Error('Audio conversion failed');
+            if (!media.isWithinSizeLimit(file.size)) {
+                return await this.replyError(sock, from, msg,
+                    `Filenya kegedean (${require('../utils/helpers').formatSize(file.size)}).`, {
+                        title: 'File Kegedean',
+                        hint: [`Batasnya ${media.sizeLimitLabel()}`, 'Coba lagu yang lebih pendek']
+                    });
             }
 
-            // Check file size before sending
-            const stats = await fsPromises.stat(audioFile);
-            if (stats.size > 200 * 1024 * 1024) { // 200MB
-                await cleanupFiles(filePrefix);
-                return await this.reply(sock, from, msg, '📦 Waduh, filenya kegedean bro (>200MB)! Coba lagu yang lebih pendek ya 😅');
-            }
+            logger.info(`Music: sending ${(file.size / 1024 / 1024).toFixed(1)}MB audio`);
 
-            // Send audio
-            logger.info(`Music: download complete, sending ${(stats.size / 1024 / 1024).toFixed(1)}MB audio`);
-            const audioBuffer = await fsPromises.readFile(audioFile);
-            await sock.sendMessage(from, {
-                audio: audioBuffer,
-                mimetype: 'audio/mpeg'
-            }, { quoted: msg });
+            // Hand Baileys the path, not the bytes. It streams from disk
+            // (createReadStream), so a large file no longer has to sit in the
+            // heap in its entirety before sending.
+            await this.replyMedia(sock, from, msg, {
+                audio: { url: file.path },
+                mimetype: 'audio/mpeg',
+                fileName: `${this.sanitizeFilename(track.title)}.mp3`
+            });
 
+            // Sent separately: WhatsApp does not render captions on audio.
+            await this.reply(sock, from, msg, this.buildInfoCard(track));
             await this.react(sock, msg, '✅');
-
         } catch (error) {
             this.logError(error, context);
-            
-            // Friendly error messages
-            let errorMsg = '❌ Gagal download musik.';
-            if (error.message.includes('too large') || error.message.includes('>200MB')) {
-                errorMsg = '📦 Waduh, filenya kegedean bro (>200MB)! Coba lagu yang lebih pendek ya 😅';
-            } else if (error.message.includes('Sign in') || error.message.includes('bot')) {
-                errorMsg = '⚠️ YouTube sedang blocking. Coba lagi nanti atau hubungi admin.';
-            } else if (error.message.includes('No video')) {
-                errorMsg = '❌ Lagu tidak ditemukan. Coba kata kunci lain.';
-            } else if (error.message.includes('timeout') || error.message.includes('TransportError')) {
-                errorMsg = '⏱️ Koneksi ke YouTube timeout. Coba lagi nanti!';
-            } else if (error.message.includes('Unable to download') || error.message.includes('Connection refused')) {
-                errorMsg = '🌐 Koneksi gagal. Coba lagi nanti!';
-            }
-            
-            await this.reply(sock, from, msg, errorMsg);
+            const described = media.describeError(error, 'musik');
+            await this.replyError(sock, from, msg, described.reason, {
+                title: described.title,
+                hint: described.hint
+            });
         } finally {
-            // Cleanup temporary files immediately
-            await cleanupFiles(filePrefix);
+            await tempdir.cleanupTemp(filePrefix);
         }
+    }
+
+    /**
+     * Resolve metadata for a URL the user supplied directly.
+     *
+     * Metadata failure is not fatal here — some extractors are flaky on
+     * --dump-json but download fine, and refusing to try would be a regression.
+     *
+     * @param {string} url
+     * @returns {Promise<Object>} Track descriptor
+     */
+    async resolveUrl(url) {
+        const platformArgs = getPlatformArgs(url);
+        const platform = identifyPlatform(url);
+        const isYouTube = /youtu\.?be/i.test(url);
+        const extraArgs = isYouTube ? [...platformArgs, ...ytdlp.getYouTubeArgs()] : platformArgs;
+
+        try {
+            const [info] = await ytdlp.getInfo(url, { extraArgs });
+            if (info) {
+                return {
+                    url,
+                    title: info.title || 'Audio',
+                    uploader: info.uploader || info.channel || null,
+                    duration: info.duration || 0,
+                    source: platform ? platform.platform : 'URL',
+                    extraArgs
+                };
+            }
+        } catch (error) {
+            logger.debug(`Music: metadata lookup failed, continuing - ${error.message}`);
+        }
+
+        return { url, title: 'Audio', uploader: null, duration: 0, source: platform ? platform.platform : 'URL', extraArgs };
+    }
+
+    /**
+     * Find a track for a search term, YouTube first and SoundCloud second.
+     *
+     * @param {string} query - Search terms
+     * @returns {Promise<Object>} Track descriptor, with `degraded` set when the
+     *                            fallback source was used
+     */
+    async resolveSearch(query) {
+        const outcome = await runProviders('music-search', [
+            {
+                id: 'youtube',
+                label: 'YouTube',
+                run: () => this.searchYouTube(query)
+            },
+            {
+                id: 'soundcloud',
+                label: 'SoundCloud',
+                run: () => this.searchSoundCloud(query)
+            }
+        ]);
+
+        return { ...outcome.result, degraded: outcome.degraded, source: outcome.providerLabel };
+    }
+
+    /**
+     * Search YouTube.
+     * @param {string} query
+     * @returns {Promise<Object>} Track descriptor
+     */
+    async searchYouTube(query) {
+        const results = await ytdlp.getInfo(`ytsearch5:${query}`, {
+            flat: true,
+            extraArgs: ytdlp.getYouTubeArgs()
+        });
+
+        const pick = this.pickTrack(results);
+        if (!pick) throw new Error('No suitable YouTube result');
+
+        return {
+            url: `https://youtu.be/${pick.id}`,
+            title: pick.title || 'Audio',
+            uploader: pick.uploader || pick.channel || null,
+            duration: pick.duration || 0,
+            extraArgs: ytdlp.getYouTubeArgs()
+        };
+    }
+
+    /**
+     * Search SoundCloud.
+     *
+     * Reachable from datacenter IPs and free of bot checks, which is exactly
+     * why it is the fallback. `scsearch` is built into yt-dlp — no API key and
+     * no third-party service to go stale.
+     *
+     * @param {string} query
+     * @returns {Promise<Object>} Track descriptor
+     */
+    async searchSoundCloud(query) {
+        const results = await ytdlp.getInfo(`scsearch5:${query}`, { flat: true });
+
+        const pick = this.pickTrack(results);
+        if (!pick) throw new Error('No suitable SoundCloud result');
+
+        return {
+            // Flat search results may omit a usable webpage_url, so fall back
+            // to re-running the search and taking the first hit at download time.
+            url: pick.url || pick.webpage_url || `scsearch1:${query}`,
+            title: pick.title || 'Audio',
+            uploader: pick.uploader || null,
+            duration: pick.duration || 0,
+            extraArgs: []
+        };
+    }
+
+    /**
+     * Choose the first result inside the duration limit.
+     *
+     * Entries with no duration are accepted as a last resort: flat search
+     * results sometimes omit it, and rejecting them would discard usable hits.
+     *
+     * @param {Object[]} results
+     * @returns {Object|null}
+     */
+    pickTrack(results) {
+        if (!Array.isArray(results) || results.length === 0) return null;
+
+        const withinLimit = results.find(r => r.duration && r.duration <= config.media.maxDuration);
+        if (withinLimit) return withinLimit;
+
+        return results.find(r => !r.duration) || null;
+    }
+
+    /**
+     * Download and transcode to MP3.
+     *
+     * No -f selector by design: let yt-dlp take the best stream it can get and
+     * convert afterwards. Pinning a format is a common cause of "requested
+     * format not available" when a site changes its ladder.
+     *
+     * @param {Object} track - Track descriptor
+     * @param {string} filePrefix - Temp filename prefix
+     * @returns {Promise<{path: string, name: string, size: number}>}
+     */
+    async downloadAudio(track, filePrefix) {
+        const outputTemplate = tempdir.tempPath(`${filePrefix}.%(ext)s`);
+
+        await ytdlp.download(
+            track.url,
+            outputTemplate,
+            ['-x', '--audio-format', 'mp3', '--audio-quality', '0'],
+            {
+                maxFilesize: config.media.maxFileSize,
+                extraArgs: track.extraArgs || []
+            }
+        );
+
+        const file = await media.findDownload(filePrefix, ['mp3', 'm4a', 'opus', 'ogg']);
+        if (!file) {
+            throw new Error('Downloaded file not found — it may have exceeded max-filesize');
+        }
+        return file;
+    }
+
+    /**
+     * Build the info card that follows the audio message.
+     * @param {Object} track - Track descriptor
+     * @returns {string} Rendered card
+     */
+    buildInfoCard(track) {
+        const lines = [ui.kv('Judul', ui.safe(ui.truncate(track.title, 80)), '🎵')];
+
+        if (track.uploader) {
+            lines.push(ui.kv('Artis', ui.safe(ui.truncate(track.uploader, 60)), '👤'));
+        }
+        if (track.duration) {
+            lines.push(ui.kv('Durasi', ui.duration(track.duration * 1000), '⏱️'));
+        }
+
+        return ui.card({
+            icon: '🎧',
+            title: 'Musik Terkirim',
+            lines,
+            footer: track.degraded
+                ? `Sumber: ${track.source} ${ui.SYM.dot} ${ui.clock()}`
+                : `${ui.EMOJI.live} ${track.source || 'YouTube'} ${ui.SYM.dot} ${ui.clock()}`
+        });
+    }
+
+    /**
+     * Strip characters that are unsafe in a filename WhatsApp will display.
+     * @param {string} title
+     * @returns {string}
+     */
+    sanitizeFilename(title) {
+        return String(title || 'audio')
+            .replace(/[/\\?%*:|"<>]/g, '')
+            .trim()
+            .substring(0, 60) || 'audio';
     }
 }
 

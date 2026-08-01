@@ -5,8 +5,12 @@
 
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
-const cache = require('../utils/cache');
 const logger = require('../utils/logger');
+const ui = require('../utils/ui');
+const { cachedFetch } = require('../utils/cached-fetch');
+
+// GeoIP data for an address barely changes, so an hour is conservative.
+const CACHE_TTL_MS = 3600000;
 
 class IPInfoCommand extends CommandBase {
     constructor() {
@@ -40,65 +44,69 @@ class IPInfoCommand extends CommandBase {
 
         // Validate IP format
         if (!this.isValidIP(ipAddress)) {
-            return await this.reply(sock, from, msg, 
-                '❌ Format IP tidak valid!\n\nContoh: `.ipinfo 8.8.8.8`');
-        }
-
-        // Check cache
-        const cacheKey = `ipinfo:${ipAddress}`;
-        const cached = cache.get(cacheKey);
-        if (cached) {
-            return await this.sendIPInfo(sock, from, msg, cached, true);
+            return await this.replyError(sock, from, msg, 'Format IP tidak valid.', {
+                title: 'IP Tidak Valid',
+                hint: ['.ipinfo 8.8.8.8', 'Gunakan format IPv4: x.x.x.x']
+            });
         }
 
         try {
-            // Use ip-api.com - Note: free tier only supports HTTP
-            // For production with sensitive data, consider using ipinfo.io or ipdata.co
-            logger.info(`IPInfo: looking up ${ipAddress}`);
-            const { data } = await httpClient.get(
-                `http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`,
-                { timeout: 10000 }
+            const { data, fromCache } = await cachedFetch(
+                `ipinfo:${ipAddress}`,
+                CACHE_TTL_MS,
+                async () => {
+                    // ip-api.com free tier is HTTP-only.
+                    logger.info(`IPInfo: looking up ${ipAddress}`);
+                    const res = await httpClient.get(
+                        `http://ip-api.com/json/${ipAddress}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`,
+                        { timeout: 10000 }
+                    );
+                    return res.data;
+                },
+                // A lookup failure must not be cached for an hour — the address
+                // may simply have been rate-limited.
+                { isCacheable: (value) => value && value.status !== 'fail' }
             );
-            logger.info('IPInfo: data received');
 
             if (data.status === 'fail') {
-                return await this.reply(sock, from, msg, 
-                    `❌ Gagal mendapatkan info IP: ${data.message}`);
+                return await this.replyError(sock, from, msg,
+                    ui.safe(data.message || 'IP tidak ditemukan.', 100), {
+                        title: 'Tidak Ditemukan',
+                        hint: ['Pastikan IP-nya publik, bukan IP lokal']
+                    });
             }
 
-            // Cache for 1 hour
-            cache.set(cacheKey, data, 3600000);
-
-            await this.sendIPInfo(sock, from, msg, data, false);
-
+            await this.sendIPInfo(sock, from, msg, data, fromCache);
         } catch (error) {
             this.logError(error, context);
-            await this.replyError(sock, from, msg, 'Gagal mendapatkan informasi IP.');
+            await this.replyError(sock, from, msg, 'Gagal mendapatkan informasi IP.', {
+                hint: ['Coba lagi sebentar lagi']
+            });
         }
     }
 
     async sendIPInfo(sock, from, msg, data, fromCache) {
-        const response = 
-`🌐 *INFORMASI ALAMAT IP*
-
-📥 *IP:* ${data.query}
-
-🗺️ *Lokasi*
-• Negara: ${data.country} (${data.countryCode})
-• Kota: ${data.city || 'N/A'}
-• Region: ${data.regionName || 'N/A'}
-• Kode Pos: ${data.zip || 'N/A'}
-• Koordinat: ${data.lat}, ${data.lon}
-• Timezone: ${data.timezone || 'N/A'}
-
-🏢 *Network*
-• ISP: ${data.isp || 'N/A'}
-• Organisasi: ${data.org || 'N/A'}
-• ASN: ${data.as || 'N/A'}
-
-${fromCache ? '📦 _(dari cache)_' : '🔄 _Data langsung_'}
-
-💡 _Lokasi berdasarkan GeoIP_`;
+        const response = ui.card({
+            icon: '🌐',
+            title: data.query,
+            lines: [
+                `🗺️ ${ui.bold('Lokasi')}`,
+                ui.kv('Negara', `${data.country} (${data.countryCode})`, '🏳️'),
+                ui.kv('Kota', data.city || 'N/A', '🏙️'),
+                ui.kv('Region', data.regionName || 'N/A', '📍'),
+                data.zip && ui.kv('Kode Pos', data.zip, '📮'),
+                ui.kv('Koordinat', `${data.lat}, ${data.lon}`, '🧭'),
+                ui.kv('Zona Waktu', data.timezone || 'N/A', '🕘'),
+                '',
+                `🏢 ${ui.bold('Jaringan')}`,
+                ui.kv('ISP', ui.truncate(data.isp || 'N/A', 45), '📡'),
+                ui.kv('Organisasi', ui.truncate(data.org || 'N/A', 45), '🏛️'),
+                ui.kv('ASN', ui.truncate(data.as || 'N/A', 45), '🔢'),
+                '',
+                `${ui.EMOJI.tip} _Lokasi berdasarkan GeoIP, sifatnya perkiraan_`
+            ],
+            footer: `${ui.sourceBadge(fromCache)} ${ui.SYM.dot} ${ui.clock()}`
+        });
 
         await this.reply(sock, from, msg, response);
         await this.react(sock, msg, '✅');

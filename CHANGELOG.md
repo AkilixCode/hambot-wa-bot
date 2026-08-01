@@ -5,6 +5,90 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-08-02
+
+Media reliability release. The commands that fetch from YouTube and Pinterest
+were failing because the bot runs on a datacenter IP, which both platforms treat
+as automated traffic. Measurement showed the previous workarounds were aimed at
+the wrong layer.
+
+### Added
+
+- **`utils/providers.js`** — provider cascade with a circuit breaker. Media
+  commands now declare an ordered list of sources and fall through until one
+  succeeds. A provider that fails three times running is skipped for an
+  exponentially growing cool-down, so a dead primary no longer costs every
+  request its full timeout. The last provider always runs regardless, so a stale
+  breaker can never be why a user gets nothing.
+- **`utils/ytdlp.js`** — single yt-dlp entry point, replacing logic that was
+  copy-pasted verbatim into `music.js` and `video.js`.
+- **`utils/egress.js`** — runtime proxy toggle, persisted across restarts.
+- **`utils/tempdir.js`**, **`utils/cached-fetch.js`**, **`utils/media.js`**.
+- **`.security proxy <status|on|off|test>`** — switch the bot between its own
+  datacenter IP and a residential proxy without editing `.env` or restarting.
+  `test` compares both exit IPs and warns when they are identical, which is the
+  failure mode that otherwise looks like success.
+- **`.security media`** — diagnostics: yt-dlp version and age, player clients,
+  PO token provider, egress state, per-provider health, temp usage.
+- **SoundCloud fallback for `.music`.** SoundCloud does not gate on datacenter
+  IPs, so `.music` keeps working with the proxy switched off.
+- **Wallhaven fallback for `.pinterest`**, locked to SFW (`purity=100`) and
+  filtered by the API's own `file_size` so a 12MB wallpaper is never sent.
+- `deno` in the Docker image — yt-dlp needs a JS runtime to solve YouTube's
+  n-challenge; without one it falls back to a slower Python solver that fails
+  more often.
+- `docs/MEDIA.md` — architecture, the Tailscale proxy setup, and a runbook.
+- `npm run test:media` — 40 offline tests for the new infrastructure.
+
+### Changed
+
+- **`.pinterest` no longer runs a browser.** Pinterest's search page is
+  client-rendered, which is why HTML scraping returned nothing and why a
+  headless browser was introduced. But the XHR endpoint the page itself calls
+  answers plain unauthenticated HTTP from a datacenter IP — measured at 25 pins
+  and ~677 image URLs per request. The command went from 618 lines to ~300, is
+  no longer `isHeavy`, and dropped from roughly 30s to about 1.3s.
+- **Player clients are configuration, not code.** `YTDLP_PLAYER_CLIENTS`
+  replaces the hardcoded `player_client=android`, which is deprecated upstream
+  and a likely cause of the failures. YouTube retires clients every few months;
+  this can now be retuned from `.env` without a deploy.
+- **Media is streamed from disk** rather than read into a Buffer. Baileys
+  accepts a file path and streams it, so a large download no longer has to sit
+  in the heap in its entirety.
+- **`MAX_MEDIA_SIZE` (default 64M) is actually enforced.** `MAX_FILE_SIZE` was
+  parsed into config and then never read — both commands hardcoded `200M`, a
+  size WhatsApp will not accept as inline media anyway.
+- Temp files moved from the repo root to `tmp/`, with startup sweeping of files
+  left by a previous crash. `cleanupFiles()` is now scoped to that directory
+  instead of prefix-scanning the project.
+- 13 commands converted from hand-rolled strings to `utils/ui.js`, so the whole
+  bot shares one card style. Remaining English strings in `.toimg` and `.tagall`
+  translated to match the Indonesian house voice.
+- `.meme`, `.qr` and `.movie` now fetch image bytes through `utils/http-client`
+  instead of handing a URL to Baileys, which fetched it outside the HTTP client
+  and therefore ignored the proxy entirely.
+
+### Fixed
+
+- **No spawned process had a timeout.** A hung `yt-dlp` or `ffmpeg` held one of
+  only three heavy-command slots for the lifetime of the process; three of them
+  and the bot stopped accepting media commands until a restart. Every spawn now
+  has a deadline with SIGTERM → SIGKILL escalation.
+- `.video` captions bypassed the 1024-character clamp by calling
+  `sock.sendMessage` directly.
+- `-y` was placed after the output path in `.toimg`'s ffmpeg invocation, where
+  it does not act as an overwrite flag for that output.
+- Proxy fallback no longer triggers on a YouTube bot check — retrying that
+  without the proxy just hands YouTube the datacenter IP being avoided.
+
+### Removed
+
+- `playwright`, its Chromium download, and the Chromium runtime libraries from
+  the Docker image. With no browser, the container also no longer needs the
+  `SYS_ADMIN` capability, and `cap_drop: ALL` is now unqualified.
+- The stale `PUPPETEER_EXECUTABLE_PATH` in `docker-compose.yml`, pointing at a
+  binary removed in 3.1.0.
+
 ## [3.1.0] - 2026-08-01
 
 Dependency and security release. `npm audit` now reports zero vulnerabilities,

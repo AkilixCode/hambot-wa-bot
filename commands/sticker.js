@@ -34,7 +34,10 @@ class StickerCommand extends CommandBase {
 
             const imageMessage = isImg || isQuoted;
             if (!imageMessage) {
-                return await this.replyError(sock, from, msg, 'Kirim atau reply gambar dulu!');
+                return await this.replyError(sock, from, msg, 'Kirim atau reply gambar dulu!', {
+                    title: 'Gambar Tidak Ada',
+                    hint: ['Kirim gambar dengan caption .sticker', 'Atau reply gambar lalu ketik .sticker']
+                });
             }
 
             // Download image
@@ -52,7 +55,7 @@ class StickerCommand extends CommandBase {
 
             // Send sticker
             logger.info('Sticker: created successfully');
-            await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: msg });
+            await this.replyMedia(sock, from, msg, { sticker: stickerBuffer });
             await this.react(sock, msg, '✅');
 
         } catch (error) {

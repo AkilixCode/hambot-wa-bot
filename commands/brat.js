@@ -113,9 +113,7 @@ class BratCommand extends CommandBase {
 
             // Step 3: Send as sticker
             logger.info('Brat: image generated');
-            await sock.sendMessage(from, {
-                sticker: finalBuffer
-            }, { quoted: msg });
+            await this.replyMedia(sock, from, msg, { sticker: finalBuffer });
 
             await this.react(sock, msg, '✅');
 

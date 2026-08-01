@@ -24,8 +24,12 @@ reference tools. Command output is in Indonesian.
 - Node.js 20.19 or newer
 - `python3` with `yt-dlp` installed — used by `.video` and `.music`
 - `ffmpeg` — used by `.say` and `.toimg`
-- A Chromium build for Playwright — used by `.pinterest`
+- `deno` — yt-dlp needs a JS runtime to solve YouTube's n-challenge. Without it
+  it falls back to a slower Python solver that fails more often.
 - `pm2`, optional — only needed for `.security restart` and `.security stop`
+
+No browser is required. `.pinterest` used to drive a headless Chromium; since
+3.2.0 it calls Pinterest's JSON endpoint over plain HTTP.
 
 Docker handles all of these for you.
 
@@ -50,8 +54,8 @@ the WhatsApp session in a named volume so it survives restarts.
 git clone https://github.com/AkilixCode/hambot-wa-bot.git
 cd hambot-wa-bot
 npm install
-npx playwright install chromium
 pip install yt-dlp
+curl -fsSL https://deno.land/install.sh | sh
 cp .env.example .env      # fill in BOT_OWNER_ID and any API keys
 npm start
 ```
@@ -91,7 +95,10 @@ closed rather than granting access.
 | `RATE_LIMIT_MAX` | `15` | Commands allowed per window |
 | `CACHE_EXPIRATION` | `300000` | Default cache TTL, ms |
 | `MAX_MUSIC_DURATION` | `600` | Maximum media length, seconds |
-| `MAX_FILE_SIZE` | `200M` | Maximum download size |
+| `MAX_MEDIA_SIZE` | `64M` | Maximum download size. `MAX_FILE_SIZE` is the legacy name. |
+| `YTDLP_PLAYER_CLIENTS` | `default,web_safari` | YouTube player clients for yt-dlp. Retune here when YouTube changes; no code edit needed. |
+| `POT_PROVIDER_URL` | unset | Optional PO token provider, raises the YouTube success rate |
+| `WALLHAVEN_API_KEY` | unset | Optional; the `.pinterest` fallback works without one |
 
 ### Presentation
 
@@ -116,8 +123,14 @@ command works without any key.
 
 `PROXY_ENABLED`, `PROXY_TYPE` (`http`, `https`, `socks5`), `PROXY_HOST`,
 `PROXY_PORT`, `PROXY_USER`, `PROXY_PASS` configure an outbound proxy shared by
-yt-dlp, axios, and Playwright. `NETWORK_FALLBACK_TO_LOCAL` retries
-without the proxy if it fails.
+yt-dlp and axios. `NETWORK_FALLBACK_TO_LOCAL` retries without the proxy when the
+proxy itself is unreachable.
+
+Because the bot usually runs on a datacenter IP — which YouTube treats as a bot —
+routing media traffic through a residential connection is the most effective fix
+available. Toggle it live with `.security proxy on|off|status|test`; the choice
+persists across restarts. See [docs/MEDIA.md](docs/MEDIA.md) for the
+Tailscale + Every Proxy setup.
 
 `LOG_LEVEL` accepts `simple` (default, one block per command) or `full`
 (verbose). `LOG_SILENT=true` suppresses output entirely.
@@ -330,11 +343,17 @@ window, or use `docker compose logs -f`.
 **Repeated disconnects.** Delete `auth_info_baileys/` and pair again. This logs
 the device out, so re-link it from the phone.
 
-**`.video` or `.music` fails.** Confirm `python3 -m yt_dlp --version` works.
-yt-dlp needs frequent updates as platforms change: `pip install -U yt-dlp`.
+**`.video` or `.music` fails.** Run `.security media` first — it reports the
+yt-dlp version and age, the player clients in use, and the egress state in one
+message. A stale yt-dlp is the most common cause (`pip install -U yt-dlp`); the
+next is a retired player client, which you fix by changing
+`YTDLP_PLAYER_CLIENTS` in `.env`. If YouTube is blocking the server outright,
+turn on the proxy with `.security proxy on`. `.music` falls back to SoundCloud
+automatically. Full runbook in [docs/MEDIA.md](docs/MEDIA.md).
 
-**`.pinterest` returns nothing.** Playwright's Chromium is missing. Run
-`npx playwright install chromium`.
+**`.pinterest` returns nothing.** It falls back to Wallhaven automatically, so
+this should be rare. If both tiers fail, check `.security media` for tripped
+circuit breakers.
 
 **`.sticker` or `.brat` fails to load.** `sharp` and `canvas` need native
 bindings. Reinstall with build scripts enabled, or use the Docker image.

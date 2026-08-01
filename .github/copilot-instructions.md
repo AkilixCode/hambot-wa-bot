@@ -146,32 +146,40 @@ async execute(sock, msg, args, context) {
 }
 ```
 
-### 4. Using yt-dlp with Proxy Configuration
+### 4. Using yt-dlp
 
-**CRITICAL**: When using `yt-dlp`, **ALWAYS** inject the Premium Proxy configuration from `config.js`. **DO NOT** hardcode proxy URLs.
+**CRITICAL**: go through `utils/ytdlp.js`. Never call `spawn`/`spawnPromise`
+with yt-dlp directly, and never build proxy arguments by hand.
 
 ```javascript
-const config = require('../config');
+const ytdlp = require('../utils/ytdlp');
+const tempdir = require('../utils/tempdir');
 
-// Build proxy arguments
-const proxyArgs = config.media.proxyUrl ? ['--proxy', config.media.proxyUrl] : [];
+// Metadata — returns parsed JSON objects, one per output line
+const [info] = await ytdlp.getInfo(url, { extraArgs: ytdlp.getYouTubeArgs() });
 
-// Use in yt-dlp commands
-const downloadArgs = [
-    'https://youtu.be/VIDEO_ID',
-    '-x',
-    '--audio-format', 'mp3',
-    ...proxyArgs,  // Inject proxy configuration
-    // ... other args
-];
-
-await spawnPromise('yt-dlp', downloadArgs);
+// Download — always into tmp/, never the working directory
+const outputTemplate = tempdir.tempPath(`${filePrefix}.%(ext)s`);
+await ytdlp.download(url, outputTemplate, ['-x', '--audio-format', 'mp3'], {
+    maxFilesize: config.media.maxFileSize,
+    extraArgs: ytdlp.getYouTubeArgs()
+});
 ```
 
-**Why this matters:**
-- Proxy settings are environment-specific
-- Premium proxy URLs should not be committed to code
-- Different environments may need different proxies
+**Why the wrapper exists:**
+- **Timeouts.** It kills a hung process (SIGTERM, then SIGKILL). Without this a
+  stuck download holds one of only three heavy-command slots forever.
+- **Proxy handling**, including retrying directly when the proxy itself is
+  unreachable — but *not* on a bot check, where falling back to the datacenter
+  IP is strictly worse.
+- **`ytdlp.getYouTubeArgs()`** supplies the player clients and PO token args.
+  Player clients come from `YTDLP_PLAYER_CLIENTS` because YouTube retires them
+  every few months. **Never hardcode `player_client=` in a command** — the old
+  hardcoded `android` is deprecated and was a likely cause of failures.
+
+Media commands should also use the provider cascade so a blocked source falls
+through to a working one rather than failing outright — see `utils/providers.js`
+and `docs/MEDIA.md`.
 
 ### 5. JSDoc Type Annotations
 
@@ -232,8 +240,12 @@ config.performance.rateLimitMax      // Rate limit threshold
 
 // Media settings
 config.media.maxDuration   // Max media duration in seconds
-config.media.maxFileSize   // Max file size for downloads
-config.media.proxyUrl      // Proxy URL (ALWAYS use this for yt-dlp)
+config.media.maxFileSize   // Max size, yt-dlp form ('64M') — for --max-filesize
+config.media.maxFileBytes  // Max size in bytes — for the post-download check
+
+// Proxy: do NOT read these directly in a command. utils/ytdlp.js and
+// utils/http-client.js already apply them, and the live toggle in
+// utils/egress.js drives config.proxy.enabled for every consumer at once.
 
 // API keys
 config.apis.elevenlabs.key    // ElevenLabs API key
@@ -244,26 +256,40 @@ config.apis.omdb.key          // OMDB API key
 
 **ALWAYS** clean up temporary files:
 
+Temp files go in `tmp/` via `utils/tempdir.js` — **never** the working
+directory, which is the repo root.
+
 ```javascript
-const { generateFilename, cleanupFiles } = require('../utils/helpers');
-const fsPromises = require('fs').promises;
+const { generateFilename } = require('../utils/helpers');
+const tempdir = require('../utils/tempdir');
 
 async execute(sock, msg, args, context) {
     const filePrefix = generateFilename('music', '');
-    
+
     try {
-        // Create temporary files with filePrefix
-        const outputPath = `${filePrefix}.mp3`;
-        
+        // tempPath() resolves inside tmp/ and rejects path traversal
+        const outputPath = tempdir.tempPath(`${filePrefix}.mp3`);
+
         // ... your operations ...
-        
+
     } catch (error) {
         // Error handling
     } finally {
-        // ALWAYS cleanup, even on error
-        await cleanupFiles(filePrefix);
+        // ALWAYS cleanup, even on error. Scoped to tmp/, so a bad prefix
+        // cannot touch project files.
+        await tempdir.cleanupTemp(filePrefix);
     }
 }
+```
+
+For large media, hand Baileys the **path** rather than a Buffer — it streams
+from disk, so the file never has to sit in the heap:
+
+```javascript
+await this.replyMedia(sock, from, msg, {
+    audio: { url: filePath },
+    mimetype: 'audio/mpeg'
+});
 ```
 
 ### 9. Validation and User Feedback
@@ -350,47 +376,51 @@ await sock.sendMessage(from, {
 ### Media Download Pattern
 
 ```javascript
-const { spawnPromise, generateFilename, cleanupFiles } = require('../utils/helpers');
+const { generateFilename } = require('../utils/helpers');
+const ytdlp = require('../utils/ytdlp');
+const media = require('../utils/media');
+const tempdir = require('../utils/tempdir');
 const config = require('../config');
-const fsPromises = require('fs').promises;
 
 async execute(sock, msg, args, context) {
     const { from } = context;
     const filePrefix = generateFilename('media', '');
-    const proxyArgs = config.media.proxyUrl ? ['--proxy', config.media.proxyUrl] : [];
-    
+
     try {
         await this.react(sock, msg, '⏳');
-        
-        // Download with yt-dlp
-        const downloadArgs = [
-            url,
-            '-o', `${filePrefix}.%(ext)s`,
-            ...proxyArgs,
-            // ... other args
-        ];
-        
-        await spawnPromise('yt-dlp', downloadArgs);
-        
-        // Find downloaded file
-        const files = await fsPromises.readdir('./');
-        const downloadedFile = files.find(f => f.startsWith(filePrefix));
-        
-        if (!downloadedFile) {
-            throw new Error('Download failed');
+
+        // Download. Proxy args, network args, timeouts and the proxy->direct
+        // retry are all handled inside the runner.
+        const outputTemplate = tempdir.tempPath(`${filePrefix}.%(ext)s`);
+        await ytdlp.download(url, outputTemplate, ['-x', '--audio-format', 'mp3'], {
+            maxFilesize: config.media.maxFileSize,
+            extraArgs: ytdlp.getYouTubeArgs()
+        });
+
+        // Locate the result — yt-dlp chooses the container, so match on prefix
+        const file = await media.findDownload(filePrefix, ['mp3', 'm4a']);
+        if (!file) throw new Error('Download failed');
+
+        if (!media.isWithinSizeLimit(file.size)) {
+            return await this.replyError(sock, from, msg,
+                `Filenya kegedean. Batasnya ${media.sizeLimitLabel()}.`,
+                { title: 'File Kegedean' });
         }
-        
-        // Send file
-        const buffer = await fsPromises.readFile(downloadedFile);
-        await sock.sendMessage(from, { audio: buffer }, { quoted: msg });
-        
+
+        // Stream from disk rather than buffering the whole file
+        await this.replyMedia(sock, from, msg, {
+            audio: { url: file.path },
+            mimetype: 'audio/mpeg'
+        });
         await this.react(sock, msg, '✅');
-        
+
     } catch (error) {
         this.logError(error, context);
-        await this.reply(sock, from, msg, '❌ Download failed.');
+        // Shared yt-dlp error -> Indonesian message mapping
+        const d = media.describeError(error, 'musik');
+        await this.replyError(sock, from, msg, d.reason, { title: d.title, hint: d.hint });
     } finally {
-        await cleanupFiles(filePrefix);
+        await tempdir.cleanupTemp(filePrefix);
     }
 }
 ```
@@ -474,7 +504,13 @@ async execute(sock, msg, args, context) {
 
 ## Common Pitfalls to Avoid
 
-1. **❌ Hardcoding proxy URLs** - Always use `config.media.proxyUrl`
+1. **❌ Calling yt-dlp directly** - Always go through `utils/ytdlp.js`; it owns
+   proxy args, timeouts and player clients
+1. **❌ Hardcoding `player_client=`** - Use `YTDLP_PLAYER_CLIENTS` in `.env`;
+   YouTube retires clients every few months
+1. **❌ Writing temp files to the working directory** - Use `utils/tempdir.js`
+1. **❌ Passing `{ url }` to Baileys for remote media** - It fetches outside
+   `utils/http-client`, bypassing the proxy. Fetch to a Buffer first.
 2. **❌ Forgetting cleanup** - Always use `finally` blocks for file cleanup
 3. **❌ Missing error handling** - Always wrap in try-catch
 4. **❌ Direct console logging** - Use `logger` or `this.logError()`
@@ -489,7 +525,6 @@ async execute(sock, msg, args, context) {
 
 Key dependencies to be aware of:
 - `@whiskeysockets/baileys` - WhatsApp Web API
-- `playwright` - Browser automation for `.pinterest`
 - `sharp` - Image processing
 - `axios` - HTTP requests
 - `yt-dlp` - External tool for media downloads (not a Node package)

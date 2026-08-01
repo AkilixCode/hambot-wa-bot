@@ -19,6 +19,8 @@ yarn-debug.log*
 yarn-error.log*
 
 # Temporary files
+# Media scratch files now live in tmp/ rather than the repo root, so the
+# bare music_*/video_* patterns below are only kept for older checkouts.
 *.tmp
 *.temp
 tmp/
@@ -28,6 +30,9 @@ video_*
 media_*
 sticker_*
 tts_*
+
+# Runtime state (persisted proxy toggle)
+data/
 
 # OS files
 .DS_Store

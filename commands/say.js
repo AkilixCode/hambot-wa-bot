@@ -8,9 +8,13 @@ const CommandBase = require('./base');
 const logger = require('../utils/logger');
 const httpClient = require('../utils/http-client');
 const config = require('../config');
-const { spawn } = require('child_process');
-const { generateFilename, cleanupFiles } = require('../utils/helpers');
+const { generateFilename, cleanupFiles, spawnPromise } = require('../utils/helpers');
+const tempdir = require('../utils/tempdir');
 const fsPromises = require('fs').promises;
+
+// A 500-character clip is seconds of audio; anything longer means a stuck
+// ffmpeg, which on a heavy command would hold a concurrency slot indefinitely.
+const FFMPEG_TIMEOUT_MS = 60000;
 
 class SayCommand extends CommandBase {
     constructor() {
@@ -90,34 +94,31 @@ class SayCommand extends CommandBase {
         const { language, text, expressions } = this.parseInput(args);
 
         if (!text) {
-            return await this.reply(sock, from, msg, 
-                '🎤 *Perintah Say (Text-to-Speech)*\n\n' +
-                '📝 *Cara Pakai:*\n' +
-                '• `.say halo semuanya` - Bicara dalam Bahasa Indonesia\n' +
-                '• `.say <en> hello everyone` - Bicara dalam Bahasa Inggris\n' +
-                '• `.say <ja> こんにちは` - Bicara dalam Bahasa Jepang\n\n' +
-                '🌐 *Tag Bahasa:*\n' +
-                '`<id>` Indonesia (default)\n' +
-                '`<en>` English\n' +
-                '`<es>` Español\n' +
-                '`<ja>` 日本語\n' +
-                '`<ko>` 한국어\n' +
-                '`<zh>` 中文\n' +
-                '`<fr>` Français\n' +
-                '`<de>` Deutsch\n' +
-                '`<pt>` Português\n' +
-                '`<ru>` Русский\n' +
-                '`<ar>` العربية\n' +
-                '`<hi>` हिन्दी\n\n' +
-                '📋 *Catatan:*\n' +
-                '• Maksimal 500 karakter\n' +
-                '• Output sebagai voice note WhatsApp');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🎤',
+                title: 'Say (Text-to-Speech)',
+                description: 'Ubah teks jadi voice note.',
+                usage: ['.say <teks>', '.say <kode bahasa> <teks>'],
+                examples: [
+                    '.say halo semuanya',
+                    '.say <en> hello everyone',
+                    '.say <ja> こんにちは'
+                ],
+                notes: [
+                    'Bahasa: id (default), en, es, ja, ko, zh, fr, de, pt, ru, ar, hi',
+                    'Maksimal 500 karakter',
+                    'Hasilnya dikirim sebagai voice note'
+                ]
+            });
         }
 
         // Batas karakter
         if (text.length > 500) {
-            return await this.reply(sock, from, msg, 
-                '❌ Teks terlalu panjang!\n\nMaksimal 500 karakter.');
+            return await this.replyError(sock, from, msg,
+                `Teksnya kepanjangan (${text.length} karakter).`, {
+                    title: 'Terlalu Panjang',
+                    hint: ['Maksimal 500 karakter']
+                });
         }
 
         await this.react(sock, msg, '🎤');
@@ -133,9 +134,10 @@ class SayCommand extends CommandBase {
                 throw new Error('Audio kosong dari API');
             }
 
-            // Convert MP3 to OGG Opus for WhatsApp voice note compatibility
-            const mp3Path = `${filePrefix}.mp3`;
-            const oggPath = `${filePrefix}.ogg`;
+            // Convert MP3 to OGG Opus for WhatsApp voice note compatibility.
+            // Scratch files go to tmp/, not the repo root.
+            const mp3Path = tempdir.tempPath(`${filePrefix}.mp3`);
+            const oggPath = tempdir.tempPath(`${filePrefix}.ogg`);
             
             // Write MP3 to file
             await fsPromises.writeFile(mp3Path, audioBuffer);
@@ -149,27 +151,36 @@ class SayCommand extends CommandBase {
 
             // Kirim sebagai voice note (ptt = push to talk)
             // Using OGG Opus format for proper WhatsApp voice note playback
-            await sock.sendMessage(from, {
+            await this.replyMedia(sock, from, msg, {
                 audio: oggBuffer,
                 mimetype: 'audio/ogg; codecs=opus',
                 ptt: true // Ini yang membuat jadi voice note
-            }, { quoted: msg });
+            });
 
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            
-            let errorMsg = '❌ Gagal menghasilkan suara.';
-            if (error.message.includes('401') || error.message.includes('Unauthorized')) {
-                errorMsg = '❌ API key ElevenLabs tidak valid!';
-            } else if (error.message.includes('429') || error.message.includes('quota')) {
-                errorMsg = '❌ Kuota API ElevenLabs habis. Coba lagi nanti!';
-            } else if (error.message.includes('timeout')) {
-                errorMsg = '❌ Server ElevenLabs tidak merespon. Coba lagi!';
+
+            const m = error.message || '';
+            let reason = 'Gagal menghasilkan suara.';
+            let title = 'Gagal';
+            let hint = ['Coba lagi sebentar lagi'];
+
+            if (m.includes('401') || m.includes('Unauthorized')) {
+                title = 'API Key Bermasalah';
+                reason = 'API key ElevenLabs tidak valid.';
+                hint = ['Hubungi owner bot'];
+            } else if (m.includes('429') || m.includes('quota')) {
+                title = 'Kuota Habis';
+                reason = 'Kuota ElevenLabs sudah habis.';
+                hint = ['Coba lagi bulan depan', 'Hubungi owner bot'];
+            } else if (m.includes('timeout')) {
+                title = 'Waktu Habis';
+                reason = 'Server ElevenLabs tidak merespons.';
             }
-            
-            await this.reply(sock, from, msg, errorMsg);
+
+            await this.replyError(sock, from, msg, reason, { title, hint });
         } finally {
             // Cleanup temporary files
             await cleanupFiles(filePrefix);
@@ -182,26 +193,20 @@ class SayCommand extends CommandBase {
      * @param {string} outputPath - Output OGG file path
      * @returns {Promise<void>}
      */
-    convertToOggOpus(inputPath, outputPath) {
-        return new Promise((resolve, reject) => {
-            const proc = spawn('ffmpeg', [
-                '-i', inputPath,
-                '-c:a', 'libopus',
-                '-b:a', '64k',
-                '-vbr', 'on',
-                '-compression_level', '10',
-                '-y',
-                outputPath
-            ]);
-            
-            let stderr = '';
-            proc.stderr.on('data', (data) => stderr += data);
-            proc.on('close', (code) => {
-                if (code === 0) resolve();
-                else reject(new Error(`ffmpeg failed: ${stderr}`));
-            });
-            proc.on('error', (err) => reject(err));
-        });
+    async convertToOggOpus(inputPath, outputPath) {
+        // Via spawnPromise for the command allowlist and, more importantly, the
+        // timeout. This used to be a bare spawn with no deadline — and .say is
+        // a heavy command, so a wedged ffmpeg permanently consumed one of the
+        // three concurrent slots.
+        await spawnPromise('ffmpeg', [
+            '-i', inputPath,
+            '-c:a', 'libopus',
+            '-b:a', '64k',
+            '-vbr', 'on',
+            '-compression_level', '10',
+            '-y',
+            outputPath
+        ], { timeout: FFMPEG_TIMEOUT_MS });
     }
 
     /**

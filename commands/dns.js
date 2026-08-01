@@ -5,6 +5,7 @@
 
 const CommandBase = require('./base');
 const logger = require('../utils/logger');
+const ui = require('../utils/ui');
 const dns = require('dns').promises;
 
 class DNSCommand extends CommandBase {
@@ -52,90 +53,76 @@ class DNSCommand extends CommandBase {
             logger.info(`DNS: resolving ${domain}`);
             const results = await this.performLookup(domain);
             
-            const sections = [];
-            sections.push('🔍 *HASIL DNS LOOKUP*');
-            sections.push('');
-            sections.push(`📥 *Domain:* ${domain}`);
-            sections.push('');
+            const lines = [];
 
-            // A Records (IPv4)
-            if (results.a && results.a.length > 0) {
-                sections.push('📍 *A Record (IPv4)*');
-                for (const ip of results.a) {
-                    sections.push(`• ${ip}`);
-                }
-                sections.push('');
-            }
+            // Each block is pushed only when the record type resolved, so a
+            // domain with just an A record produces a short, clean card rather
+            // than a wall of empty headings.
+            const addBlock = (heading, values) => {
+                if (!values || values.length === 0) return;
+                if (lines.length > 0) lines.push('');
+                lines.push(heading);
+                lines.push(...ui.bullets(values));
+            };
 
-            // AAAA Records (IPv6)
-            if (results.aaaa && results.aaaa.length > 0) {
-                sections.push('🌐 *AAAA Record (IPv6)*');
-                for (const ip of results.aaaa) {
-                    sections.push(`• ${ip}`);
-                }
-                sections.push('');
-            }
+            addBlock(`📍 ${ui.bold('A Record (IPv4)')}`, results.a);
+            addBlock(`🌐 ${ui.bold('AAAA Record (IPv6)')}`, results.aaaa);
 
-            // MX Records
             if (results.mx && results.mx.length > 0) {
-                sections.push('📧 *MX Record (Mail)*');
-                for (const mx of results.mx.sort((a, b) => a.priority - b.priority)) {
-                    sections.push(`• [${mx.priority}] ${mx.exchange}`);
-                }
-                sections.push('');
+                addBlock(
+                    `📧 ${ui.bold('MX Record (Mail)')}`,
+                    [...results.mx]
+                        .sort((a, b) => a.priority - b.priority)
+                        .map(mx => `[${mx.priority}] ${mx.exchange}`)
+                );
             }
 
-            // NS Records
-            if (results.ns && results.ns.length > 0) {
-                sections.push('🖥️ *NS Record (Nameserver)*');
-                for (const ns of results.ns) {
-                    sections.push(`• ${ns}`);
-                }
-                sections.push('');
-            }
+            addBlock(`🖥️ ${ui.bold('NS Record (Nameserver)')}`, results.ns);
 
-            // TXT Records (show first 3)
             if (results.txt && results.txt.length > 0) {
-                sections.push('📝 *TXT Record*');
-                const txtToShow = results.txt.slice(0, 3);
-                for (const txt of txtToShow) {
-                    const txtStr = txt.join('');
-                    // Truncate long TXT records
-                    const truncated = txtStr.length > 60 ? txtStr.substring(0, 57) + '...' : txtStr;
-                    sections.push(`• ${truncated}`);
-                }
+                // TXT records carry SPF/DKIM blobs that can be hundreds of
+                // characters; only the first few, truncated, are useful here.
+                const shown = results.txt.slice(0, 3).map(txt => ui.truncate(txt.join(''), 60));
                 if (results.txt.length > 3) {
-                    sections.push(`_...dan ${results.txt.length - 3} lainnya_`);
+                    shown.push(ui.italic(`...dan ${results.txt.length - 3} lainnya`));
                 }
-                sections.push('');
+                addBlock(`📝 ${ui.bold('TXT Record')}`, shown);
             }
 
-            // CNAME Record (dns.resolveCname returns an array)
-            if (results.cname && results.cname.length > 0) {
-                sections.push('🔗 *CNAME Record*');
-                sections.push(`• ${results.cname[0]}`);
-                sections.push('');
-            }
+            addBlock(`🔗 ${ui.bold('CNAME Record')}`, results.cname ? [results.cname[0]] : null);
 
-            // Check if any records found
-            const hasCname = results.cname && results.cname.length > 0;
-            if (!results.a && !results.aaaa && !results.mx && !results.ns && !results.txt && !hasCname) {
-                sections.push('❌ Tidak ada DNS record yang ditemukan.');
+            if (lines.length === 0) {
+                this.setFailed(context, 'no DNS records');
+                return await this.replyError(sock, from, msg,
+                    'Tidak ada DNS record yang ditemukan.', {
+                        title: 'Kosong',
+                        hint: ['Periksa ejaan domainnya']
+                    });
             }
 
             logger.info(`DNS: resolved ${domain}`);
-            await this.reply(sock, from, msg, sections.join('\n'));
+
+            await this.reply(sock, from, msg, ui.card({
+                icon: '🔍',
+                title: ui.safe(domain, 60),
+                lines,
+                footer: `DNS lookup ${ui.SYM.dot} ${ui.clock()}`
+            }));
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            
-            let errorMsg = '❌ Gagal melakukan DNS lookup.';
-            if (error.code === 'ENOTFOUND' || error.code === 'ENODATA') {
-                errorMsg = `❌ Domain "${domain}" tidak ditemukan atau tidak memiliki DNS record.`;
-            }
-            
-            await this.reply(sock, from, msg, errorMsg);
+
+            const notFound = error.code === 'ENOTFOUND' || error.code === 'ENODATA';
+            await this.replyError(sock, from, msg,
+                notFound
+                    ? `Domain ${ui.mono(ui.safe(domain, 60))} tidak ditemukan.`
+                    : 'Gagal melakukan DNS lookup.', {
+                    title: notFound ? 'Tidak Ditemukan' : 'Gagal',
+                    hint: notFound
+                        ? ['Periksa ejaan domainnya', '.dns google.com']
+                        : ['Coba lagi sebentar lagi']
+                });
         }
     }
 
