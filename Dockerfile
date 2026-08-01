@@ -43,7 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # differently. Bump this deliberately — a stale yt-dlp is itself a leading
 # cause of YouTube failures, so do not let it drift for long.
 # `.security media` reports the installed version and its age.
-ARG YTDLP_VERSION=2026.07.09
+# NOTE: PyPI versions are not zero-padded — it is 2026.7.4, not 2026.07.04,
+# even though `yt-dlp --version` prints the padded form.
+ARG YTDLP_VERSION=2026.7.4
 RUN pip3 install --no-cache-dir --break-system-packages "yt-dlp==${YTDLP_VERSION}"
 
 # ---- JavaScript runtime for yt-dlp ----
@@ -71,7 +73,13 @@ COPY . .
 # Create non-root user for security
 # tmp/ holds yt-dlp and ffmpeg scratch files; data/ holds the persisted egress
 # toggle. Both must be writable by the runtime user.
-RUN groupadd -r hambot && useradd -r -g hambot -G audio,video hambot \
+# The UID/GID are pinned deliberately. `useradd -r` picks the next free system
+# id, which shifts whenever the apt package list changes — removing the
+# Chromium libraries moved it from 997 to 999, and the WhatsApp auth volume
+# (owned by the old id) then became unwritable, so the bot connected but could
+# no longer persist credentials. Pinning it keeps the id stable across rebuilds.
+# If you ever change these, chown the hambot_auth volume to match.
+RUN groupadd -r -g 999 hambot && useradd -r -u 999 -g hambot -G audio,video hambot \
     && mkdir -p /app/auth_info_baileys /app/logs /app/tmp /app/data \
     && chown -R hambot:hambot /app
 
