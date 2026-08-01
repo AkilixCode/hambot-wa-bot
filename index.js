@@ -4,7 +4,6 @@ const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const config = require('./config');
 const logger = require('./utils/logger');
-const browserManager = require('./utils/browser-manager');
 const cache = require('./utils/cache');
 const security = require('./utils/security');
 
@@ -103,9 +102,6 @@ async function shutdown() {
         if (sock) {
             await sock.end();
         }
-
-        // Cleanup browser
-        await browserManager.destroy();
 
         // Cleanup cache
         cache.destroy();

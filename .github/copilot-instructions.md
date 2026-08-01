@@ -22,7 +22,6 @@ This is a WhatsApp Bot built on top of the `@whiskeysockets/baileys` library, us
   - `rate-limiter.js`: Rate limiting for commands
   - `cache.js`: Caching layer for performance
   - `helpers.js`: General utility functions
-  - `browser-manager.js`: Puppeteer browser management
 
 ### Configuration
 - **`config.js`**: Centralized configuration management with validation
@@ -490,7 +489,7 @@ async execute(sock, msg, args, context) {
 
 Key dependencies to be aware of:
 - `@whiskeysockets/baileys` - WhatsApp Web API
-- `puppeteer` - Browser automation for certain features
+- `playwright` - Browser automation for `.pinterest`
 - `sharp` - Image processing
 - `axios` - HTTP requests
 - `yt-dlp` - External tool for media downloads (not a Node package)

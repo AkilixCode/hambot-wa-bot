@@ -76,7 +76,7 @@ class Config {
             chatFilterEnabled: process.env.SECURITY_CHAT_FILTER !== 'false'
         };
 
-        // Proxy configuration for yt-dlp, axios, puppeteer and other services
+        // Proxy configuration for yt-dlp, axios, Playwright and other services
         // Supports HTTP, HTTPS, and SOCKS5 proxies (e.g., Tailscale + Every Proxy)
         this.proxy = {
             // Enable/disable proxy globally
@@ -191,18 +191,6 @@ class Config {
      */
     getYtDlpNetworkArgs() {
         return this.network.forceIPv4 ? ['--force-ipv4'] : [];
-    }
-
-    /**
-     * Get proxy configuration for Puppeteer
-     */
-    getPuppeteerProxyArgs() {
-        if (!this.proxy.enabled || !this.proxy.host || !this.proxy.port) {
-            return [];
-        }
-
-        const proxyUrl = this.proxy.url || `${this.proxy.type || 'http'}://${this.proxy.host}:${this.proxy.port}`;
-        return [`--proxy-server=${proxyUrl}`];
     }
 
     /**

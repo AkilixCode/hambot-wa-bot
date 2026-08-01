@@ -6,11 +6,14 @@
 FROM node:20-bookworm-slim AS base
 
 # ---- System Dependencies ----
-# canvas (libcairo, libpango), sharp (libvips), puppeteer/playwright (chromium),
-# yt-dlp (python3), ffmpeg, fonts
+# canvas (libcairo, libpango), sharp (libvips), Playwright (chromium runtime
+# libraries), yt-dlp (python3), ffmpeg, fonts.
+#
+# Note: the `chromium` apt package is deliberately NOT installed. Playwright
+# downloads its own matching build below, and the system one is protocol
+# incompatible with it. It was only ever here for Puppeteer, which was removed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Puppeteer / Chromium runtime deps
-    chromium \
+    # Chromium runtime deps (shared libraries Playwright's build links against)
     ca-certificates \
     fonts-liberation \
     libappindicator3-1 \
@@ -51,10 +54,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ---- Install yt-dlp (media downloader) ----
 RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
-
-# ---- Tell Puppeteer to use system Chromium (for browser-manager.js) ----
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # ---- Application Setup ----
 WORKDIR /app

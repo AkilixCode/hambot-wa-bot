@@ -5,7 +5,7 @@ with a modular command system, media downloading, and a set of networking
 reference tools. Command output is in Indonesian.
 
 [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE.md)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org)
 
 ## Contents
 
@@ -21,7 +21,7 @@ reference tools. Command output is in Indonesian.
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 20.19 or newer
 - `python3` with `yt-dlp` installed — used by `.video` and `.music`
 - `ffmpeg` — used by `.say` and `.toimg`
 - A Chromium build for Playwright — used by `.pinterest`
@@ -116,7 +116,7 @@ command works without any key.
 
 `PROXY_ENABLED`, `PROXY_TYPE` (`http`, `https`, `socks5`), `PROXY_HOST`,
 `PROXY_PORT`, `PROXY_USER`, `PROXY_PASS` configure an outbound proxy shared by
-yt-dlp, axios, Puppeteer, and Playwright. `NETWORK_FALLBACK_TO_LOCAL` retries
+yt-dlp, axios, and Playwright. `NETWORK_FALLBACK_TO_LOCAL` retries
 without the proxy if it fails.
 
 `LOG_LEVEL` accepts `simple` (default, one block per command) or `full`
@@ -238,7 +238,6 @@ utils/
   rate-limiter.js   Sliding-window limiter, bounded and self-evicting
   cache.js          In-memory TTL cache
   http-client.js    axios wrapper with proxy support
-  browser-manager.js  Pooled Playwright browser
   url-parser.js     Platform detection and per-platform yt-dlp arguments
   logger.js         Command logging in simple or full mode
   redact.js         Secret scrubbing for anything printed or sent

@@ -5,6 +5,46 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-08-01
+
+Dependency and security release. `npm audit` now reports zero vulnerabilities,
+down from six (one critical, four high, one moderate).
+
+### Removed
+
+- The entire Puppeteer stack: `puppeteer`, `puppeteer-extra`, and
+  `puppeteer-extra-plugin-stealth`, along with `utils/browser-manager.js` and
+  `config.getPuppeteerProxyArgs()`.
+
+  This was dead code. `.pinterest` migrated to Playwright in 2.9.0 and nothing
+  else ever launched a browser — `index.js` only called `destroy()` on a browser
+  that was never created. Removing it eliminated four of the six advisories,
+  including a critical path traversal in `basic-ftp`, and dropped roughly 150
+  transitive packages plus a Chromium download from the install.
+- The `chromium` apt package from the Docker image. Playwright ships its own
+  matching build and the system one is protocol incompatible with it, as the
+  Dockerfile already noted.
+
+### Changed
+
+- `sharp` 0.34.5 → 0.35.3, bundling libvips 8.18.3. Fixes four inherited libvips
+  CVEs reachable from `.sticker`. None of the release's breaking changes affect
+  this codebase: no `failOnError`, no `metadata()`, no `sharpen()`, no jp2k.
+- `socks-proxy-agent` 8.0.5 → 10.1.0, resolving an XSS advisory in `ip-address`.
+  Version 9 converted the package to ESM, so it is now loaded through Node's
+  `require(esm)` support — which is why the minimum Node version moved.
+- `canvas` 3.2.1 → 3.2.3, `axios`, `playwright`, and Baileys ranges realigned to
+  the versions actually installed.
+- Minimum Node.js is now 20.19.0, the first release able to `require()` an ESM
+  package.
+
+### Fixed
+
+- `.brat` now loads. `canvas` had no usable native binding, so the command
+  failed to register at all; the upgrade pulls a working prebuilt binary. All 36
+  commands now load, up from 35.
+- Corrected an integration test that asserted Puppeteer must be installed.
+
 ## [3.0.0] - 2026-08-01
 
 A presentation and hardening release. Every message the bot sends was rebuilt on
