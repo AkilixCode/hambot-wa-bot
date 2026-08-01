@@ -7,6 +7,15 @@
 const CommandBase = require('./base');
 const commandRegistry = require('./registry');
 const config = require('../config');
+const ui = require('../utils/ui');
+
+// Deliberate ordering for the menu. Alphabetical order buried the everyday
+// commands (media, tools) below novelty ones, so categories are listed roughly
+// by how often people reach for them. Anything not listed falls to the end.
+const CATEGORY_ORDER = [
+    'general', 'media', 'tools', 'utility', 'technical',
+    'info', 'entertainment', 'fun', 'group', 'system', 'security'
+];
 
 class MenuCommand extends CommandBase {
     constructor() {
@@ -562,6 +571,19 @@ class MenuCommand extends CommandBase {
         return commands.filter(cmd => !config.isOwnerOnlyCommand(cmd.name));
     }
 
+    /**
+     * Order categories by CATEGORY_ORDER, with unknown ones appended
+     * alphabetically so a new category never silently disappears.
+     * @param {string[]} categories
+     * @returns {string[]}
+     * @private
+     */
+    _orderCategories(categories) {
+        const known = CATEGORY_ORDER.filter(c => categories.includes(c));
+        const rest = categories.filter(c => !CATEGORY_ORDER.includes(c)).sort();
+        return [...known, ...rest];
+    }
+
     async execute(sock, msg, args, context) {
         const { from } = context;
         const isOwnerViewer = context.isOwner ?? config.isOwner(context.sender);
@@ -584,148 +606,149 @@ class MenuCommand extends CommandBase {
                 return await this.sendCategoryHelp(sock, from, msg, query, isOwnerViewer);
             }
 
-            // Not found - suggest similar commands
-            return await this.reply(sock, from, msg, 
-                `❌ Perintah atau kategori "${args[0]}" tidak ditemukan.\n\n` +
-                `💡 Coba:\n` +
-                `• ${config.bot.prefix}menu - Lihat semua perintah\n` +
-                `• ${config.bot.prefix}menu media - Lihat perintah media\n` +
-                `• ${config.bot.prefix}menu video - Detail perintah video`
+            // Not found - point at the closest matches rather than a generic list
+            const near = this._suggest(query, isOwnerViewer);
+            return await this.replyError(sock, from, msg,
+                `Tidak ada perintah atau kategori bernama ${ui.mono(ui.truncate(args[0], 24))}.`,
+                {
+                    title: 'Tidak Ditemukan',
+                    hint: near.length
+                        ? near.map(n => `${config.bot.prefix}menu ${n}`)
+                        : [`${config.bot.prefix}menu — lihat semua perintah`]
+                }
             );
         }
 
-        // Build complete menu
-        const categories = commandRegistry.getCategories();
-        const menuSections = [];
+        const prefix = config.bot.prefix;
+        const visible = this._visibleCommands(commandRegistry.getAll(), isOwnerViewer);
+        const sections = [];
 
-        // Header - simple and mobile-friendly
-        menuSections.push(`🤖 *${config.bot.name}*`);
-        menuSections.push('');
-        menuSections.push('Halo! Selamat datang!');
-        menuSections.push('Berikut daftar perintah:');
-        menuSections.push('');
+        sections.push(ui.banner({
+            title: config.bot.name,
+            subtitle: `Asisten WhatsApp ${ui.SYM.dot} v${config.bot.version}`
+        }));
+        sections.push('');
+        sections.push(ui.greeting(msg.pushName));
+        sections.push(`Ada ${ui.bold(visible.length + ' perintah')} siap dipakai.`);
+        sections.push('');
 
-        // Commands per category
-        for (const category of categories.sort()) {
+        // Commands per category, one compact line each. Full descriptions live
+        // behind `.menu <perintah>` — packing them all in here produced a wall
+        // of text that no one reads on a phone.
+        for (const category of this._orderCategories(commandRegistry.getCategories())) {
             const commands = this._visibleCommands(commandRegistry.getByCategory(category), isOwnerViewer);
             if (commands.length === 0) continue;
 
-            const categoryName = this.getCategoryNameID(category);
-            menuSections.push(`${this.getCategoryEmoji(category)} *${categoryName}*`);
-            
-            for (const cmd of commands) {
-                const aliases = cmd.aliases.length > 0 ? ` (${cmd.aliases.join(', ')})` : '';
-                menuSections.push(`• *${config.bot.prefix}${cmd.name}*${aliases}`);
-                if (cmd.description) {
-                    menuSections.push(`  ${this.translateDescription(cmd.description)}`);
-                }
-            }
-            menuSections.push('');
+            const lines = commands
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map(cmd => {
+                    const desc = cmd.description ? ` ${ui.SYM.dot} ${ui.truncate(cmd.description, 34)}` : '';
+                    return `${ui.SYM.bullet} ${ui.bold(prefix + cmd.name)}${desc}`;
+                });
+
+            sections.push(ui.card({
+                icon: this.getCategoryEmoji(category),
+                title: ui.smallCaps(this.getCategoryNameID(category)),
+                lines
+            }));
+            sections.push('');
         }
 
-        // Footer with tips - simple format
-        menuSections.push('💡 *Tips*');
-        menuSections.push(`Ketik ${config.bot.prefix}menu <perintah>`);
-        menuSections.push('untuk detail perintah');
-        menuSections.push('');
-        menuSections.push('📌 *Contoh:*');
-        menuSections.push(`• ${config.bot.prefix}menu video`);
-        menuSections.push(`• ${config.bot.prefix}menu music`);
-        menuSections.push(`• ${config.bot.prefix}menu media`);
-        menuSections.push('');
-        menuSections.push(`© 2025 ${config.bot.owner} ⚡`);
+        sections.push(ui.card({
+            icon: ui.EMOJI.tip,
+            title: ui.smallCaps('Tips'),
+            lines: [
+                `${ui.SYM.bullet} ${ui.mono(prefix + 'menu <perintah>')} ${ui.SYM.dot} detail & contoh`,
+                `${ui.SYM.bullet} ${ui.mono(prefix + 'menu <kategori>')} ${ui.SYM.dot} isi satu kategori`,
+                '',
+                `Contoh: ${ui.mono(prefix + 'menu video')}, ${ui.mono(prefix + 'menu fun')}`
+            ],
+            footer: `${config.bot.name} v${config.bot.version} ${ui.SYM.dot} ${config.bot.owner}`
+        }));
 
-        const menuText = menuSections.join('\n');
-        await this.reply(sock, from, msg, menuText);
+        await this.reply(sock, from, msg, sections.join('\n'));
         await this.react(sock, msg, '✅');
+    }
+
+    /**
+     * Find commands and categories whose name is close to what the user typed,
+     * so a typo gets a useful pointer instead of a dead end.
+     * @param {string} query Lowercased user input
+     * @param {boolean} isOwnerViewer
+     * @returns {string[]} Up to 3 suggestions
+     * @private
+     */
+    _suggest(query, isOwnerViewer) {
+        return commandRegistry.suggest(query, {
+            extra: commandRegistry.getCategories(),
+            filter: name => isOwnerViewer || !config.isOwnerOnlyCommand(name)
+        });
     }
 
     /**
      * Send detailed help for a specific command
      */
+    /**
+     * Detailed help for one command. Falls back to the command's own metadata
+     * when no hand-written guide exists, so newly added commands still get a
+     * usable help page for free.
+     */
     async sendCommandHelp(sock, from, msg, command) {
-        const sections = [];
+        const prefix = config.bot.prefix;
         const guide = this.commandGuides[command.name];
-        
-        // Header - simple format
-        if (guide) {
-            sections.push(`${guide.title}`);
-            sections.push('');
-            
-            // Description
-            sections.push(`📝 *Deskripsi*`);
-            sections.push(guide.description);
-            sections.push('');
-            
-            // Usage
-            sections.push('💡 *Cara Pakai*');
-            for (const usage of guide.usage) {
-                sections.push(`  ${usage}`);
-            }
-            sections.push('');
-            
-            // Examples
-            sections.push('📌 *Contoh*');
-            for (const example of guide.examples.slice(0, 5)) {
-                sections.push(`  ${example}`);
-            }
-            if (guide.examples.length > 5) {
-                sections.push(`  ...dan ${guide.examples.length - 5} contoh lagi`);
-            }
-            sections.push('');
-            
-            // Platforms (if applicable)
-            if (guide.platforms) {
-                sections.push('🌐 *Platform*');
-                sections.push(guide.platforms);
-                sections.push('');
-            }
-            
-            // Languages (if applicable)
-            if (guide.languages) {
-                sections.push('🗣️ *Bahasa*');
-                sections.push(guide.languages);
-                sections.push('');
-            }
-            
-            // Notes
-            if (guide.notes && guide.notes.length > 0) {
-                sections.push('📋 *Catatan*');
-                for (const note of guide.notes) {
-                    sections.push(note);
-                }
-                sections.push('');
-            }
-        } else {
-            // Fallback for commands without detailed guide
-            sections.push(`📌 *${config.bot.prefix}${command.name.toUpperCase()}*`);
-            sections.push('');
-            
-            if (command.description) {
-                sections.push(`📝 *Deskripsi*`);
-                sections.push(this.translateDescription(command.description));
-                sections.push('');
-            }
-            
-            if (command.usage) {
-                sections.push('💡 *Cara Pakai*');
-                sections.push(`  ${command.usage}`);
-                sections.push('');
+        const lines = [];
+
+        const description = guide?.description || command.description;
+        if (description) {
+            lines.push(description, '');
+        }
+
+        const forms = guide?.usage?.length
+            ? guide.usage
+            : (command.usage ? [command.usage] : []);
+        if (forms.length) {
+            lines.push(`${ui.EMOJI.usage} ${ui.bold('Cara pakai')}`);
+            lines.push(...ui.bullets(forms.map(form => ui.mono(form))));
+        }
+
+        if (guide?.examples?.length) {
+            if (forms.length) lines.push('');
+            lines.push(`${ui.EMOJI.example} ${ui.bold('Contoh')}`);
+
+            const shown = guide.examples.slice(0, 5);
+            lines.push(...ui.bullets(shown.map(example => ui.mono(example))));
+            if (guide.examples.length > shown.length) {
+                lines.push(ui.italic(`…dan ${guide.examples.length - shown.length} contoh lain`));
             }
         }
-        
-        // Aliases
-        if (command.aliases && command.aliases.length > 0) {
-            sections.push('🔄 *Alias*');
-            sections.push(`  ${command.aliases.map(a => config.bot.prefix + a).join(', ')}`);
-            sections.push('');
+
+        if (guide?.platforms) {
+            lines.push('', `🌐 ${ui.bold('Platform')}`, guide.platforms);
         }
-        
-        // Category
-        sections.push('📁 *Kategori*');
-        sections.push(`  ${this.getCategoryEmoji(command.category)} ${this.getCategoryNameID(command.category)}`);
-        
-        await this.reply(sock, from, msg, sections.join('\n'));
+
+        if (guide?.languages) {
+            lines.push('', `🗣️ ${ui.bold('Bahasa')}`, guide.languages);
+        }
+
+        if (guide?.notes?.length) {
+            lines.push('', `${ui.EMOJI.info} ${ui.bold('Catatan')}`);
+            // Guide notes carry their own leading bullet; normalise it so the
+            // whole panel uses one bullet character.
+            lines.push(...guide.notes.map(note => note.replace(/^\s*[•\-*]\s*/, `${ui.SYM.dot} `)));
+        }
+
+        if (command.aliases?.length) {
+            lines.push('', `${ui.EMOJI.alias} ${ui.bold('Alias')}`);
+            lines.push(command.aliases.map(alias => ui.mono(prefix + alias)).join('  '));
+        }
+
+        await this.reply(sock, from, msg, ui.card({
+            icon: this.getCategoryEmoji(command.category),
+            title: prefix + command.name,
+            lines,
+            footer: `${this.getCategoryNameID(command.category)} ${ui.SYM.dot} ${config.bot.name}`
+        }));
     }
 
     async sendCategoryHelp(sock, from, msg, category, isOwnerViewer = false) {
@@ -735,33 +758,35 @@ class MenuCommand extends CommandBase {
         );
 
         if (commands.length === 0) {
-            return await this.reply(sock, from, msg, `❌ Kategori "${category}" tidak ditemukan.`);
+            return await this.replyError(sock, from, msg,
+                `Kategori ${ui.mono(ui.truncate(category, 24))} tidak ada.`,
+                { title: 'Tidak Ditemukan', hint: [`${config.bot.prefix}menu — lihat semua kategori`] }
+            );
         }
 
-        const categoryName = this.getCategoryNameID(category.toLowerCase());
-        const sections = [];
-        
-        sections.push(`${this.getCategoryEmoji(category)} *${categoryName.toUpperCase()}*`);
-        sections.push('');
+        const prefix = config.bot.prefix;
+        const lines = [];
 
-        for (const cmd of commands) {
-            sections.push(`*${config.bot.prefix}${cmd.name}*`);
+        for (const cmd of commands.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+            const aliases = cmd.aliases?.length ? ` ${ui.SYM.dot} ${ui.italic(cmd.aliases.join(', '))}` : '';
+            lines.push(`${ui.SYM.bullet} ${ui.bold(prefix + cmd.name)}${aliases}`);
             if (cmd.description) {
-                sections.push(`📝 ${this.translateDescription(cmd.description)}`);
+                lines.push(`   ${cmd.description}`);
             }
             if (cmd.usage) {
-                sections.push(`💡 ${cmd.usage}`);
+                lines.push(`   ${ui.mono(cmd.usage)}`);
             }
-            if (cmd.aliases.length > 0) {
-                sections.push(`🔄 ${cmd.aliases.join(', ')}`);
-            }
-            sections.push('');
+            lines.push('');
         }
-        
-        sections.push(`💡 Ketik ${config.bot.prefix}menu <perintah>`);
-        sections.push('untuk detail lengkap');
+        // Drop the trailing spacer so the card closes tight against the content.
+        if (lines[lines.length - 1] === '') lines.pop();
 
-        await this.reply(sock, from, msg, sections.join('\n'));
+        await this.reply(sock, from, msg, ui.card({
+            icon: this.getCategoryEmoji(category),
+            title: ui.smallCaps(this.getCategoryNameID(category.toLowerCase())),
+            lines,
+            footer: `${commands.length} perintah ${ui.SYM.dot} ${prefix}menu <perintah> untuk detail`
+        }));
     }
 
     getCategoryEmoji(category) {
@@ -800,52 +825,6 @@ class MenuCommand extends CommandBase {
         return names[category.toLowerCase()] || category;
     }
 
-    translateDescription(desc) {
-        // Translate common descriptions to Indonesian
-        const translations = {
-            'Check bot response time and system status': 'Cek waktu respon dan status sistem',
-            'Display bot help and command list': 'Menampilkan daftar perintah bot',
-            'Translate text to another language': 'Terjemahkan teks ke bahasa lain',
-            'Get current weather for any location': 'Dapatkan info cuaca lokasi manapun',
-            'Search and download music from YouTube': 'Cari dan download musik dari YouTube',
-            'Convert image to sticker': 'Ubah gambar menjadi stiker',
-            'Convert sticker to image': 'Ubah stiker menjadi gambar',
-            'Get a random inspirational quote': 'Dapatkan kutipan inspiratif acak',
-            'Get a random fact': 'Dapatkan fakta menarik acak',
-            'Get a random meme': 'Dapatkan meme Indonesia acak',
-            'Play Rock Paper Scissors': 'Main Batu Gunting Kertas',
-            'Roll dice': 'Lempar dadu',
-            'Flip a coin': 'Lempar koin',
-            'Magic 8-ball prediction': 'Ramalan bola ajaib 8',
-            'Search movies on IMDb': 'Cari film di IMDb',
-            'Search and send images from Pinterest': 'Cari dan kirim gambar dari Pinterest',
-            'Generate QR code': 'Buat QR code',
-            'Simple calculator': 'Kalkulator sederhana',
-            'Get cryptocurrency prices': 'Cek harga cryptocurrency',
-            'Display group information and statistics': 'Tampilkan info dan statistik grup',
-            'Tag all members in group': 'Tag semua member grup',
-            'Get current time for any timezone': 'Cek waktu zona waktu manapun',
-            'Set a reminder': 'Atur pengingat',
-            'Search Wikipedia': 'Cari di Wikipedia',
-            'Play trivia quiz': 'Main kuis trivia',
-            'Get latest earthquake info from BMKG': 'Info gempa terbaru dari BMKG',
-            'Security status and controls': 'Status dan kontrol keamanan',
-            'Mengubah teks menjadi suara menggunakan AI': 'Ubah teks menjadi suara AI',
-            // Technical/Networking commands
-            'Hitung subnet dari alamat IP dan CIDR': 'Hitung subnet dari IP dan CIDR',
-            'Dapatkan informasi alamat IP': 'Dapatkan info alamat IP',
-            'Lookup DNS untuk domain': 'Lookup DNS untuk domain',
-            'Referensi port jaringan umum': 'Referensi port jaringan',
-            'Cheat sheet dan referensi networking': 'Cheat sheet networking',
-            'Cheat sheet dan referensi networking lengkap': 'Referensi jaringan lengkap',
-            // Updated descriptions
-            'Dapatkan kutipan inspirasional acak': 'Kutipan inspirasional dalam Bahasa Indonesia',
-            'Dapatkan fakta menarik acak': 'Fakta menarik dalam Bahasa Indonesia',
-            'Dapatkan meme Indonesia acak': 'Meme Indonesia dari Reddit'
-        };
-        
-        return translations[desc] || desc;
-    }
 }
 
 module.exports = MenuCommand;

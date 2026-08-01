@@ -4,14 +4,15 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 
 class DiceCommand extends CommandBase {
     constructor() {
         super({
             name: 'dice',
             aliases: ['roll', 'd'],
-            description: 'Roll dice (supports multiple dice)',
-            usage: '.dice [number]d[sides]',
+            description: 'Lempar dadu, bisa banyak sekaligus',
+            usage: '.dice [jumlah]d[sisi]',
             category: 'fun',
             cooldown: 2000
         });
@@ -53,24 +54,30 @@ class DiceCommand extends CommandBase {
                 total += roll;
             }
 
-            const diceEmoji = '🎲';
-            const rollsText = rolls.join(', ');
+            const lines = [
+                ui.kv('Lemparan', `${numDice}d${numSides}`, '🎯'),
+                ui.kv('Hasil', rolls.join(' · '), '📊')
+            ];
 
-            let response = `${diceEmoji} *Dice Roll*\n\n`;
-            response += `🎯 Rolling ${numDice}d${numSides}\n\n`;
-            response += `📊 Results: ${rollsText}\n`;
-            
             if (numDice > 1) {
-                response += `➕ Total: **${total}**\n`;
-                response += `📈 Average: ${(total / numDice).toFixed(2)}`;
+                lines.push(ui.kv('Total', ui.bold(String(total)), '➕'));
+                lines.push(ui.kv('Rata-rata', (total / numDice).toFixed(2), '📈'));
             }
 
-            await this.reply(sock, from, msg, response);
+            await this.reply(sock, from, msg, ui.card({
+                icon: '🎲',
+                title: 'Lempar Dadu',
+                lines,
+                footer: 'Ketik .dice 2d20 untuk dadu lain'
+            }));
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Invalid dice format. Use: .dice 2d20');
+            await this.replyError(sock, from, msg, 'Format dadu tidak dikenali.', {
+                title: 'Format Salah',
+                hint: ['.dice', '.dice 2d20', '.dice 3d6']
+            });
         }
     }
 }

@@ -4,13 +4,14 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 
 class FlipCommand extends CommandBase {
     constructor() {
         super({
             name: 'flip',
             aliases: ['coin', 'coinflip'],
-            description: 'Flip a coin',
+            description: 'Lempar koin, angka atau gambar',
             usage: '.flip',
             category: 'fun',
             cooldown: 2000
@@ -24,19 +25,19 @@ class FlipCommand extends CommandBase {
 
         // Simulate coin flip
         const isHeads = Math.random() < 0.5;
-        const result = isHeads ? 'Heads' : 'Tails';
-        const emoji = isHeads ? '🗣️' : '🦅';
+        const result = isHeads ? 'ANGKA' : 'GAMBAR';
+        const emoji = isHeads ? '🪙' : '🦅';
 
-        const response = 
-`🪙 *Coin Flip*
-
-🔄 Flipping...
-.
-.
-.
-${emoji} **${result}!**`;
-
-        await this.reply(sock, from, msg, response);
+        await this.reply(sock, from, msg, ui.card({
+            icon: '🪙',
+            title: 'Lempar Koin',
+            lines: [
+                ui.italic('Koin berputar di udara…'),
+                '',
+                `${emoji} ${ui.bold(result)}`
+            ],
+            footer: 'Ketik .flip untuk lempar lagi'
+        }));
         await this.react(sock, msg, '✅');
     }
 }

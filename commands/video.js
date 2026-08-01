@@ -7,6 +7,8 @@
 const CommandBase = require('./base');
 const { spawn } = require('child_process');
 const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers');
+const security = require('../utils/security');
+const ui = require('../utils/ui');
 const { identifyPlatform, isVideoSupported, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
 const fsPromises = require('fs').promises;
 const config = require('../config');
@@ -20,7 +22,7 @@ class VideoCommand extends CommandBase {
         super({
             name: 'video',
             aliases: ['vid', 'dl', 'download'],
-            description: 'Download video dari berbagai platform',
+            description: 'Unduh video dari banyak platform',
             usage: '.video <url>',
             category: 'media',
             cooldown: 5000,
@@ -77,31 +79,52 @@ class VideoCommand extends CommandBase {
         const supportedPlatforms = getSupportedPlatformsText();
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '📹 *Video Downloader*\n\n' +
-                '📝 *Cara Pakai:*\n' +
-                '.video <url>\n\n' +
-                '🔗 *Contoh URL yang didukung:*\n' +
-                '• TikTok: https://vt.tiktok.com/xxx\n' +
-                '• YouTube: https://youtu.be/xxx\n' +
-                '• Instagram: https://instagram.com/reel/xxx\n' +
-                '• Facebook: https://fb.watch/xxx\n' +
-                '• Twitter/X: https://x.com/user/status/xxx\n\n' +
-                `🌐 *Platform Didukung:*\n${supportedPlatforms.video}`
-            );
+            return await this.replyUsage(sock, from, msg, {
+                icon: '📹',
+                title: 'Video Downloader',
+                description: 'Unduh video dari berbagai platform sosial media.',
+                usage: ['.video <url>'],
+                examples: [
+                    '.video https://vt.tiktok.com/xxxxx/',
+                    '.video https://youtu.be/dQw4w9WgXcQ',
+                    '.video https://instagram.com/reel/xxxxx',
+                    '.video https://fb.watch/xxxxx/',
+                    '.video https://x.com/user/status/123456'
+                ],
+                notes: [
+                    'Maksimal 200MB per video',
+                    `Platform: ${ui.truncate(supportedPlatforms.video, 180)}`
+                ]
+            });
         }
 
         // Validate URL
         const url = args[0];
         if (!isValidUrl(url)) {
-            return await this.reply(sock, from, msg, '❌ URL tidak valid! Harus dimulai dengan http:// atau https://');
+            return await this.replyError(sock, from, msg,
+                'URL harus dimulai dengan http:// atau https://', {
+                    title: 'URL Tidak Valid',
+                    hint: ['.video https://youtu.be/dQw4w9WgXcQ']
+                });
         }
 
         // Additional URL structure validation
         try {
             new URL(url);
         } catch (e) {
-            return await this.reply(sock, from, msg, '❌ Format URL tidak valid! Pastikan URL lengkap dan benar.');
+            return await this.replyError(sock, from, msg,
+                'Format URL tidak lengkap atau salah ketik.', {
+                    title: 'URL Tidak Valid',
+                    hint: ['Salin ulang tautannya langsung dari aplikasi asal']
+                });
+        }
+
+        // The checks above are syntactic. A hostname the sender controls can
+        // still resolve to an internal address, so confirm where it actually
+        // points before handing the URL to yt-dlp.
+        const reachable = await security.resolvesToPublicHost(url);
+        if (!reachable.safe) {
+            return await this.replyError(sock, from, msg, reachable.reason, { title: 'URL Ditolak' });
         }
 
         // Identify platform using comprehensive URL parser
@@ -156,7 +179,7 @@ class VideoCommand extends CommandBase {
                 
                 // Check duration limit
                 if (videoDuration > config.media.maxDuration) {
-                    return await this.reply(sock, from, msg, '❌ Video terlalu panjang. Coba video yang lebih pendek ya!');
+                    return await this.replyError(sock, from, msg, 'Video terlalu panjang. Coba video yang lebih pendek ya!');
                 }
 
                 // Build rich metadata caption

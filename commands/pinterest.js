@@ -14,6 +14,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const { getRandomUA, getRandomPinterestHeaders, sleep } = require('../utils/helpers');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
@@ -41,7 +42,7 @@ class PinterestCommand extends CommandBase {
         super({
             name: 'pinterest',
             aliases: ['pin', 'pint'],
-            description: 'Search aesthetic images from Pinterest',
+            description: 'Cari gambar estetik dari Pinterest',
             usage: '.pinterest <search query>',
             category: 'media',
             cooldown: 5000,
@@ -53,7 +54,13 @@ class PinterestCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, '❓ What do you want to search for?\n\nExample: .pinterest Cyberpunk City');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '📌',
+                title: 'Pencarian Pinterest',
+                description: 'Cari dan kirim gambar estetik dari Pinterest.',
+                usage: ['.pinterest <kata kunci>'],
+                examples: ['.pinterest wallpaper anime', '.pinterest kamar aesthetic', '.pinterest kucing lucu']
+            });
         }
 
         await this.react(sock, msg, '📌');
@@ -72,7 +79,10 @@ class PinterestCommand extends CommandBase {
 
                 if (allScrapedUrls.length === 0) {
                     this.setFailed(context, 'No images found or proxy timeout');
-                    return await this.reply(sock, from, msg, '❌ No images found. Try a different search term or check proxy connection.');
+                    return await this.replyError(sock, from, msg, 'Tidak ada gambar yang cocok.', {
+                        title: 'Tidak Ditemukan',
+                        hint: ['Coba kata kunci yang lain', '.pinterest wallpaper anime']
+                    });
                 }
 
                 // Cache all scraped URLs for 30 minutes (pool of images)
@@ -111,7 +121,9 @@ class PinterestCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to fetch images. Please try again later.');
+            await this.replyError(sock, from, msg, 'Gagal mengambil gambar dari Pinterest.', {
+                hint: ['Coba lagi sebentar lagi']
+            });
         }
     }
 
@@ -592,10 +604,12 @@ class PinterestCommand extends CommandBase {
         } else if (successCount > 0) {
             await this.react(sock, msg, '✅');
             if (successCount < totalRequested) {
-                await this.reply(sock, from, msg, `📌 Sent ${successCount} of ${totalRequested} images (some failed to download)`);
+                await this.reply(sock, from, msg, ui.info('Sebagian Terkirim', [`Berhasil mengirim ${successCount} dari ${totalRequested} gambar.`]));
             }
         } else {
-            await this.reply(sock, from, msg, '❌ Could not download images. Please try a different search term.');
+            await this.replyError(sock, from, msg, 'Gambar gagal diunduh.', {
+                hint: ['Coba kata kunci yang lain']
+            });
         }
     }
 }

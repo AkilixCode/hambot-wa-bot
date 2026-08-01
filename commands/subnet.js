@@ -11,7 +11,7 @@ class SubnetCommand extends CommandBase {
         super({
             name: 'subnet',
             aliases: ['cidr', 'ipcalc', 'subnetcalc'],
-            description: 'Hitung subnet dari alamat IP dan CIDR',
+            description: 'Hitung subnet dari IP dan CIDR',
             usage: '.subnet 192.168.1.0/24',
             category: 'technical',
             cooldown: 2000
@@ -22,24 +22,19 @@ class SubnetCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '🖥️ *Kalkulator Subnet*\n\n' +
-                '📝 *Cara Pakai:*\n' +
-                '`.subnet <IP>/<CIDR>`\n\n' +
-                '📌 *Contoh:*\n' +
-                '• `.subnet 192.168.1.0/24`\n' +
-                '• `.subnet 10.0.0.0/8`\n' +
-                '• `.subnet 172.16.0.0/16`\n\n' +
-                '📊 *CIDR Umum:*\n' +
-                '• /8  = 16,777,214 host (Kelas A)\n' +
-                '• /16 = 65,534 host (Kelas B)\n' +
-                '• /24 = 254 host (Kelas C)\n' +
-                '• /25 = 126 host\n' +
-                '• /26 = 62 host\n' +
-                '• /27 = 30 host\n' +
-                '• /28 = 14 host\n' +
-                '• /29 = 6 host\n' +
-                '• /30 = 2 host (point-to-point)');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🖥️',
+                title: 'Kalkulator Subnet',
+                description: 'Hitung network, broadcast, dan jumlah host dari sebuah blok IP.',
+                usage: ['.subnet <IP>/<CIDR>'],
+                examples: ['.subnet 192.168.1.0/24', '.subnet 10.0.0.0/8', '.subnet 172.16.0.0/16'],
+                notes: [
+                    '/8 = 16.777.214 host (Kelas A)',
+                    '/16 = 65.534 host (Kelas B)',
+                    '/24 = 254 host (Kelas C)',
+                    '/26 = 62 host · /28 = 14 host · /30 = 2 host'
+                ]
+            });
         }
 
         await this.react(sock, msg, '🔢');
@@ -78,7 +73,7 @@ class SubnetCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal menghitung subnet.');
+            await this.replyError(sock, from, msg, 'Gagal menghitung subnet.');
         }
     }
 

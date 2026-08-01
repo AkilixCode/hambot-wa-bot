@@ -24,18 +24,14 @@ class IPInfoCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '🌐 *IP Info Lookup*\n\n' +
-                '📝 *Cara Pakai:*\n' +
-                '`.ipinfo <alamat IP>`\n\n' +
-                '📌 *Contoh:*\n' +
-                '• `.ipinfo 8.8.8.8`\n' +
-                '• `.ipinfo 1.1.1.1`\n' +
-                '• `.ip 203.89.24.5`\n\n' +
-                '💡 *Tips:*\n' +
-                '• Gunakan untuk cek lokasi IP\n' +
-                '• Cek ISP dan organisasi\n' +
-                '• Identifikasi negara asal');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🌐',
+                title: 'Info Alamat IP',
+                description: 'Cek lokasi, ISP, dan organisasi pemilik sebuah alamat IP.',
+                usage: ['.ipinfo <alamat IP>'],
+                examples: ['.ipinfo 8.8.8.8', '.ipinfo 1.1.1.1'],
+                notes: ['Lokasi berasal dari basis data GeoIP, jadi sifatnya perkiraan']
+            });
         }
 
         await this.react(sock, msg, '🔍');
@@ -77,7 +73,7 @@ class IPInfoCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal mendapatkan informasi IP.');
+            await this.replyError(sock, from, msg, 'Gagal mendapatkan informasi IP.');
         }
     }
 

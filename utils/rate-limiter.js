@@ -16,6 +16,8 @@ class RateLimiter {
         const envInterval = parseInt(process.env.RATE_LIMITER_CLEANUP_INTERVAL);
         const cleanupInterval = (envInterval && envInterval > 0) ? envInterval : 120000;
         this.cleanupInterval = setInterval(() => this.cleanup(), cleanupInterval);
+        // Housekeeping only: must not keep the event loop alive on its own.
+        this.cleanupInterval.unref();
         
         // Batas maksimal pengguna yang dilacak untuk mencegah kebocoran memori
         this.maxTrackedUsers = 5000;

@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const logger = require('../utils/logger');
@@ -13,7 +14,7 @@ class WikiCommand extends CommandBase {
         super({
             name: 'wiki',
             aliases: ['wikipedia'],
-            description: 'Search Wikipedia and get article summary',
+            description: 'Cari ringkasan artikel Wikipedia',
             usage: '.wiki <search term>',
             category: 'info',
             cooldown: 3000
@@ -24,8 +25,13 @@ class WikiCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '📚 *Wikipedia Search*\n\nUsage: .wiki <search term>\n\nExamples:\n• .wiki Albert Einstein\n• .wiki Python programming\n• .wiki Solar System');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '📚',
+                title: 'Wikipedia',
+                description: 'Cari ringkasan artikel dari Wikipedia.',
+                usage: ['.wiki <kata kunci>'],
+                examples: ['.wiki Albert Einstein', '.wiki Tata Surya', '.wiki Bahasa Python']
+            });
         }
 
         await this.react(sock, msg, '📚');
@@ -55,9 +61,15 @@ class WikiCommand extends CommandBase {
             this.logError(error, context);
             
             if (error.response?.status === 404) {
-                await this.reply(sock, from, msg, `❌ No Wikipedia article found for "${query}".`);
+                await this.replyError(sock, from, msg,
+                    `Tidak ada artikel Wikipedia untuk ${ui.mono(ui.safe(query, 60))}.`, {
+                        title: 'Tidak Ditemukan',
+                        hint: ['Coba kata kunci yang lebih umum', '.wiki Albert Einstein']
+                    });
             } else {
-                await this.reply(sock, from, msg, '❌ Failed to fetch Wikipedia data.');
+                await this.replyError(sock, from, msg, 'Gagal mengambil data dari Wikipedia.', {
+                    hint: ['Coba lagi sebentar lagi']
+                });
             }
         }
     }
@@ -69,27 +81,24 @@ class WikiCommand extends CommandBase {
             const url = data.content_urls.desktop.page;
             const thumbnail = data.thumbnail?.source;
 
-            // Limit summary length
-            const shortSummary = summary.length > 500 
-                ? summary.substring(0, 500) + '...' 
-                : summary;
-
-            const info = 
-`📚 *Wikipedia*
-
-**${title}**
-
-${shortSummary}
-
-🔗 Read more: ${url}
-
-${fromCache ? '📦 (cached)' : ''}`;
+            const info = ui.card({
+                icon: '📚',
+                title: 'Wikipedia',
+                lines: [
+                    ui.bold(title),
+                    '',
+                    ui.truncate(summary, 500),
+                    '',
+                    `🔗 ${url}`
+                ],
+                footer: ui.sourceBadge(fromCache)
+            });
 
             if (thumbnail) {
-                await sock.sendMessage(from, {
+                await this.replyMedia(sock, from, msg, {
                     image: { url: thumbnail },
                     caption: info
-                }, { quoted: msg });
+                });
             } else {
                 await this.reply(sock, from, msg, info);
             }

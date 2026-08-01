@@ -143,7 +143,7 @@ function describeSecret(value, labels = {}) {
 
 /**
  * Mask a WhatsApp JID so it is recognisable but not fully disclosed.
- * 6281234567890@s.whatsapp.net → 6288•••••3891@s.whatsapp.net
+ * 6281234567890@s.whatsapp.net → 6281•••••7890@s.whatsapp.net
  * @param {string} jid
  * @returns {string}
  */

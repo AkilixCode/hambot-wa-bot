@@ -4,44 +4,45 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 
 class EightBallCommand extends CommandBase {
     constructor() {
         super({
             name: '8ball',
             aliases: ['8b', 'ask'],
-            description: 'Ask the magic 8-ball a yes/no question',
-            usage: '.8ball <question>',
+            description: 'Tanya bola ajaib ya atau tidak',
+            usage: '.8ball <pertanyaan>',
             category: 'fun',
             cooldown: 2000
         });
 
         this.responses = [
             // Positive
-            '✅ It is certain',
-            '✅ It is decidedly so',
-            '✅ Without a doubt',
-            '✅ Yes definitely',
-            '✅ You may rely on it',
-            '✅ As I see it, yes',
-            '✅ Most likely',
-            '✅ Outlook good',
-            '✅ Yes',
-            '✅ Signs point to yes',
-            
+            { emoji: '✅', text: 'Sudah pasti' },
+            { emoji: '✅', text: 'Jelas begitu' },
+            { emoji: '✅', text: 'Tanpa ragu sedikit pun' },
+            { emoji: '✅', text: 'Ya, pasti' },
+            { emoji: '✅', text: 'Kamu bisa mengandalkannya' },
+            { emoji: '✅', text: 'Menurutku, ya' },
+            { emoji: '✅', text: 'Kemungkinan besar iya' },
+            { emoji: '✅', text: 'Prospeknya bagus' },
+            { emoji: '✅', text: 'Ya' },
+            { emoji: '✅', text: 'Semua tanda mengarah ke ya' },
+
             // Non-committal
-            '🤔 Reply hazy, try again',
-            '🤔 Ask again later',
-            '🤔 Better not tell you now',
-            '🤔 Cannot predict now',
-            '🤔 Concentrate and ask again',
-            
+            { emoji: '🤔', text: 'Jawabannya masih kabur, coba lagi' },
+            { emoji: '🤔', text: 'Tanyakan lagi nanti' },
+            { emoji: '🤔', text: 'Sebaiknya belum kuberitahu sekarang' },
+            { emoji: '🤔', text: 'Belum bisa diramalkan' },
+            { emoji: '🤔', text: 'Fokus dulu, lalu tanya lagi' },
+
             // Negative
-            '❌ Don\'t count on it',
-            '❌ My reply is no',
-            '❌ My sources say no',
-            '❌ Outlook not so good',
-            '❌ Very doubtful'
+            { emoji: '❌', text: 'Jangan terlalu berharap' },
+            { emoji: '❌', text: 'Jawabanku tidak' },
+            { emoji: '❌', text: 'Sumberku bilang tidak' },
+            { emoji: '❌', text: 'Prospeknya kurang bagus' },
+            { emoji: '❌', text: 'Sangat diragukan' }
         ];
     }
 
@@ -49,23 +50,29 @@ class EightBallCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '🔮 *Magic 8-Ball*\n\nAsk a yes/no question!\n\nUsage: .8ball <question>\n\nExample: .8ball Will I be rich?');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🔮',
+                title: 'Bola Ajaib',
+                description: 'Ajukan pertanyaan yang jawabannya ya atau tidak.',
+                usage: ['.8ball <pertanyaan>'],
+                examples: ['.8ball Apakah aku akan kaya?', '.8ball Besok hujan tidak?']
+            });
         }
 
         await this.react(sock, msg, '🔮');
 
-        const question = args.join(' ');
+        const question = ui.safe(args.join(' '), 200);
         const answer = this.responses[Math.floor(Math.random() * this.responses.length)];
 
-        const response = 
-`🔮 *Magic 8-Ball*
-
-❓ Question: _${question}_
-
-🎱 Answer: **${answer}**`;
-
-        await this.reply(sock, from, msg, response);
+        await this.reply(sock, from, msg, ui.card({
+            icon: '🔮',
+            title: 'Bola Ajaib',
+            lines: [
+                `❓ ${ui.italic(question)}`,
+                '',
+                `${answer.emoji} ${ui.bold(answer.text)}`
+            ]
+        }));
         await this.react(sock, msg, '✅');
     }
 }

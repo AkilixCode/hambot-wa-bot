@@ -8,6 +8,8 @@
 const CommandBase = require('./base');
 const { spawn } = require('child_process');
 const { generateFilename, cleanupFiles, isValidUrl } = require('../utils/helpers');
+const security = require('../utils/security');
+const ui = require('../utils/ui');
 const { identifyPlatform, isAudioSupported, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
 const fsPromises = require('fs').promises;
 const config = require('../config');
@@ -18,7 +20,7 @@ class MusicCommand extends CommandBase {
         super({
             name: 'music',
             aliases: ['song', 'mp3', 'audio', 'lagu'],
-            description: 'Cari dan download musik dari YouTube',
+            description: 'Cari dan unduh musik YouTube',
             usage: '.music <nama lagu>',
             category: 'media',
             cooldown: 5000,
@@ -75,18 +77,22 @@ class MusicCommand extends CommandBase {
         const supportedPlatforms = getSupportedPlatformsText();
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '🎵 *Music Downloader*\n\n' +
-                '📝 *Cara Pakai:*\n' +
-                '• `.music <nama lagu>` - Cari dan download\n' +
-                '• `.music <url>` - Download dari URL langsung\n\n' +
-                '🔗 *Contoh:*\n' +
-                '• .music About You The 1975\n' +
-                '• .music https://youtu.be/xxx\n' +
-                '• .music https://soundcloud.com/artist/track\n' +
-                '• .music https://open.spotify.com/track/xxx\n\n' +
-                `🌐 *Platform Audio Didukung:*\n${supportedPlatforms.audio}`
-            );
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🎵',
+                title: 'Music Downloader',
+                description: 'Cari lagu lalu unduh sebagai MP3, atau tempel URL langsung.',
+                usage: ['.music <nama lagu>', '.music <url>'],
+                examples: [
+                    '.music About You The 1975',
+                    '.music Bohemian Rhapsody Queen',
+                    '.music https://youtu.be/dQw4w9WgXcQ',
+                    '.music https://soundcloud.com/artist/track'
+                ],
+                notes: [
+                    'Durasi maksimal 10 menit',
+                    `Platform: ${ui.truncate(supportedPlatforms.audio, 180)}`
+                ]
+            });
         }
 
         await this.react(sock, msg, '🔍');
@@ -102,7 +108,18 @@ class MusicCommand extends CommandBase {
 
         // Check if input is a URL
         const isUrl = isValidUrl(query);
-        
+
+        // A direct URL is fetched by yt-dlp, so it needs the same SSRF guard the
+        // video command uses. A plain search query never reaches the network as
+        // a URL, so it skips this.
+        if (isUrl) {
+            const reachable = await security.resolvesToPublicHost(query);
+            if (!reachable.safe) {
+                return await this.replyError(sock, from, msg, reachable.reason, { title: 'URL Ditolak' });
+            }
+        }
+
+
         // Get platform info and args if URL
         let platformInfo = null;
         let platformArgs = [];
@@ -134,7 +151,7 @@ class MusicCommand extends CommandBase {
                     const videoInfo = JSON.parse(infoResult.trim().split('\n')[0]);
                     
                     if (videoInfo.duration && videoInfo.duration > config.media.maxDuration) {
-                        return await this.reply(sock, from, msg, '❌ Lagu terlalu panjang. Coba lagu yang lebih pendek ya!');
+                        return await this.replyError(sock, from, msg, 'Lagu terlalu panjang. Coba lagu yang lebih pendek ya!');
                     }
                     
                     videoTitle = videoInfo.title || 'Audio';
@@ -167,7 +184,7 @@ class MusicCommand extends CommandBase {
                 );
 
                 if (!validVideo) {
-                    return await this.reply(sock, from, msg, '❌ Lagu terlalu panjang atau tidak ditemukan. Coba lagu lain ya!');
+                    return await this.replyError(sock, from, msg, 'Lagu terlalu panjang atau tidak ditemukan. Coba lagu lain ya!');
                 }
 
                 videoUrl = `https://youtu.be/${validVideo.id}`;

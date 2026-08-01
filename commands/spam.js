@@ -221,8 +221,7 @@ class SpamCommand extends CommandBase {
 
         // Validasi jumlah
         if (isNaN(amountInput) || amountInput < 1) {
-            return await this.reply(sock, from, msg,
-                '❌ Jumlah harus angka positif!');
+            return await this.replyError(sock, from, msg, 'Jumlah harus angka positif!');
         }
 
         // Terapkan batas maksimal
@@ -235,8 +234,7 @@ class SpamCommand extends CommandBase {
 
         // Validasi pesan
         if (!message || message.trim().length === 0) {
-            return await this.reply(sock, from, msg,
-                '❌ Pesan tidak boleh kosong!');
+            return await this.replyError(sock, from, msg, 'Pesan tidak boleh kosong!');
         }
 
         // React untuk menunjukkan proses

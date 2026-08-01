@@ -14,7 +14,7 @@ class ToImgCommand extends CommandBase {
         super({
             name: 'toimg',
             aliases: ['toimage', 'stickertoimg'],
-            description: 'Convert sticker to image',
+            description: 'Ubah stiker menjadi gambar',
             usage: '.toimg (reply to a sticker)',
             category: 'tools',
             cooldown: 3000
@@ -63,7 +63,7 @@ class ToImgCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to convert sticker. Make sure FFmpeg is installed.');
+            await this.replyError(sock, from, msg, 'Failed to convert sticker. Make sure FFmpeg is installed.');
         } finally {
             // Cleanup
             await fsPromises.unlink(webpFile).catch(() => {});

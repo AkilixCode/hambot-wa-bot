@@ -7,6 +7,7 @@
  */
 
 const config = require('../config');
+const redact = require('./redact');
 
 // Category emoji mapping for simple mode
 const CATEGORY_EMOJI = {
@@ -105,7 +106,10 @@ class Logger {
 
         // Add error/reason line if present
         if (detail && status !== 'done') {
-            const errorMsg = detail instanceof Error ? detail.message : String(detail);
+            const rawMsg = detail instanceof Error ? detail.message : String(detail);
+            // Scrub before printing: a failed HTTP call carries the request URL,
+            // and some upstream APIs take their key as a query parameter.
+            const errorMsg = redact.redact(rawMsg);
             // Truncate long error messages for readability
             const shortMsg = errorMsg.length > 120 ? errorMsg.substring(0, 120) + '...' : errorMsg;
             lines.push(`   Error   : ${shortMsg}`);

@@ -53,9 +53,7 @@ test-*.js
 test-*.cjs
 
 # Documentation (not needed in production image)
-UPDATE-REPORT.md
 SECURITY.md
-README-FOR-AI.md
 *.pid
 *.seed
 *.pid.lock

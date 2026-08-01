@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const logger = require('../utils/logger');
 
 class QRCommand extends CommandBase {
@@ -11,7 +12,7 @@ class QRCommand extends CommandBase {
         super({
             name: 'qr',
             aliases: ['qrcode', 'qrgen'],
-            description: 'Generate QR code from text or URL',
+            description: 'Buat QR code dari teks atau URL',
             usage: '.qr <text or URL>',
             category: 'utility',
             cooldown: 3000
@@ -22,8 +23,13 @@ class QRCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '📱 *QR Code Generator*\n\nUsage: .qr <text or URL>\n\nExamples:\n• .qr https://google.com\n• .qr Hello World\n• .qr +1234567890');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '📱',
+                title: 'Pembuat QR Code',
+                description: 'Ubah teks atau tautan menjadi QR code.',
+                usage: ['.qr <teks atau URL>'],
+                examples: ['.qr https://google.com', '.qr Halo dunia', '.qr 08123456789']
+            });
         }
 
         await this.react(sock, msg, '📱');
@@ -35,17 +41,24 @@ class QRCommand extends CommandBase {
             // Using API to generate QR code
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(text)}`;
 
-            await sock.sendMessage(from, {
+            await this.replyMedia(sock, from, msg, {
                 image: { url: qrUrl },
-                caption: `📱 *QR Code Generated*\n\nContent: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`
-            }, { quoted: msg });
+                caption: ui.card({
+                    icon: '📱',
+                    title: 'QR Code',
+                    lines: [ui.kv('Isi', ui.mono(ui.safe(text, 100)), '📄')],
+                    footer: 'Pindai dengan kamera ponsel'
+                })
+            });
 
             logger.info('QR: code generated');
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to generate QR code.');
+            await this.replyError(sock, from, msg, 'Gagal membuat QR code.', {
+                hint: ['Coba lagi sebentar lagi']
+            });
         }
     }
 }

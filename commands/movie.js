@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const { fungsiTranslate, smartSearchIMDb, getValidPosterUrl } = require('../utils/helpers');
@@ -15,7 +16,7 @@ class MovieCommand extends CommandBase {
         super({
             name: 'movie',
             aliases: ['film', 'imdb'],
-            description: 'Get movie information, ratings, and synopsis',
+            description: 'Info film, rating, dan sinopsis',
             usage: '.movie <movie title>',
             category: 'entertainment',
             cooldown: 4000
@@ -26,11 +27,20 @@ class MovieCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, '🎬 Which movie?\n\nExample: .movie Interstellar');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🎬',
+                title: 'Info Film',
+                description: 'Cari rating, sinopsis, dan detail film.',
+                usage: ['.movie <judul film>'],
+                examples: ['.movie Interstellar', '.movie Laskar Pelangi', '.movie The Matrix']
+            });
         }
 
         if (!config.apis.omdb.key) {
-            return await this.reply(sock, from, msg, '❌ OMDb API key not configured.\nGet one from: http://www.omdbapi.com/apikey.aspx');
+            return await this.replyError(sock, from, msg, 'Kunci API OMDb belum diatur di server.', {
+                title: 'Belum Dikonfigurasi',
+                hint: ['Hubungi owner bot untuk mengaktifkannya']
+            });
         }
 
         await this.react(sock, msg, '🎬');
@@ -65,19 +75,15 @@ class MovieCommand extends CommandBase {
                         query,
                         strategiesTried: 'imdb-suggest, omdb-search, duckduckgo'
                     });
-                    return await this.reply(
-                        sock,
-                        from,
-                        msg,
-                        `❌ Movie not found: "${query}"\n\n` +
-                        `Tried:\n` +
-                        `• OMDb title search → ${data.Error || 'Not found'}\n` +
-                        `• IMDb ID lookup (3 strategies) → No results\n\n` +
-                        `💡 Tips:\n` +
-                        `• Try the exact English title\n` +
-                        `• Include the release year, e.g. ".movie The Odyssey 2025"\n` +
-                        `• Check for typos in the title`
-                    );
+                    return await this.replyError(sock, from, msg,
+                        `Film ${ui.mono(ui.safe(query, 60))} tidak ditemukan.`, {
+                            title: 'Film Tidak Ditemukan',
+                            hint: [
+                                'Pakai judul aslinya dalam bahasa Inggris',
+                                'Sertakan tahun rilis, misal .movie Dune 2024',
+                                'Periksa ejaan judulnya'
+                            ]
+                        });
                 }
 
                 const idUrl = `http://www.omdbapi.com/?i=${searchResult.id}&apikey=${config.apis.omdb.key}&plot=full`;
@@ -91,17 +97,11 @@ class MovieCommand extends CommandBase {
                         method: searchResult.method,
                         omdbError: data.Error || 'Unknown error'
                     });
-                    return await this.reply(
-                        sock,
-                        from,
-                        msg,
-                        `❌ Movie not found: "${query}"\n\n` +
-                        `Tried:\n` +
-                        `• OMDb title search → Not found\n` +
-                        `• OMDb ID search (${searchResult.id} via ${searchResult.method}) → ${data.Error || 'Not found'}\n\n` +
-                        `💡 The movie may not yet be in OMDb's database.\n` +
-                        `Try again later or use a different title.`
-                    );
+                    return await this.replyError(sock, from, msg,
+                        `Film ${ui.mono(ui.safe(query, 60))} belum ada di basis data OMDb.`, {
+                            title: 'Film Tidak Ditemukan',
+                            hint: ['Coba judul lain', 'Coba lagi beberapa waktu kemudian']
+                        });
                 }
             }
 
@@ -114,7 +114,9 @@ class MovieCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to fetch movie information. Please try again later.');
+            await this.replyError(sock, from, msg, 'Gagal mengambil informasi film.', {
+                hint: ['Coba lagi sebentar lagi']
+            });
         }
     }
 
@@ -126,20 +128,22 @@ class MovieCommand extends CommandBase {
             // Translate synopsis
             const synopsis = await fungsiTranslate(data.Plot, 'id');
 
-            const info = 
-`🎬 *${data.Title}* (${data.Year})
-
-⭐ Rating: ${data.imdbRating}/10 (${data.imdbVotes} votes)
-🎭 Genre: ${data.Genre}
-⏱️ Duration: ${data.Runtime}
-🎬 Director: ${data.Director}
-🎭 Cast: ${data.Actors}
-🏆 Awards: ${data.Awards}
-
-📝 *Synopsis:*
-${synopsis}
-
-${fromCache ? '📦 (from cache)' : ''}`;
+            const info = ui.card({
+                icon: '🎬',
+                title: `${data.Title} (${data.Year})`,
+                lines: [
+                    ui.kv('Rating', `${data.imdbRating}/10 (${data.imdbVotes} suara)`, '⭐'),
+                    ui.kv('Genre', data.Genre, '🎭'),
+                    ui.kv('Durasi', data.Runtime, '⏱️'),
+                    ui.kv('Sutradara', data.Director, '🎬'),
+                    ui.kv('Pemeran', ui.truncate(data.Actors, 120), '👥'),
+                    data.Awards && data.Awards !== 'N/A' ? ui.kv('Penghargaan', ui.truncate(data.Awards, 90), '🏆') : null,
+                    '',
+                    `📝 ${ui.bold('Sinopsis')}`,
+                    ui.truncate(synopsis, 600)
+                ],
+                footer: `${ui.sourceBadge(fromCache)} ${ui.SYM.dot} OMDb`
+            });
 
             await sock.sendMessage(from, {
                 image: { url: poster },

@@ -23,21 +23,14 @@ class DNSCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '🔍 *DNS Lookup*\n\n' +
-                '📝 *Cara Pakai:*\n' +
-                '`.dns <domain>`\n\n' +
-                '📌 *Contoh:*\n' +
-                '• `.dns google.com`\n' +
-                '• `.dns facebook.com`\n' +
-                '• `.nslookup youtube.com`\n\n' +
-                '📊 *Record yang Dicari:*\n' +
-                '• A Record (IPv4)\n' +
-                '• AAAA Record (IPv6)\n' +
-                '• MX Record (Mail)\n' +
-                '• NS Record (Nameserver)\n' +
-                '• TXT Record\n' +
-                '• CNAME Record');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🔍',
+                title: 'DNS Lookup',
+                description: 'Lihat record DNS yang terpasang pada sebuah domain.',
+                usage: ['.dns <domain>'],
+                examples: ['.dns google.com', '.dns facebook.com', '.nslookup youtube.com'],
+                notes: ['Record dibaca: A, AAAA, MX, NS, TXT, dan CNAME']
+            });
         }
 
         await this.react(sock, msg, '🔍');

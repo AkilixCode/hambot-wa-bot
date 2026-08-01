@@ -5,13 +5,19 @@
 
 require('dotenv').config({ quiet: true });
 
+// package.json is the single source of truth for the version. Previously the
+// number was duplicated across the changelog, SECURITY.md and the Baileys
+// browser identifier, and all three had drifted apart.
+const { version: VERSION } = require('./package.json');
+
 class Config {
     constructor() {
         this.bot = {
             name: process.env.BOT_NAME || 'HamBot',
             owner: process.env.BOT_OWNER || 'Name',
             prefix: process.env.BOT_PREFIX || '.',
-            browser: ['HamBot', 'Chrome', '1.0.0'],
+            version: VERSION,
+            browser: ['HamBot', 'Chrome', VERSION],
             // Private mode: ignore private messages when true
             onlyGroupMode: process.env.ONLY_GROUP_MODE === 'true',
             // Owner IDs - supports both private (@s.whatsapp.net) and group (@lid) formats
@@ -20,7 +26,11 @@ class Config {
             // Legacy single ID for backward compatibility
             ownerId: this._normalizeOwnerId(process.env.BOT_OWNER_ID),
             // Owner-only commands list from env
-            ownerOnlyCommands: (process.env.OWNER_ONLY_COMMANDS || 'security,spam').split(',').map(c => c.trim().toLowerCase()).filter(c => c)
+            ownerOnlyCommands: (process.env.OWNER_ONLY_COMMANDS || 'security,spam').split(',').map(c => c.trim().toLowerCase()).filter(c => c),
+            // Commands restricted to group admins. `tagall` pings every member,
+            // so leaving it open to everyone makes the bot a spam tool in any
+            // group it joins.
+            adminOnlyCommands: (process.env.ADMIN_ONLY_COMMANDS || 'tagall').split(',').map(c => c.trim().toLowerCase()).filter(c => c)
         };
 
         this.performance = {
@@ -345,6 +355,15 @@ class Config {
      */
     isOwnerOnlyCommand(commandName) {
         return this.bot.ownerOnlyCommands.includes(commandName.toLowerCase());
+    }
+
+    /**
+     * Check if a command may only be run by a group admin
+     * @param {string} commandName - Command name
+     * @returns {boolean}
+     */
+    isAdminOnlyCommand(commandName) {
+        return this.bot.adminOnlyCommands.includes(String(commandName).toLowerCase());
     }
 
     validate() {

@@ -4,6 +4,7 @@
  */
 
 const logger = require('../utils/logger');
+const ui = require('../utils/ui');
 
 class CommandBase {
     constructor(config = {}) {
@@ -34,13 +35,18 @@ class CommandBase {
 
         // Check if group required
         if (this.requiresGroup && !isGroup) {
-            return { valid: false, error: '❌ Perintah ini hanya untuk grup!' };
+            return {
+                valid: false,
+                error: ui.error('Perintah ini hanya bisa dipakai di dalam grup.', {
+                    title: 'Khusus Grup',
+                    hint: [`Tambahkan bot ke grup, lalu jalankan ${this.usage || '.' + this.name}`]
+                })
+            };
         }
 
-        // Check if admin required (implement your admin check logic)
-        if (this.requiresAdmin) {
-            // Add your admin validation here
-        }
+        // Admin gating is NOT handled here — it needs the socket to read group
+        // metadata, which validate() does not have. It lives in the permission
+        // layer instead, driven by config.adminOnlyCommands (ADMIN_ONLY_COMMANDS).
 
         // Check if media required
         if (this.requiresMedia) {
@@ -48,7 +54,16 @@ class CommandBase {
             const hasQuoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
             
             if (!hasImage && !hasQuoted) {
-                return { valid: false, error: '❌ Perintah ini membutuhkan gambar!' };
+                return {
+                    valid: false,
+                    error: ui.error('Perintah ini butuh gambar.', {
+                        title: 'Gambar Diperlukan',
+                        hint: [
+                            `Kirim gambar dengan caption ${'.' + this.name}`,
+                            `Atau reply gambar yang sudah ada dengan ${'.' + this.name}`
+                        ]
+                    })
+                };
             }
         }
 
@@ -56,10 +71,57 @@ class CommandBase {
     }
 
     /**
-     * Send reply message
+     * Send reply message.
+     *
+     * Every plain-text reply in the bot funnels through here, which makes it the
+     * one place that can guarantee a message is never long enough for WhatsApp
+     * to silently drop the tail.
      */
     async reply(sock, from, msg, text) {
-        return await sock.sendMessage(from, { text }, { quoted: msg });
+        return await sock.sendMessage(from, { text: ui.clamp(text) }, { quoted: msg });
+    }
+
+    /**
+     * Reply with the standard error card.
+     * @param {Object} sock
+     * @param {string} from
+     * @param {Object} msg
+     * @param {string} reason What went wrong, one sentence
+     * @param {Object} [opts] Passed through to ui.error ({ title, hint, icon })
+     */
+    async replyError(sock, from, msg, reason, opts) {
+        return await this.reply(sock, from, msg, ui.error(reason, opts));
+    }
+
+    /**
+     * Reply with the standard usage panel.
+     * @param {Object} sock
+     * @param {string} from
+     * @param {Object} msg
+     * @param {Object} opts Passed through to ui.usage
+     */
+    async replyUsage(sock, from, msg, opts) {
+        return await this.reply(sock, from, msg, ui.usage(opts));
+    }
+
+    /**
+     * Send a media message with a caption.
+     *
+     * Captions bypass reply() entirely, so they need their own clamp — without
+     * it a long caption is truncated by WhatsApp with no warning to the user.
+     *
+     * @param {Object} sock
+     * @param {string} from
+     * @param {Object} msg Message to quote
+     * @param {Object} payload Baileys media payload, e.g. { image, caption }
+     */
+    async replyMedia(sock, from, msg, payload) {
+        const body = { ...payload };
+        if (typeof body.caption === 'string') {
+            // WhatsApp caps captions well below the text-message limit.
+            body.caption = ui.clamp(body.caption, 1024);
+        }
+        return await sock.sendMessage(from, body, { quoted: msg });
     }
 
     /**

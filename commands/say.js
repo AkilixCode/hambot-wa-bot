@@ -17,7 +17,7 @@ class SayCommand extends CommandBase {
         super({
             name: 'say',
             aliases: ['tts', 'speak', 'bicara'],
-            description: 'Mengubah teks menjadi suara menggunakan AI',
+            description: 'Ubah teks jadi suara dengan AI',
             usage: '.say <teks> atau .say <en> <teks>',
             category: 'media',
             cooldown: 5000,
@@ -79,9 +79,11 @@ class SayCommand extends CommandBase {
 
         // Cek API key
         if (!config.apis.elevenlabs.key) {
-            return await this.reply(sock, from, msg, 
-                '❌ API ElevenLabs belum dikonfigurasi!\n\n' +
-                'Hubungi admin untuk mengaktifkan fitur TTS.');
+            return await this.replyError(sock, from, msg,
+                'Fitur suara belum diaktifkan di server ini.', {
+                    title: 'Belum Dikonfigurasi',
+                    hint: ['Hubungi owner bot untuk mengaktifkannya']
+                });
         }
 
         // Parse input

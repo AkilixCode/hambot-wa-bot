@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const logger = require('../utils/logger');
 
 class PortCommand extends CommandBase {
@@ -88,46 +89,48 @@ class PortCommand extends CommandBase {
             return await this.searchPort(sock, from, msg, query);
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal mencari informasi port.');
+            await this.replyError(sock, from, msg, 'Gagal mencari informasi port.');
         }
     }
 
     async sendPortList(sock, from, msg) {
-        const response = 
-`🔌 *REFERENSI PORT JARINGAN*
+        const common = [
+            ['20-21', 'FTP — transfer file'],
+            ['22', 'SSH — remote shell'],
+            ['25', 'SMTP — kirim email'],
+            ['53', 'DNS — resolusi nama'],
+            ['80', 'HTTP — web'],
+            ['443', 'HTTPS — web terenkripsi'],
+            ['445', 'SMB — berbagi berkas'],
+            ['3389', 'RDP — remote desktop']
+        ];
+        const databases = [
+            ['1433', 'MS SQL Server'],
+            ['3306', 'MySQL / MariaDB'],
+            ['5432', 'PostgreSQL'],
+            ['6379', 'Redis'],
+            ['27017', 'MongoDB']
+        ];
 
-📝 *Cara Pakai:*
-• \`.port 22\` - Info port 22
-• \`.port ssh\` - Cari port SSH
-• \`.port http\` - Cari port HTTP
+        const asLines = rows => rows.map(([port, desc]) => `${ui.SYM.bullet} ${ui.bold(port)} ${ui.SYM.dot} ${desc}`);
 
-🌐 *PORT PALING UMUM*
-• 20-21 - FTP (Transfer File)
-• 22 - SSH (Remote Shell)
-• 23 - Telnet (Remote Login)
-• 25 - SMTP (Kirim Email)
-• 53 - DNS (Domain Name)
-• 67-68 - DHCP (IP Otomatis)
-• 80 - HTTP (Web)
-• 110 - POP3 (Email)
-• 143 - IMAP (Email)
-• 443 - HTTPS (Web Secure)
-• 445 - SMB (File Sharing)
-• 3389 - RDP (Remote Desktop)
-
-🗄️ *DATABASE PORTS*
-• 1433 - MS SQL Server
-• 3306 - MySQL
-• 5432 - PostgreSQL
-• 6379 - Redis
-• 27017 - MongoDB
-
-💡 *Tips:*
-• Port 0-1023: Well-known ports
-• Port 1024-49151: Registered
-• Port 49152-65535: Dynamic`;
-
-        await this.reply(sock, from, msg, response);
+        await this.reply(sock, from, msg, ui.card({
+            icon: '🔌',
+            title: ui.smallCaps('Referensi Port'),
+            lines: [
+                `🌐 ${ui.bold('Paling umum')}`,
+                ...asLines(common),
+                '',
+                `🗄️ ${ui.bold('Database')}`,
+                ...asLines(databases),
+                '',
+                `${ui.EMOJI.tip} ${ui.bold('Rentang')}`,
+                `${ui.SYM.dot} 0–1023 well-known`,
+                `${ui.SYM.dot} 1024–49151 registered`,
+                `${ui.SYM.dot} 49152–65535 dynamic`
+            ],
+            footer: 'Ketik .port 22 atau .port ssh untuk detail'
+        }));
         await this.react(sock, msg, '✅');
     }
 

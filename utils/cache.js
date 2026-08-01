@@ -21,6 +21,10 @@ class Cache {
         const envInterval = parseInt(process.env.CACHE_CLEANUP_INTERVAL);
         const cleanupInterval = (envInterval && envInterval > 0) ? envInterval : 300000;
         this.cleanupInterval = setInterval(() => this.cleanup(), cleanupInterval);
+        // A housekeeping timer should not be a reason for the process to stay
+        // alive — without unref() any script that merely requires this module
+        // hangs instead of exiting.
+        this.cleanupInterval.unref();
         
         // Batas maksimal entri untuk mencegah kebocoran memori
         this.maxEntries = 1000;

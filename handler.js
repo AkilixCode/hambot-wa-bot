@@ -9,6 +9,7 @@ const cache = require('./utils/cache');
 const RateLimiter = require('./utils/rate-limiter');
 const logger = require('./utils/logger');
 const security = require('./utils/security');
+const ui = require('./utils/ui');
 const commandRegistry = require('./commands/registry');
 const path = require('path');
 
@@ -20,7 +21,82 @@ const rateLimiter = new RateLimiter(
 
 // Queue management
 let activeProcesses = 0;
+// sender JID -> { warned: boolean, expiresAt: number }
 const userCooldowns = new Map();
+
+/**
+ * Is this sender an admin of this group?
+ *
+ * Reading group metadata costs an API round trip, so callers should only ask
+ * when a command actually gates on it — not on every incoming message.
+ *
+ * @param {Object} sock
+ * @param {string} groupJid
+ * @param {string} senderJid
+ * @returns {Promise<boolean>} False when membership cannot be established
+ */
+async function isGroupAdmin(sock, groupJid, senderJid) {
+    try {
+        const metadata = await sock.groupMetadata(groupJid);
+        // Participant IDs may be reported as @lid or @s.whatsapp.net depending
+        // on the group, so fall back to comparing the bare number.
+        const senderNumber = senderJid.split('@')[0].split(':')[0];
+        const participant = metadata.participants.find(p =>
+            p.id === senderJid || p.id.split('@')[0].split(':')[0] === senderNumber
+        );
+
+        return participant ? ['admin', 'superadmin'].includes(participant.admin) : false;
+    } catch (error) {
+        // If the roster cannot be read we cannot prove the sender is an admin,
+        // so deny rather than assume.
+        logger.warn('Group metadata unavailable for admin check', { context: 'admin-check' });
+        return false;
+    }
+}
+
+/**
+ * Point a user at the right command when they mistype one.
+ *
+ * Unknown commands used to be dropped in total silence, which made a typo
+ * indistinguishable from the bot being offline.
+ *
+ * @param {Object} sock
+ * @param {Object} msg
+ * @param {string} from Chat JID
+ * @param {string} sender Sender JID
+ * @param {string} commandName The unrecognised name the user typed
+ * @param {boolean} isOwnerSender
+ */
+async function sendUnknownCommandHint(sock, msg, from, sender, commandName, isOwnerSender) {
+    if (!commandName || commandName.length > 32) return;
+
+    const suggestions = commandRegistry.suggest(commandName, {
+        // Never suggest owner-only commands to anyone else — the menu hides
+        // them on purpose, and a typo must not become a way to enumerate them.
+        filter: name => isOwnerSender || !config.isOwnerOnlyCommand(name)
+    });
+
+    // Stay quiet unless there is something useful to say. Replying to every
+    // stray message that merely starts with the prefix would make the bot noisy
+    // in groups.
+    if (suggestions.length === 0) return;
+
+    // This runs before the normal rate-limit check further down, so it has to
+    // spend a token itself. Otherwise unknown commands would be an unmetered
+    // way to make the bot send messages.
+    if (!rateLimiter.check(sender).allowed) return;
+
+    const prefix = config.bot.prefix;
+    await sock.sendMessage(from, {
+        text: ui.error(`Perintah ${ui.mono(prefix + ui.safe(commandName, 32))} tidak dikenal.`, {
+            title: 'Tidak Dikenal',
+            hint: [
+                ...suggestions.map(name => `${prefix}${name}`),
+                `${prefix}menu ${ui.SYM.dot} daftar semua perintah`
+            ]
+        })
+    }, { quoted: msg });
+}
 
 /**
  * Main message handler with security
@@ -97,15 +173,21 @@ module.exports = async (sock, m) => {
                 
                 security.trackSuspiciousActivity(sender, 'malicious_pattern');
                 
-                return await sock.sendMessage(from, { 
-                    text: '⚠️ Pesanmu mengandung pola mencurigakan dan diblokir karena alasan keamanan.' 
+                return await sock.sendMessage(from, {
+                    text: ui.warn('Pesanmu mengandung pola yang mencurigakan, jadi diblokir demi keamanan.', {
+                        title: 'Diblokir',
+                        hint: ['Kirim ulang tanpa karakter atau perintah aneh']
+                    })
                 }, { quoted: msg });
             }
         }
 
         // Get command from registry
         command = commandRegistry.get(commandName);
-        if (!command) return; // Unknown command, ignore
+        if (!command) {
+            await sendUnknownCommandHint(sock, msg, from, sender, commandName, isOwnerSender);
+            return;
+        }
 
         // SECURITY: always authorise against the canonical command name.
         // `commandName` is raw user input, so an alias (e.g. `.sec` for
@@ -115,7 +197,11 @@ module.exports = async (sock, m) => {
         // Runtime-disabled commands (owner can still use them to test)
         if (commandRegistry.isDisabled(canonicalName) && !isOwnerSender) {
             return await sock.sendMessage(from, {
-                text: '🚫 Perintah ini sedang dinonaktifkan sementara oleh owner.'
+                text: ui.warn('Perintah ini sedang dimatikan sementara oleh owner.', {
+                    title: 'Nonaktif',
+                    icon: ui.EMOJI.blocked,
+                    hint: [`${config.bot.prefix}menu ${ui.SYM.dot} lihat perintah lain yang aktif`]
+                })
             }, { quoted: msg });
         }
 
@@ -143,13 +229,24 @@ module.exports = async (sock, m) => {
             });
             
             logger.commandEnd(tracker, 'blocked', argsValidation.reason);
-            return await sock.sendMessage(from, { 
-                text: `⚠️ Keamanan: ${argsValidation.reason}` 
+            return await sock.sendMessage(from, {
+                text: ui.warn(argsValidation.reason, {
+                    title: 'Argumen Ditolak',
+                    hint: [`${config.bot.prefix}menu ${canonicalName} ${ui.SYM.dot} lihat cara pakai yang benar`]
+                })
             }, { quoted: msg });
         }
 
-        // SECURITY: Check permissions (against the canonical name, never the alias)
-        const permission = security.checkPermission(sender, canonicalName, isGroup);
+        // SECURITY: Check permissions (against the canonical name, never the alias).
+        // Group-admin status is resolved lazily — only commands that actually
+        // gate on it are worth an extra metadata round trip. The owner always
+        // counts as an admin of their own bot.
+        const needsAdmin = isGroup && config.isAdminOnlyCommand(canonicalName);
+        const isAdmin = needsAdmin
+            ? (isOwnerSender || await isGroupAdmin(sock, from, sender))
+            : false;
+
+        const permission = security.checkPermission(sender, canonicalName, isGroup, isAdmin);
         if (!permission.allowed) {
             // Repeated probing of owner-only commands earns an escalating block
             const attempt = config.isOwnerOnlyCommand(canonicalName)
@@ -166,9 +263,13 @@ module.exports = async (sock, m) => {
 
             logger.commandEnd(tracker, 'blocked', permission.reason);
             return await sock.sendMessage(from, {
-                text: attempt.blocked
-                    ? `🔒 Akses Ditolak: ${permission.reason}\n\n⛔ Terlalu banyak percobaan. Kamu diblokir selama ${attempt.blockMinutes} menit.`
-                    : `🔒 Akses Ditolak: ${permission.reason}`
+                text: ui.error(permission.reason, {
+                    title: 'Akses Ditolak',
+                    icon: ui.EMOJI.locked,
+                    hint: attempt.blocked
+                        ? [`Terlalu banyak percobaan — kamu diblokir ${attempt.blockMinutes} menit`]
+                        : [`${config.bot.prefix}menu ${ui.SYM.dot} perintah yang bisa kamu pakai`]
+                })
             }, { quoted: msg });
         }
 
@@ -177,25 +278,54 @@ module.exports = async (sock, m) => {
         if (!rateLimit.allowed) {
             security.trackSuspiciousActivity(sender, 'rate_limit_exceeded');
             logger.commandEnd(tracker, 'blocked', `Rate limit exceeded (retry in ${rateLimit.retryAfter}s)`);
-            return sock.sendMessage(from, { 
-                text: `⏳ Batas request tercapai. Coba lagi dalam ${rateLimit.retryAfter} detik.` 
+            return sock.sendMessage(from, {
+                text: ui.warn(`Kamu sudah mencapai batas permintaan. Coba lagi dalam ${rateLimit.retryAfter} detik.`, {
+                    title: 'Terlalu Banyak Permintaan',
+                    icon: ui.EMOJI.wait
+                })
             }, { quoted: msg });
         }
 
         // --- Cooldown (Simple anti-spam) ---
-        if (userCooldowns.has(sender)) {
+        const cooldown = userCooldowns.get(sender);
+        if (cooldown) {
+            // Say something the first time only. Repeating the notice for every
+            // dropped message would turn one impatient user into a flood, but
+            // dropping all of them in silence (the previous behaviour) left the
+            // user thinking the bot was dead.
+            if (!cooldown.warned) {
+                cooldown.warned = true;
+                const wait = Math.max(1, Math.ceil((cooldown.expiresAt - Date.now()) / 1000));
+                logger.commandEnd(tracker, 'blocked', 'Cooldown active');
+                return sock.sendMessage(from, {
+                    text: ui.warn(`Sabar sedikit — tunggu ${wait} detik sebelum perintah berikutnya.`, {
+                        title: 'Terlalu Cepat',
+                        icon: ui.EMOJI.clock
+                    })
+                }, { quoted: msg });
+            }
+            logger.commandEnd(tracker, 'blocked', 'Cooldown active');
             return;
         }
-        userCooldowns.set(sender, true);
-        setTimeout(() => userCooldowns.delete(sender), command.cooldown || config.performance.cooldownMs);
+
+        const cooldownMs = command.cooldown || config.performance.cooldownMs;
+        userCooldowns.set(sender, { warned: false, expiresAt: Date.now() + cooldownMs });
+        setTimeout(() => userCooldowns.delete(sender), cooldownMs);
 
         // --- Queue Management for Heavy Commands ---
         isHeavyCommand = command.isHeavy;
         if (isHeavyCommand) {
             if (activeProcesses >= config.performance.maxProcesses) {
                 logger.commandEnd(tracker, 'busy', `Server busy (${activeProcesses}/${config.performance.maxProcesses})`);
-                return sock.sendMessage(from, { 
-                    text: `⚠️ Server sibuk (${activeProcesses}/${config.performance.maxProcesses}). Mohon tunggu...` 
+                return sock.sendMessage(from, {
+                    text: ui.warn(
+                        `Bot sedang memproses ${activeProcesses} dari ${config.performance.maxProcesses} tugas berat.`,
+                        {
+                            title: 'Sedang Sibuk',
+                            icon: ui.EMOJI.wait,
+                            hint: ['Coba lagi sebentar lagi']
+                        }
+                    )
                 }, { quoted: msg });
             }
             activeProcesses++;
@@ -239,8 +369,11 @@ module.exports = async (sock, m) => {
         try {
             const from = m.messages[0]?.key?.remoteJid;
             if (from) {
-                await sock.sendMessage(from, { 
-                    text: '❌ Terjadi kesalahan saat memproses perintahmu.' 
+                await sock.sendMessage(from, {
+                    text: ui.error('Terjadi kesalahan saat memproses perintahmu.', {
+                        title: 'Gagal',
+                        hint: ['Coba lagi sebentar lagi', `${config.bot.prefix}menu ${ui.SYM.dot} lihat daftar perintah`]
+                    })
                 }, { quoted: m.messages[0] });
             }
         } catch (sendError) {

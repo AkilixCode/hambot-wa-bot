@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const logger = require('../utils/logger');
@@ -12,8 +13,8 @@ class CryptoCommand extends CommandBase {
     constructor() {
         super({
             name: 'crypto',
-            aliases: ['coin', 'bitcoin', 'btc'],
-            description: 'Get cryptocurrency price information',
+            aliases: ['kripto', 'bitcoin', 'btc'],
+            description: 'Cek harga cryptocurrency terkini',
             usage: '.crypto [symbol]',
             category: 'info',
             cooldown: 3000
@@ -52,10 +53,15 @@ class CryptoCommand extends CommandBase {
             this.logError(error, context);
             
             if (error.response?.status === 404) {
-                await this.reply(sock, from, msg, 
-                    `❌ Cryptocurrency "${symbol}" not found.\n\nTry: bitcoin, ethereum, dogecoin, etc.`);
+                await this.replyError(sock, from, msg,
+                    `Koin ${ui.mono(ui.safe(symbol, 30))} tidak ada di CoinGecko.`, {
+                        title: 'Koin Tidak Ditemukan',
+                        hint: ['.crypto bitcoin', '.crypto ethereum', '.crypto dogecoin']
+                    });
             } else {
-                await this.reply(sock, from, msg, '❌ Failed to fetch crypto data.');
+                await this.replyError(sock, from, msg, 'Gagal mengambil data harga kripto.', {
+                    hint: ['Coba lagi sebentar lagi']
+                });
             }
         }
     }
@@ -75,28 +81,30 @@ class CryptoCommand extends CommandBase {
             const changeEmoji = change24h >= 0 ? '📈' : '📉';
             const changeColor = change24h >= 0 ? '+' : '';
 
-            const info = 
-`💰 *${name} (${symbol})*
-
-💵 Price: $${this.formatNumber(price)}
-${changeEmoji} 24h: ${changeColor}${change24h.toFixed(2)}%
-📊 7d: ${changeColor}${change7d?.toFixed(2) || 'N/A'}%
-
-📈 24h High: $${this.formatNumber(high24h)}
-📉 24h Low: $${this.formatNumber(low24h)}
-
-💎 Market Cap: $${this.formatLargeNumber(marketCap)}
-📊 Volume (24h): $${this.formatLargeNumber(volume24h)}
-
-${fromCache ? '📦 (cached)' : '🔄 Live data'}`;
+            const info = ui.card({
+                icon: '💰',
+                title: `${name} (${symbol})`,
+                lines: [
+                    ui.kv('Harga', `$${ui.number(price)}`, '💵'),
+                    ui.kv('24 jam', `${changeColor}${change24h.toFixed(2)}%`, changeEmoji),
+                    ui.kv('7 hari', change7d != null ? `${change7d >= 0 ? '+' : ''}${change7d.toFixed(2)}%` : '-', '🗓️'),
+                    '',
+                    ui.kv('Tertinggi 24j', `$${ui.number(high24h)}`, '📈'),
+                    ui.kv('Terendah 24j', `$${ui.number(low24h)}`, '📉'),
+                    '',
+                    ui.kv('Kapitalisasi', `$${ui.compactNumber(marketCap)}`, '💎'),
+                    ui.kv('Volume 24j', `$${ui.compactNumber(volume24h)}`, '📊')
+                ],
+                footer: `${ui.sourceBadge(fromCache)} ${ui.SYM.dot} CoinGecko`
+            });
 
             const thumbnail = data.image?.large;
 
             if (thumbnail) {
-                await sock.sendMessage(from, {
+                await this.replyMedia(sock, from, msg, {
                     image: { url: thumbnail },
                     caption: info
-                }, { quoted: msg });
+                });
             } else {
                 await this.reply(sock, from, msg, info);
             }
@@ -109,19 +117,6 @@ ${fromCache ? '📦 (cached)' : '🔄 Live data'}`;
         }
     }
 
-    formatNumber(num) {
-        if (num >= 1) {
-            return num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-        }
-        return num.toFixed(6);
-    }
-
-    formatLargeNumber(num) {
-        if (num >= 1e12) return (num / 1e12).toFixed(2) + 'T';
-        if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
-        if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
-        return this.formatNumber(num);
-    }
 }
 
 module.exports = CryptoCommand;

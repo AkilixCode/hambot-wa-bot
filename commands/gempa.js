@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const logger = require('../utils/logger');
@@ -13,7 +14,7 @@ class GempaCommand extends CommandBase {
         super({
             name: 'gempa',
             aliases: ['earthquake', 'quake'],
-            description: 'Get latest earthquake information from BMKG',
+            description: 'Info gempa terbaru dari BMKG',
             usage: '.gempa',
             category: 'info',
             cooldown: 5000
@@ -51,33 +52,35 @@ class GempaCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to fetch earthquake data from BMKG.');
+            await this.replyError(sock, from, msg, 'Gagal mengambil data gempa dari BMKG.', {
+                hint: ['Coba lagi sebentar lagi']
+            });
         }
     }
 
     async sendQuakeInfo(sock, from, msg, quake, fromCache) {
         try {
-            const info = 
-`⚠️ *LATEST EARTHQUAKE INFO*
-_Data from BMKG (Indonesia)_
-
-📅 Date: ${quake.Tanggal}
-⏰ Time: ${quake.Jam} WIB
-📍 Location: ${quake.Coordinates}
-📉 Magnitude: ${quake.Magnitude} SR
-📏 Depth: ${quake.Kedalaman}
-🗺️ Region: ${quake.Wilayah}
-
-⚠️ *Potential:* ${quake.Potensi}
-
-${fromCache ? '📦 (cached data)' : '🔄 Live data'}`;
+            const info = ui.card({
+                icon: '⚠️',
+                title: ui.smallCaps('Gempa Terkini'),
+                lines: [
+                    ui.kv('Waktu', `${quake.Tanggal}, ${quake.Jam}`, '📅'),
+                    ui.kv('Magnitudo', `${quake.Magnitude} SR`, '📉'),
+                    ui.kv('Kedalaman', quake.Kedalaman, '📏'),
+                    ui.kv('Koordinat', quake.Coordinates, '📍'),
+                    ui.kv('Wilayah', quake.Wilayah, '🗺️'),
+                    '',
+                    `⚠️ ${ui.bold('Potensi:')} ${quake.Potensi}`
+                ],
+                footer: `Sumber BMKG ${ui.SYM.dot} ${ui.sourceBadge(fromCache)}`
+            });
 
             const imageUrl = `https://data.bmkg.go.id/DataMKG/TEWS/${quake.Shakemap}`;
 
-            await sock.sendMessage(from, {
+            await this.replyMedia(sock, from, msg, {
                 image: { url: imageUrl },
                 caption: info
-            }, { quoted: msg });
+            });
 
             await this.react(sock, msg, '✅');
 

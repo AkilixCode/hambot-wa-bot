@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const logger = require('../utils/logger');
 
 class NetInfoCommand extends CommandBase {
@@ -11,7 +12,7 @@ class NetInfoCommand extends CommandBase {
         super({
             name: 'netinfo',
             aliases: ['network', 'netcheat', 'jaringan'],
-            description: 'Cheat sheet dan referensi networking lengkap',
+            description: 'Referensi jaringan komputer',
             usage: '.netinfo [topik]',
             category: 'technical',
             cooldown: 2000
@@ -59,11 +60,14 @@ class NetInfoCommand extends CommandBase {
         const topicHandler = this.topics[topic];
 
         if (!topicHandler) {
-            const availableTopics = Object.keys(this.topics);
-            return await this.reply(sock, from, msg, 
-                `❌ Topik "${topic}" tidak ditemukan.\n\n` +
-                `📖 *Topik tersedia:*\n` +
-                `osi, tcpip, subnetting, kabel, kelasip, perintah, topologi, wifi, biner, protokol, routing, vlan, firewall, nat, dhcp, vpn, troubleshoot, ipv6`);
+            return await this.replyError(sock, from, msg,
+                `Topik ${ui.mono(ui.safe(topic, 30))} tidak ada.`, {
+                    title: 'Topik Tidak Ditemukan',
+                    hint: [
+                        `Topik tersedia: ${Object.keys(this.topics).join(', ')}`,
+                        '.netinfo — lihat daftar lengkap'
+                    ]
+                });
         }
 
         try {
@@ -73,56 +77,38 @@ class NetInfoCommand extends CommandBase {
             await this.react(sock, msg, '✅');
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal menampilkan informasi.');
+            await this.replyError(sock, from, msg, 'Gagal menampilkan informasi.');
         }
     }
 
     async sendMainMenu(sock, from, msg) {
-        const response = 
-`📚 *REFERENSI JARINGAN KOMPUTER*
+        // Group the topics for display, but derive the entries from this.topics
+        // so a topic can never appear in the menu without a handler behind it.
+        const groups = [
+            ['📖', 'Dasar', ['osi', 'tcpip', 'subnetting', 'kelasip', 'biner', 'ipv6']],
+            ['🔌', 'Infrastruktur', ['kabel', 'topologi', 'wifi']],
+            ['🔧', 'Teknologi', ['protokol', 'routing', 'vlan', 'nat', 'dhcp', 'vpn', 'firewall']],
+            ['💻', 'Praktis', ['perintah', 'troubleshoot']]
+        ];
 
-📝 *Cara Pakai:*
-\`.netinfo <topik>\`
+        const lines = [];
+        for (const [icon, label, topics] of groups) {
+            const available = topics.filter(t => this.topics[t]);
+            if (available.length === 0) continue;
+            lines.push(`${icon} ${ui.bold(label)}`);
+            lines.push(available.map(t => ui.mono(t)).join('  '));
+            lines.push('');
+        }
+        lines.push(`${ui.EMOJI.tip} ${ui.bold('Contoh')}`);
+        lines.push(...ui.bullets([ui.mono('.netinfo osi'), ui.mono('.netinfo subnetting')]));
 
-📖 *TOPIK DASAR*
-• \`osi\` - Model OSI 7 Layer
-• \`tcpip\` - Model TCP/IP
-• \`subnetting\` - Panduan Subnet & CIDR
-• \`kelasip\` - Kelas IP Address
-• \`biner\` - Konversi Biner & Hex
-• \`ipv6\` - Panduan IPv6
-
-🔌 *INFRASTRUKTUR*
-• \`kabel\` - Jenis Kabel Jaringan
-• \`topologi\` - Topologi Jaringan
-• \`wifi\` - Standar WiFi & Wireless
-
-🔧 *TEKNOLOGI*
-• \`protokol\` - Protokol Jaringan
-• \`routing\` - Routing & Gateway
-• \`vlan\` - Virtual LAN
-• \`nat\` - Network Address Translation
-• \`dhcp\` - DHCP Server/Client
-• \`vpn\` - Virtual Private Network
-• \`firewall\` - Firewall & ACL
-
-💻 *PRAKTIS*
-• \`perintah\` - Command Line Network
-• \`troubleshoot\` - Troubleshooting
-
-💡 *Contoh:*
-\`.netinfo osi\`
-\`.netinfo subnetting\`
-\`.netinfo troubleshoot\`
-
-🔧 *Tools Praktis:*
-• \`.subnet 192.168.1.0/24\`
-• \`.ipinfo 8.8.8.8\`
-• \`.dns google.com\`
-• \`.port 22\``;
-
-        await this.reply(sock, from, msg, response);
-        await this.react(sock, msg, '📚');
+        await this.reply(sock, from, msg, ui.card({
+            icon: '📚',
+            title: ui.smallCaps('Referensi Jaringan'),
+            lines,
+            footer: `${Object.keys(this.topics).length} topik tersedia`
+        }));
+        await this.react(sock, msg, '✅');
     }
 
     getOSIModel() {

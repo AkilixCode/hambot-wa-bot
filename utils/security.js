@@ -3,6 +3,7 @@
  * Comprehensive security controls and threat protection
  */
 
+const dns = require('dns').promises;
 const logger = require('./logger');
 const config = require('../config');
 const redact = require('./redact');
@@ -286,7 +287,7 @@ class SecurityManager {
             if (arg.length > 2000) {
                 return {
                     valid: false,
-                    reason: 'Argument too long (max 2000 characters)'
+                    reason: 'Argumen terlalu panjang (maksimal 2000 karakter).'
                 };
             }
         }
@@ -298,18 +299,22 @@ class SecurityManager {
             if (!/^[0-9+\-*/.() ,MathsqrtSincostanlogabsroundfloorcepiPIE\^×÷]+$/i.test(expression)) {
                 return {
                     valid: false,
-                    reason: 'Invalid characters in mathematical expression'
+                    reason: 'Ada karakter yang tidak diizinkan dalam ekspresi matematika.'
                 };
             }
         }
 
-        // Check for URL validation in commands that use URLs
-        if (['video', 'photo'].includes(command)) {
+        // Check for URL validation in commands that use URLs.
+        // `music` belongs here too: it hands the URL straight to yt-dlp, so
+        // leaving it out made it the one unguarded path to the internal network.
+        if (['video', 'photo', 'music'].includes(command)) {
             const url = args[0];
-            if (url && !this.isValidURL(url)) {
+            // Only validate when the argument actually looks like a URL —
+            // `.music <judul lagu>` is a search, not a fetch.
+            if (url && /^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !this.isValidURL(url)) {
                 return {
                     valid: false,
-                    reason: 'Invalid or suspicious URL'
+                    reason: 'URL tidak valid atau mengarah ke jaringan internal.'
                 };
             }
         }
@@ -318,25 +323,155 @@ class SecurityManager {
     }
 
     /**
-     * Validate URL for safety
+     * Is this IPv4 address outside the public internet?
+     *
+     * @param {number} a First octet
+     * @param {number} b Second octet
+     * @returns {boolean}
+     * @private
+     */
+    _isPrivateIPv4(a, b) {
+        if (a === 0) return true;                          // 0.0.0.0/8 "this network"
+        if (a === 10) return true;                          // 10.0.0.0/8
+        if (a === 127) return true;                         // loopback, all of 127/8
+        if (a === 169 && b === 254) return true;            // link-local + cloud metadata
+        if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16.0.0/12, incl. Docker's bridge
+        if (a === 192 && b === 168) return true;            // 192.168.0.0/16
+        if (a === 192 && b === 0) return true;              // 192.0.0.0/24 + TEST-NET-1
+        if (a === 100 && b >= 64 && b <= 127) return true;  // 100.64.0.0/10 CGNAT / Tailscale
+        if (a >= 224) return true;                          // multicast, reserved, broadcast
+        return false;
+    }
+
+    /**
+     * Is this IPv6 address outside the public internet?
+     * @param {string} address Address without the surrounding brackets
+     * @returns {boolean}
+     * @private
+     */
+    _isPrivateIPv6(address) {
+        const addr = String(address).toLowerCase();
+
+        if (addr === '::1' || addr === '::') return true;
+
+        // IPv4-mapped addresses (::ffff:7f00:1) tunnel an IPv4 target through
+        // an IPv6 literal, so unwrap and re-check the embedded address.
+        const mapped = addr.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+        if (mapped) {
+            const high = parseInt(mapped[1], 16);
+            return this._isPrivateIPv4((high >> 8) & 0xff, high & 0xff);
+        }
+
+        if (/^f[cd]/.test(addr)) return true;    // fc00::/7 unique local
+        if (/^fe[89ab]/.test(addr)) return true; // fe80::/10 link-local
+        return false;
+    }
+
+    /**
+     * Does this hostname point somewhere that is not the public internet?
+     *
+     * The WHATWG URL parser already normalises the alternate IPv4 encodings
+     * (2130706433, 0x7f000001, 127.1, 0177.0.0.1 all become 127.0.0.1), so only
+     * the dotted-quad form has to be recognised here.
+     *
+     * @param {string} hostname url.hostname, IPv6 literals still bracketed
+     * @returns {boolean}
+     */
+    isPrivateHostname(hostname) {
+        // A trailing dot makes an FQDN ("localhost.") that resolves identically
+        // but slips past a naive equality check.
+        const host = String(hostname || '').toLowerCase().replace(/\.+$/, '');
+        if (!host) return true;
+
+        if (host.startsWith('[') && host.endsWith(']')) {
+            return this._isPrivateIPv6(host.slice(1, -1));
+        }
+
+        if (host === 'localhost' || host.endsWith('.localhost') ||
+            host.endsWith('.local') || host.endsWith('.internal') ||
+            host.endsWith('.home.arpa') || host === 'metadata') {
+            return true;
+        }
+
+        const quad = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+        if (quad) {
+            return this._isPrivateIPv4(Number(quad[1]), Number(quad[2]));
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve a URL's hostname and confirm every address it maps to is public.
+     *
+     * isValidURL() only inspects the text of the URL, so a hostname the
+     * attacker controls ("evil.example.com" with an A record of 169.254.169.254)
+     * sails straight through it. Call this before handing a user-supplied URL to
+     * anything that will actually fetch it.
+     *
+     * A resolver failure is treated as unsafe: if we cannot tell where a name
+     * points, we do not fetch it.
+     *
+     * @param {string} string A URL
+     * @returns {Promise<{safe: boolean, reason?: string}>}
+     */
+    async resolvesToPublicHost(string) {
+        let url;
+        try {
+            url = new URL(string);
+        } catch (e) {
+            return { safe: false, reason: 'URL tidak valid.' };
+        }
+
+        const hostname = url.hostname.replace(/^\[|\]$/g, '');
+
+        // A literal address needs no lookup; isPrivateHostname already ruled on it.
+        if (/^[\d.]+$/.test(hostname) || hostname.includes(':')) {
+            return this.isPrivateHostname(url.hostname)
+                ? { safe: false, reason: 'URL mengarah ke jaringan internal.' }
+                : { safe: true };
+        }
+
+        try {
+            const records = await dns.lookup(hostname, { all: true });
+            for (const record of records) {
+                const bracketed = record.family === 6 ? `[${record.address}]` : record.address;
+                if (this.isPrivateHostname(bracketed)) {
+                    return { safe: false, reason: 'URL mengarah ke jaringan internal.' };
+                }
+            }
+            return { safe: true };
+        } catch (error) {
+            return { safe: false, reason: 'Nama domain tidak bisa diperiksa.' };
+        }
+    }
+
+    /**
+     * Validate URL for safety.
+     *
+     * This is a syntactic check: it stops a user from naming an internal
+     * address directly. It cannot stop a public hostname whose DNS record
+     * points inward — use resolvesToPublicHost() before actually fetching.
+     *
+     * @param {string} string
+     * @returns {boolean}
      */
     isValidURL(string) {
         try {
             const url = new URL(string);
-            
-            // Block localhost and private IPs
-            const hostname = url.hostname.toLowerCase();
-            if (hostname === 'localhost' || 
-                hostname === '127.0.0.1' ||
-                hostname.startsWith('192.168.') ||
-                hostname.startsWith('10.') ||
-                hostname.startsWith('172.16.') ||
-                hostname === '0.0.0.0') {
-                return false;
-            }
 
             // Only allow http and https
             if (!['http:', 'https:'].includes(url.protocol)) {
+                return false;
+            }
+
+            // Credentials in a URL are a redirect/confusion trick far more often
+            // than a legitimate need for a download link.
+            if (url.username || url.password) {
+                return false;
+            }
+
+            if (this.isPrivateHostname(url.hostname)) {
                 return false;
             }
 
@@ -618,9 +753,9 @@ class SecurityManager {
             }
         }
 
-        // Admin-only commands for groups
-        const adminOnlyInGroups = [];
-        if (isGroup && adminOnlyInGroups.includes(command) && !isAdmin) {
+        // Admin-only commands for groups. The list lives in config so it can be
+        // tuned per deployment via ADMIN_ONLY_COMMANDS.
+        if (isGroup && config.isAdminOnlyCommand(command) && !isAdmin) {
             return {
                 allowed: false,
                 reason: 'Perintah khusus admin di grup'
@@ -845,6 +980,8 @@ class SecurityManager {
 const securityManager = new SecurityManager();
 
 // Auto cleanup every 5 minutes
-setInterval(() => securityManager.cleanup(), 300000);
+const cleanupTimer = setInterval(() => securityManager.cleanup(), 300000);
+// Housekeeping only: must not keep the event loop alive on its own.
+cleanupTimer.unref();
 
 module.exports = securityManager;

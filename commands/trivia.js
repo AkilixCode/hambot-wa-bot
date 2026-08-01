@@ -6,13 +6,17 @@
 const CommandBase = require('./base');
 const httpClient = require('../utils/http-client');
 const logger = require('../utils/logger');
+const ui = require('../utils/ui');
+
+// How long people get to think before the answer is revealed.
+const ANSWER_DELAY_MS = 15000;
 
 class TriviaCommand extends CommandBase {
     constructor() {
         super({
             name: 'trivia',
             aliases: ['quiz', 'question'],
-            description: 'Get a random trivia question',
+            description: 'Main kuis trivia acak',
             usage: '.trivia [easy/medium/hard]',
             category: 'fun',
             cooldown: 3000
@@ -62,27 +66,42 @@ class TriviaCommand extends CommandBase {
                     hard: '🔴'
                 }[selectedDifficulty];
 
-                const response = 
-`🎯 *Trivia Quiz*
+                const difficultyName = {
+                    easy: 'Mudah',
+                    medium: 'Sedang',
+                    hard: 'Sulit'
+                }[selectedDifficulty];
 
-${difficultyEmoji} Difficulty: ${selectedDifficulty.toUpperCase()}
-📚 Category: ${question.category}
+                await this.reply(sock, from, msg, ui.card({
+                    icon: '🎯',
+                    title: 'Kuis Trivia',
+                    lines: [
+                        ui.kv('Tingkat', difficultyName, difficultyEmoji),
+                        ui.kv('Kategori', question.category, '📚'),
+                        '',
+                        `❓ ${ui.bold(decodedQuestion)}`,
+                        '',
+                        answerList
+                    ],
+                    footer: `Jawaban muncul dalam ${ANSWER_DELAY_MS / 1000} detik`
+                }));
 
-❓ Question:
-${decodedQuestion}
-
-Options:
-${answerList}
-
-_Answer will be revealed in replies!_`;
-
-                await this.reply(sock, from, msg, response);
-                
-                // Send answer after a delay (in a follow-up message)
+                // Reveal the answer separately so people have time to think. The
+                // old five-second gap arrived before most had finished reading.
                 setTimeout(async () => {
-                    const answerResponse = `✅ *Answer:* ${correctAnswer}`;
-                    await this.reply(sock, from, msg, answerResponse);
-                }, 5000);
+                    try {
+                        await this.reply(sock, from, msg, ui.card({
+                            icon: '✅',
+                            title: 'Jawaban',
+                            lines: [ui.bold(correctAnswer)],
+                            footer: 'Ketik .trivia untuk soal berikutnya'
+                        }));
+                    } catch (revealError) {
+                        // The chat may be gone by now; a failed reveal must not
+                        // crash the process from inside a bare timer callback.
+                        this.logError(revealError, context);
+                    }
+                }, ANSWER_DELAY_MS);
 
                 await this.react(sock, msg, '✅');
 
@@ -92,7 +111,9 @@ _Answer will be revealed in replies!_`;
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to fetch trivia question. Try again!');
+            await this.replyError(sock, from, msg, 'Gagal mengambil soal trivia.', {
+                hint: ['Coba lagi sebentar lagi', '.trivia easy']
+            });
         }
     }
 

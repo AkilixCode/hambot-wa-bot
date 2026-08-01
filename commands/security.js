@@ -363,7 +363,7 @@ class SecurityCommand extends CommandBase {
         const pending = this.pendingActions.get(context.sender);
 
         if (!pending) {
-            return await this.reply(sock, from, msg, '❌ Tidak ada aksi yang menunggu konfirmasi.');
+            return await this.replyError(sock, from, msg, 'Tidak ada aksi yang menunggu konfirmasi.');
         }
 
         if (Date.now() > pending.expiresAt) {
@@ -427,7 +427,7 @@ class SecurityCommand extends CommandBase {
             case 'setprefix':
                 return await this._doSetPrefix(sock, from, msg, context, pending.payload);
             default:
-                return await this.reply(sock, from, msg, '❌ Aksi tertunda tidak dikenal.');
+                return await this.replyError(sock, from, msg, 'Aksi tertunda tidak dikenal.');
         }
     }
 
@@ -938,7 +938,7 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
 
             const target = context.isGroup ? this._ownerDmJid() : from;
             if (!target) {
-                return await this.reply(sock, from, msg, '❌ Tidak ada tujuan pribadi untuk mengirim log.');
+                return await this.replyError(sock, from, msg, 'Tidak ada tujuan pribadi untuk mengirim log.');
             }
 
             if (header.length + logText.length <= MAX_MESSAGE_LENGTH) {
@@ -1296,8 +1296,7 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
         }
 
         if (newCooldown < 500 || newCooldown > 30000) {
-            return await this.reply(sock, from, msg,
-                '❌ Cooldown harus antara 500ms dan 30000ms.');
+            return await this.replyError(sock, from, msg, 'Cooldown harus antara 500ms dan 30000ms.');
         }
 
         const oldCooldown = config.performance.cooldownMs;
@@ -1370,7 +1369,7 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
         }
 
         if (newMax < 1 || newMax > 20) {
-            return await this.reply(sock, from, msg, '❌ Jumlah maks proses harus antara 1 dan 20.');
+            return await this.replyError(sock, from, msg, 'Jumlah maks proses harus antara 1 dan 20.');
         }
 
         const oldMax = config.performance.maxProcesses;

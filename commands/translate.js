@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const { fungsiTranslate } = require('../utils/helpers');
 const logger = require('../utils/logger');
 
@@ -23,24 +24,22 @@ class TranslateCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0] || !args[1]) {
-            return await this.reply(sock, from, msg, 
-`🌐 *Penerjemah*
-
-📝 Cara Pakai: .translate <bahasa> <teks>
-
-🌍 Kode Bahasa:
-• en - English
-• id - Indonesia
-• es - Español
-• fr - Français
-• de - Deutsch
-• ja - 日本語
-• ko - 한국어
-• zh - 中文
-• ar - العربية
-• hi - हिंदी
-
-📌 Contoh: .translate id Hello World`);
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🌐',
+                title: 'Penerjemah',
+                description: 'Terjemahkan teks ke bahasa lain.',
+                usage: ['.translate <kode bahasa> <teks>'],
+                examples: [
+                    '.translate id Hello World',
+                    '.translate en Selamat pagi',
+                    '.translate ja Terima kasih'
+                ],
+                notes: [
+                    'en Inggris · id Indonesia · es Spanyol · fr Prancis',
+                    'de Jerman · ja Jepang · ko Korea · zh Mandarin',
+                    'ar Arab · hi Hindi'
+                ]
+            });
         }
 
         await this.react(sock, msg, '🌐');
@@ -53,21 +52,24 @@ class TranslateCommand extends CommandBase {
             const translated = await fungsiTranslate(text, targetLang);
             logger.info('Translate: done');
 
-            const response = 
-`🌐 *Hasil Terjemahan*
-
-📝 Asli:
-${text}
-
-🔄 Terjemahan (${targetLang}):
-${translated}`;
-
-            await this.reply(sock, from, msg, response);
+            await this.reply(sock, from, msg, ui.card({
+                icon: '🌐',
+                title: 'Hasil Terjemahan',
+                lines: [
+                    `📝 ${ui.bold('Asli')}`,
+                    ui.safe(text, 800),
+                    '',
+                    `🔄 ${ui.bold(`Terjemahan (${ui.safe(targetLang, 8)})`)}`,
+                    ui.safe(translated, 800)
+                ]
+            }));
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Terjemahan gagal. Periksa kode bahasa.');
+            await this.replyError(sock, from, msg, 'Terjemahan gagal dijalankan.', {
+                hint: ['Periksa kode bahasanya', '.translate id Hello World']
+            });
         }
     }
 }

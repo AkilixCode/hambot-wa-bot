@@ -10,7 +10,7 @@ class TagAllCommand extends CommandBase {
         super({
             name: 'tagall',
             aliases: ['everyone', 'all', 'hidetag'],
-            description: 'Mention all group members',
+            description: 'Tag semua anggota grup',
             usage: '.tagall [message]',
             category: 'group',
             cooldown: 10000, // 10 seconds cooldown
@@ -55,7 +55,7 @@ class TagAllCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to tag members.');
+            await this.replyError(sock, from, msg, 'Failed to tag members.');
         }
     }
 }

@@ -5,6 +5,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const logger = require('../utils/logger');
 
 class QuoteCommand extends CommandBase {
@@ -12,7 +13,7 @@ class QuoteCommand extends CommandBase {
         super({
             name: 'quote',
             aliases: ['quotes', 'inspire', 'kutipan', 'motivasi'],
-            description: 'Dapatkan kutipan inspirasional acak',
+            description: 'Kutipan inspirasional acak',
             usage: '.quote',
             category: 'fun',
             cooldown: 3000
@@ -31,21 +32,23 @@ class QuoteCommand extends CommandBase {
             logger.info('Quote: fetching random quote...');
             const randomQuote = this.quotes[Math.floor(Math.random() * this.quotes.length)];
 
-            const response = 
-`💭 *Kutipan Inspirasional*
-
-"${randomQuote.quote}"
-
-— _${randomQuote.author}_
-
-🎲 _Ketik .quote untuk kutipan lain_`;
-
-            await this.reply(sock, from, msg, response);
+            await this.reply(sock, from, msg, ui.card({
+                icon: '💭',
+                title: 'Kutipan Inspirasional',
+                lines: [
+                    ui.italic(`"${randomQuote.quote}"`),
+                    '',
+                    `${ui.SYM.branchLight} ${ui.bold(randomQuote.author)}`
+                ],
+                footer: 'Ketik .quote untuk kutipan lain'
+            }));
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal menampilkan kutipan.');
+            await this.replyError(sock, from, msg, 'Gagal menampilkan kutipan.', {
+                hint: ['Coba lagi sebentar lagi']
+            });
         }
     }
 

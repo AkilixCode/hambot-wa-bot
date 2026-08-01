@@ -34,7 +34,7 @@ class StickerCommand extends CommandBase {
 
             const imageMessage = isImg || isQuoted;
             if (!imageMessage) {
-                return await this.reply(sock, from, msg, '❌ Kirim atau reply gambar dulu!');
+                return await this.replyError(sock, from, msg, 'Kirim atau reply gambar dulu!');
             }
 
             // Download image
@@ -57,7 +57,7 @@ class StickerCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal membuat stiker. Pastikan gambarnya valid.');
+            await this.replyError(sock, from, msg, 'Gagal membuat stiker. Pastikan gambarnya valid.');
         }
     }
 }

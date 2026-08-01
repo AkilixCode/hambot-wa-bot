@@ -159,11 +159,14 @@ const permTests = [
         allowed: true
     },
     {
+        // An owner-only command must stay denied even when BOT_OWNER_ID is
+        // unset. Falling open in "dev mode" would hand the control panel to
+        // every user of a misconfigured deployment.
         userId: 'normaluser@s.whatsapp.net',
         command: 'security',
         isGroup: false,
-        allowed: true,  // Allowed when no owner ID is set (dev mode)
-        reason: 'dev-mode'
+        allowed: false,
+        reason: 'owner-only, fails closed when unconfigured'
     },
     {
         userId: 'normaluser@s.whatsapp.net',

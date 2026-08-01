@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const logger = require('../utils/logger');
 
 class FactCommand extends CommandBase {
@@ -30,19 +31,19 @@ class FactCommand extends CommandBase {
             logger.info('Fact: fetching random fact...');
             const randomFact = this.facts[Math.floor(Math.random() * this.facts.length)];
 
-            const response = 
-`💡 *Fakta Menarik*
-
-${randomFact}
-
-🎲 _Mau lagi? Ketik .fact_`;
-
-            await this.reply(sock, from, msg, response);
+            await this.reply(sock, from, msg, ui.card({
+                icon: '💡',
+                title: 'Fakta Menarik',
+                lines: [randomFact],
+                footer: 'Ketik .fact untuk fakta lain'
+            }));
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal menampilkan fakta.');
+            await this.replyError(sock, from, msg, 'Gagal menampilkan fakta.', {
+                hint: ['Coba lagi sebentar lagi']
+            });
         }
     }
 

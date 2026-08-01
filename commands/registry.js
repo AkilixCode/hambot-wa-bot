@@ -33,6 +33,15 @@ class CommandRegistry {
         // Register aliases
         if (command.aliases && Array.isArray(command.aliases)) {
             for (const alias of command.aliases) {
+                // A silently overwritten alias means one command quietly steals
+                // another's shortcut depending on directory read order — surface
+                // it instead of letting it drift.
+                const existing = this.aliases.get(alias);
+                if (existing && existing !== command.name) {
+                    logger.warn(
+                        `Alias "${alias}" claimed by both "${existing}" and "${command.name}"; "${command.name}" wins`
+                    );
+                }
                 this.aliases.set(alias, command.name);
             }
         }
@@ -150,7 +159,11 @@ class CommandRegistry {
         let loaded = 0;
 
         for (const file of files) {
-            if (file === 'base.js' || file === 'registry.js' || !file.endsWith('.js')) {
+            // Underscore-prefixed files are scaffolding, not commands. Without
+            // this, _template.js registered itself as a live `.template`
+            // command and showed up in the public menu.
+            if (file === 'base.js' || file === 'registry.js' ||
+                file.startsWith('_') || !file.endsWith('.js')) {
                 continue;
             }
 
@@ -181,6 +194,80 @@ class CommandRegistry {
      */
     getByCategory(category) {
         return this.getAll().filter(cmd => cmd.category === category);
+    }
+
+    /**
+     * Score how close a mistyped query is to a candidate name.
+     *
+     * Deliberately cheap — a shared-prefix count with a substring bonus. It
+     * catches the cases that actually happen (`.vidio`, `.weater`, `.stiker`)
+     * without pulling in a Levenshtein implementation for a chat bot.
+     *
+     * @param {string} query Lowercased user input
+     * @param {string} candidate Lowercased candidate name
+     * @returns {number} Higher is closer; 0 means "not a plausible typo"
+     * @private
+     */
+    _similarity(query, candidate) {
+        if (candidate === query) return 100;
+
+        // Short aliases (`d`, `p`, `s`) are substrings of half the dictionary,
+        // so a containment match on them is noise, not a suggestion. Require
+        // both sides to be long enough for the overlap to mean something.
+        const MIN_OVERLAP = 3;
+        if (candidate.length >= MIN_OVERLAP && query.length >= MIN_OVERLAP) {
+            if (candidate.startsWith(query) || query.startsWith(candidate)) return 50 + query.length;
+            if (candidate.includes(query) || query.includes(candidate)) return 25;
+        } else if (candidate.startsWith(query) || query.startsWith(candidate)) {
+            // A short candidate still counts when the user typed a prefix of it.
+            return 40 + query.length;
+        }
+
+        let shared = 0;
+        while (shared < query.length && shared < candidate.length && query[shared] === candidate[shared]) {
+            shared++;
+        }
+        return shared >= 3 ? shared : 0;
+    }
+
+    /**
+     * Suggest command names close to what the user typed.
+     *
+     * @param {string} query Raw user input
+     * @param {Object} [opts]
+     * @param {number} [opts.limit] Maximum suggestions (default 3)
+     * @param {string[]} [opts.extra] Extra candidates, e.g. category names
+     * @param {function(string): boolean} [opts.filter] Keep only candidates that
+     *   pass this test. Callers MUST use it to drop commands the requester is
+     *   not allowed to see — otherwise a typo turns into a listing of the
+     *   owner-only commands the menu deliberately hides.
+     * @returns {string[]} Canonical names, closest first
+     */
+    suggest(query, { limit = 3, extra = [], filter } = {}) {
+        if (!query || typeof query !== 'string') return [];
+        const needle = query.toLowerCase();
+
+        const candidates = new Set([...this.commands.keys(), ...this.aliases.keys(), ...extra]);
+
+        const scored = [];
+        for (const candidate of candidates) {
+            const canonical = this.resolveName(candidate) || candidate;
+            if (filter && !filter(canonical)) continue;
+
+            const score = this._similarity(needle, candidate.toLowerCase());
+            if (score > 0) scored.push({ name: canonical, score });
+        }
+
+        // Collapse aliases onto their canonical name, keeping the best score.
+        const best = new Map();
+        for (const { name, score } of scored) {
+            if (!best.has(name) || best.get(name) < score) best.set(name, score);
+        }
+
+        return Array.from(best.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, limit)
+            .map(([name]) => name);
     }
 
     /**

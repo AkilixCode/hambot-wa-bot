@@ -16,7 +16,7 @@ class BratCommand extends CommandBase {
         super({
             name: 'brat',
             aliases: ['bratgen', 'stikerbrat', 'charli'],
-            description: 'Generate Charli XCX "Brat" album cover style sticker',
+            description: 'Bikin stiker gaya sampul Brat',
             usage: '.brat <text>',
             category: 'fun',
             cooldown: 5000,
@@ -40,8 +40,11 @@ class BratCommand extends CommandBase {
         const fontPaths = [
             path.join(process.cwd(), 'fonts', 'arialnarrow.ttf'),
             path.join(process.cwd(), 'fonts', 'ArialNarrow.ttf'),
-            path.join(process.cwd(), 'fonts', 'arial-narrow.ttf'),
-            path.join(process.cwd(), 'fonts', 'ArialNarrow-Bold.ttf')
+            // Liberation Sans Narrow is metrically compatible with Arial Narrow
+            // and ships in the Docker image via fonts-liberation, so the sticker
+            // still renders correctly without a proprietary font on disk.
+            '/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Regular.ttf',
+            '/usr/share/fonts/truetype/liberation2/LiberationSansNarrow-Regular.ttf'
         ];
 
         for (const fontPath of fontPaths) {
@@ -79,17 +82,18 @@ class BratCommand extends CommandBase {
 
         // Validation
         if (!text || text.trim() === '') {
-            return await this.reply(sock, from, msg, 
-                '❌ Please provide text!\n\n' +
-                '*Usage:* `.brat your text here`\n' +
-                '*Example:* `.brat brat`'
-            );
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🟩',
+                title: 'Stiker Brat',
+                description: 'Bikin stiker bergaya sampul album Brat.',
+                usage: ['.brat <teks>'],
+                examples: ['.brat brat', '.brat apa aja boleh'],
+                notes: ['Maksimal 500 karakter']
+            });
         }
 
         if (text.length > 500) {
-            return await this.reply(sock, from, msg, 
-                '❌ Text too long! Maximum 500 characters.'
-            );
+            return await this.replyError(sock, from, msg, 'Teks terlalu panjang — maksimal 500 karakter.', { title: 'Terlalu Panjang' });
         }
 
         await this.react(sock, msg, '⏳');
@@ -117,7 +121,9 @@ class BratCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to generate sticker.');
+            await this.replyError(sock, from, msg, 'Gagal membuat stiker.', {
+                hint: ['Coba teks yang lebih pendek']
+            });
         }
     }
 

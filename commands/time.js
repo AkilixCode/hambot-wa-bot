@@ -4,13 +4,14 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 
 class TimeCommand extends CommandBase {
     constructor() {
         super({
             name: 'time',
             aliases: ['timezone', 'clock'],
-            description: 'Get current time in different timezones',
+            description: 'Cek waktu di berbagai zona waktu',
             usage: '.time [city/timezone]',
             category: 'utility',
             cooldown: 2000
@@ -69,64 +70,83 @@ class TimeCommand extends CommandBase {
         const timezone = this.timezones[location];
 
         if (!timezone) {
-            const cities = Object.keys(this.timezones).slice(0, 10).join(', ');
-            return await this.reply(sock, from, msg, 
-                `❌ City not found.\n\nTry: ${cities}...\n\nOr type .time to see multiple timezones`);
+            const cities = Object.keys(this.timezones).slice(0, 8);
+            return await this.replyError(sock, from, msg,
+                `Kota ${ui.mono(ui.safe(args[0], 30))} belum ada di daftar.`, {
+                    title: 'Kota Tidak Ditemukan',
+                    hint: [
+                        `Kota tersedia: ${cities.join(', ')}`,
+                        '.time — lihat jam dunia'
+                    ]
+                });
         }
 
         try {
-            const time = new Date().toLocaleString('en-US', {
+            const date = new Intl.DateTimeFormat('id-ID', {
                 timeZone: timezone,
-                dateStyle: 'full',
-                timeStyle: 'long'
-            });
+                dateStyle: 'full'
+            }).format(new Date());
 
-            const response = 
-`🕐 *Time in ${args[0]}*
+            const time = new Intl.DateTimeFormat('en-GB', {
+                timeZone: timezone,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            }).format(new Date());
 
-📅 ${time}
-
-🌍 Timezone: ${timezone}`;
-
-            await this.reply(sock, from, msg, response);
+            await this.reply(sock, from, msg, ui.card({
+                icon: '🕐',
+                title: `Waktu di ${ui.safe(args[0], 30)}`,
+                lines: [
+                    ui.kv('Jam', ui.bold(time), '⏰'),
+                    ui.kv('Tanggal', date, '📅'),
+                    ui.kv('Zona', timezone, '🌍')
+                ]
+            }));
             await this.react(sock, msg, '✅');
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Failed to get time for that location.');
+            await this.replyError(sock, from, msg, 'Gagal membaca waktu untuk lokasi itu.', {
+                hint: ['.time jakarta', '.time tokyo']
+            });
         }
     }
 
     async showMultipleTimes(sock, from, msg) {
         const majorTimezones = [
-            { city: 'London', tz: 'Europe/London' },
-            { city: 'New York', tz: 'America/New_York' },
-            { city: 'Los Angeles', tz: 'America/Los_Angeles' },
+            { city: 'Jakarta', tz: 'Asia/Jakarta' },
             { city: 'Tokyo', tz: 'Asia/Tokyo' },
             { city: 'Sydney', tz: 'Australia/Sydney' },
-            { city: 'Jakarta', tz: 'Asia/Jakarta' }
+            { city: 'London', tz: 'Europe/London' },
+            { city: 'New York', tz: 'America/New_York' },
+            { city: 'Los Angeles', tz: 'America/Los_Angeles' }
         ];
 
-        let response = '🌍 *World Clock*\n\n';
-
+        const lines = [];
         for (const { city, tz } of majorTimezones) {
             try {
-                const time = new Date().toLocaleString('en-US', {
+                const time = new Intl.DateTimeFormat('en-GB', {
                     timeZone: tz,
                     hour: '2-digit',
                     minute: '2-digit',
-                    hour12: true
-                });
-                
-                response += `🕐 ${city}: ${time}\n`;
+                    hour12: false
+                }).format(new Date());
+
+                lines.push(ui.kv(city, ui.bold(time), '🕐'));
             } catch (e) {
-                // Skip on error
+                // A timezone the runtime does not know is skipped rather than
+                // failing the whole clock.
             }
         }
 
-        response += `\n_Type .time <city> for specific location_`;
-
-        await this.reply(sock, from, msg, response);
+        await this.reply(sock, from, msg, ui.card({
+            icon: '🌍',
+            title: 'Jam Dunia',
+            lines,
+            footer: 'Ketik .time <kota> untuk kota tertentu'
+        }));
         await this.react(sock, msg, '✅');
     }
 }

@@ -4,6 +4,7 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const logger = require('../utils/logger');
@@ -24,8 +25,13 @@ class WeatherCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '🌤️ *Info Cuaca*\n\n📝 Cara Pakai: .weather <kota>\n\n📌 Contoh:\n• .weather Jakarta\n• .weather Bandung\n• .weather Surabaya');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '🌤️',
+                title: 'Info Cuaca',
+                description: 'Cek kondisi cuaca terkini di kota manapun.',
+                usage: ['.weather <kota>'],
+                examples: ['.weather Jakarta', '.weather Bandung', '.weather Tokyo']
+            });
         }
 
         await this.react(sock, msg, '🌤️');
@@ -55,7 +61,11 @@ class WeatherCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, `❌ Tidak bisa mengambil data cuaca untuk "${location}". Periksa nama lokasinya.`);
+            await this.replyError(sock, from, msg,
+                `Data cuaca untuk ${ui.mono(ui.safe(location, 40))} tidak ditemukan.`, {
+                    title: 'Lokasi Tidak Ditemukan',
+                    hint: ['Periksa ejaan nama kotanya', '.weather Jakarta']
+                });
         }
     }
 
@@ -79,19 +89,20 @@ class WeatherCommand extends CommandBase {
 
             const emoji = this.getWeatherEmoji(weatherDesc);
 
-            const info = 
-`${emoji} *Laporan Cuaca*
-
-📍 Lokasi: ${locationName}, ${country}
-🌡️ Suhu: ${temp}°C (terasa ${feelsLike}°C)
-☁️ Kondisi: ${weatherDesc}
-💧 Kelembaban: ${humidity}%
-💨 Angin: ${windSpeed} km/h ${windDir}
-📊 Tekanan: ${pressure} mb
-👁️ Visibilitas: ${visibility} km
-☀️ Indeks UV: ${uvIndex}
-
-${fromCache ? '📦 _(dari cache)_' : '🔄 _Data langsung_'}`;
+            const info = ui.card({
+                icon: emoji,
+                title: `${locationName}, ${country}`,
+                lines: [
+                    ui.kv('Suhu', `${temp}°C (terasa ${feelsLike}°C)`, '🌡️'),
+                    ui.kv('Kondisi', weatherDesc, '☁️'),
+                    ui.kv('Kelembapan', `${humidity}%`, '💧'),
+                    ui.kv('Angin', `${windSpeed} km/j ${windDir}`, '💨'),
+                    ui.kv('Tekanan', `${pressure} mb`, '📊'),
+                    ui.kv('Jarak pandang', `${visibility} km`, '👁️'),
+                    ui.kv('Indeks UV', uvIndex, '☀️')
+                ],
+                footer: `${ui.sourceBadge(fromCache)} ${ui.SYM.dot} ${ui.clock()}`
+            });
 
             await this.reply(sock, from, msg, info);
             await this.react(sock, msg, '✅');

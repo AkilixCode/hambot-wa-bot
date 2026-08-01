@@ -4,23 +4,32 @@
  */
 
 const CommandBase = require('./base');
+const ui = require('../utils/ui');
 
 class RPSCommand extends CommandBase {
     constructor() {
         super({
             name: 'rps',
-            aliases: ['rockpaperscissors'],
-            description: 'Play Rock Paper Scissors',
-            usage: '.rps <rock/paper/scissors>',
+            aliases: ['rockpaperscissors', 'suit'],
+            description: 'Main batu gunting kertas',
+            usage: '.rps <batu/kertas/gunting>',
             category: 'fun',
             cooldown: 2000
         });
 
-        this.choices = ['rock', 'paper', 'scissors'];
+        this.choices = ['batu', 'kertas', 'gunting'];
+
+        // Accept the English words too — plenty of people still type "rock".
+        this.synonyms = {
+            batu: 'batu', rock: 'batu', r: 'batu',
+            kertas: 'kertas', paper: 'kertas', p: 'kertas',
+            gunting: 'gunting', scissors: 'gunting', s: 'gunting'
+        };
+
         this.emojis = {
-            rock: '🪨',
-            paper: '📄',
-            scissors: '✂️'
+            batu: '🪨',
+            kertas: '📄',
+            gunting: '✂️'
         };
     }
 
@@ -28,54 +37,68 @@ class RPSCommand extends CommandBase {
         const { from } = context;
 
         if (!args[0]) {
-            return await this.reply(sock, from, msg, 
-                '✊✋✌️ *Rock Paper Scissors*\n\nUsage: .rps <choice>\n\nChoices:\n• rock\n• paper\n• scissors');
+            return await this.replyUsage(sock, from, msg, {
+                icon: '✊',
+                title: 'Batu Gunting Kertas',
+                description: 'Lawan bot dalam satu ronde suit.',
+                usage: ['.rps <batu/kertas/gunting>'],
+                examples: ['.rps batu', '.rps kertas', '.rps gunting']
+            });
         }
 
         await this.react(sock, msg, '✊');
 
         try {
-            const userChoice = args[0].toLowerCase();
-            
-            if (!this.choices.includes(userChoice)) {
-                return await this.reply(sock, from, msg, 
-                    '❌ Invalid choice! Use: rock, paper, or scissors');
+            const userChoice = this.synonyms[args[0].toLowerCase()];
+
+            if (!userChoice) {
+                return await this.replyError(sock, from, msg,
+                    `Pilihan ${ui.mono(ui.safe(args[0], 20))} tidak dikenal.`, {
+                        title: 'Pilihan Salah',
+                        hint: ['.rps batu', '.rps kertas', '.rps gunting']
+                    });
             }
 
             const botChoice = this.choices[Math.floor(Math.random() * 3)];
             const result = this.determineWinner(userChoice, botChoice);
 
             const resultEmoji = result === 'win' ? '🎉' : result === 'lose' ? '😔' : '🤝';
-            const resultText = result === 'win' ? 'You Win!' : result === 'lose' ? 'You Lose!' : 'It\'s a Tie!';
+            const resultText = result === 'win' ? 'Kamu menang!'
+                : result === 'lose' ? 'Kamu kalah!'
+                : 'Seri!';
 
-            const response = 
-`✊✋✌️ *Rock Paper Scissors*
-
-You chose: ${this.emojis[userChoice]} ${userChoice}
-Bot chose: ${this.emojis[botChoice]} ${botChoice}
-
-${resultEmoji} **${resultText}**`;
-
-            await this.reply(sock, from, msg, response);
+            await this.reply(sock, from, msg, ui.card({
+                icon: '✊',
+                title: 'Batu Gunting Kertas',
+                lines: [
+                    ui.kv('Kamu', `${this.emojis[userChoice]} ${userChoice}`, '👤'),
+                    ui.kv('Bot', `${this.emojis[botChoice]} ${botChoice}`, '🤖'),
+                    '',
+                    `${resultEmoji} ${ui.bold(resultText)}`
+                ],
+                footer: 'Ketik .rps untuk main lagi'
+            }));
             await this.react(sock, msg, resultEmoji);
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Game error occurred. Try again!');
+            await this.replyError(sock, from, msg, 'Permainan gagal dijalankan.', {
+                hint: ['.rps batu']
+            });
         }
     }
 
     determineWinner(user, bot) {
         if (user === bot) return 'tie';
-        
+
         if (
-            (user === 'rock' && bot === 'scissors') ||
-            (user === 'paper' && bot === 'rock') ||
-            (user === 'scissors' && bot === 'paper')
+            (user === 'batu' && bot === 'gunting') ||
+            (user === 'kertas' && bot === 'batu') ||
+            (user === 'gunting' && bot === 'kertas')
         ) {
             return 'win';
         }
-        
+
         return 'lose';
     }
 }

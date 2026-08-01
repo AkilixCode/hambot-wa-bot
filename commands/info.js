@@ -10,7 +10,7 @@ class InfoCommand extends CommandBase {
         super({
             name: 'info',
             aliases: ['groupinfo', 'grup'],
-            description: 'Menampilkan informasi dan statistik grup',
+            description: 'Info dan statistik grup',
             usage: '.info',
             category: 'group',
             cooldown: 3000,
@@ -62,7 +62,7 @@ ${descTrimmed}`;
 
         } catch (error) {
             this.logError(error, context);
-            await this.reply(sock, from, msg, '❌ Gagal mendapatkan informasi grup.');
+            await this.replyError(sock, from, msg, 'Gagal mendapatkan informasi grup.');
         }
     }
 }

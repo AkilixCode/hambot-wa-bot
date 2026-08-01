@@ -56,7 +56,7 @@ class TemplateCommand extends CommandBase {
             this.logError(error, context);
             
             // Send error message to user
-            await this.reply(sock, from, msg, '❌ An error occurred.');
+            await this.replyError(sock, from, msg, 'An error occurred.');
         }
     }
 }

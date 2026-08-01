@@ -13,7 +13,7 @@ class ReminderCommand extends CommandBase {
         super({
             name: 'reminder',
             aliases: ['remind', 'ingetin', 'alarm'],
-            description: 'Set a reminder for yourself',
+            description: 'Atur pengingat untuk dirimu',
             usage: '.remind <time> <message>\n\nTime formats: 5s, 10m, 1h, 1d',
             category: 'tools',
             cooldown: 2000,
@@ -25,19 +25,21 @@ class ReminderCommand extends CommandBase {
         const { from, sender } = context;
 
         if (args.length < 2) {
-            return await this.reply(sock, from, msg, 
-                '⏰ *Reminder*\n\n' +
-                'Set pengingat untuk dirimu!\n\n' +
-                '*Format:*\n' +
-                '.remind <waktu> <pesan>\n\n' +
-                '*Contoh:*\n' +
-                '• .remind 10m Masak mie\n' +
-                '• .remind 1h Meeting zoom\n' +
-                '• .remind 30s Cek hp\n' +
-                '• .remind 2d Bayar tagihan\n\n' +
-                '*Format waktu:*\n' +
-                's = detik, m = menit, h = jam, d = hari'
-            );
+            return await this.replyUsage(sock, from, msg, {
+                icon: '⏰',
+                title: 'Pengingat',
+                description: 'Bot akan mengingatkanmu setelah waktu yang kamu tentukan.',
+                usage: ['.remind <waktu> <pesan>'],
+                examples: [
+                    '.remind 10m Masak mie',
+                    '.remind 1h Meeting zoom',
+                    '.remind 2d Bayar tagihan'
+                ],
+                notes: [
+                    'Satuan waktu: s detik, m menit, h jam, d hari',
+                    'Minimal 10 detik, maksimal 7 hari'
+                ]
+            });
         }
 
         const timeArg = args[0].toLowerCase();
@@ -56,16 +58,12 @@ class ReminderCommand extends CommandBase {
         // Limit reminder duration (max 7 days)
         const maxDuration = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
         if (duration > maxDuration) {
-            return await this.reply(sock, from, msg, 
-                '⚠️ Maksimal waktu reminder adalah 7 hari!'
-            );
+            return await this.replyError(sock, from, msg, 'Maksimal waktu reminder adalah 7 hari!');
         }
 
         // Minimum 10 seconds
         if (duration < 10000) {
-            return await this.reply(sock, from, msg, 
-                '⚠️ Minimal waktu reminder adalah 10 detik!'
-            );
+            return await this.replyError(sock, from, msg, 'Minimal waktu reminder adalah 10 detik!');
         }
 
         await this.react(sock, msg, '⏰');
