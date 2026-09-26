@@ -10,6 +10,7 @@ const egress = require('./utils/egress');
 const tempdir = require('./utils/tempdir');
 const socketRef = require('./utils/socket-ref');
 const login = require('./utils/login');
+const health = require('./utils/health');
 
 // Use the modular handler directly
 const handler = require('./handler');
@@ -57,6 +58,7 @@ async function startBot() {
             browser: config.bot.browser
         });
         socketRef.set(sock);
+        health.report('connecting');
 
         sock.ev.on('creds.update', saveCreds);
 
@@ -76,6 +78,10 @@ async function startBot() {
 
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
+
+            // Feeds the Docker HEALTHCHECK (scripts/healthcheck.js).
+            if (qr) health.report('linking');
+            if (connection) health.report(connection);
 
             if (qr && method === 'pairing' && !pairingRequested) {
                 pairingRequested = true;

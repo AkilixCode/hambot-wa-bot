@@ -62,3 +62,13 @@ SECURITY.md
 Dockerfile
 docker-compose.yml
 .dockerignore
+
+# Not needed inside the image
+.github/
+docs/
+CHANGELOG.md
+CONTRIBUTING.md
+README.md
+assets/README.md
+deploy.sh
+data/

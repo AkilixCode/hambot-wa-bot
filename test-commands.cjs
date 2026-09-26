@@ -219,6 +219,37 @@ async function main() {
         }
     });
 
+    // ── Health check ─────────────────────────────────────────────────
+    console.log('\n🩺 Health check...\n');
+
+    await test('Health rules: connected/linking healthy, long outages and stale files not', () => {
+        const health = require('./utils/health');
+        const now = Date.now();
+        const judge = record => health.evaluate(record, now).healthy;
+        assert.strictEqual(judge(null), false);
+        assert.strictEqual(judge({ state: 'open', since: now - 86400e3, updatedAt: now }), true);
+        assert.strictEqual(judge({ state: 'linking', since: now - 3600e3, updatedAt: now }), true);
+        assert.strictEqual(judge({ state: 'close', since: now - 60e3, updatedAt: now }), true, 'a quick reconnect is fine');
+        assert.strictEqual(judge({ state: 'close', since: now - 6 * 60e3, updatedAt: now }), false);
+        assert.strictEqual(judge({ state: 'open', since: now, updatedAt: now - 4 * 60e3 }), false, 'stale file = hung process');
+    });
+
+    await test('report() writes the health file that scripts/healthcheck.js reads', () => {
+        const { execFileSync } = require('child_process');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-health-'));
+        const saved = process.env.HAMBOT_DATA_DIR;
+        process.env.HAMBOT_DATA_DIR = dir;
+        try {
+            require('./utils/health').report('open');
+            const out = execFileSync(process.execPath, ['scripts/healthcheck.js'], { env: { ...process.env } }).toString();
+            assert.match(out, /healthy: connected/);
+            execFileSync(process.execPath, ['scripts/healthcheck.js', '--self-test']);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+            if (saved === undefined) delete process.env.HAMBOT_DATA_DIR; else process.env.HAMBOT_DATA_DIR = saved;
+        }
+    });
+
     // ── Security: no API key over plain HTTP ──────────────────────────
     console.log('\n🔐 Transport...\n');
 
