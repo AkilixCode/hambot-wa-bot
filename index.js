@@ -9,6 +9,8 @@ const security = require('./utils/security');
 const egress = require('./utils/egress');
 const tempdir = require('./utils/tempdir');
 const socketRef = require('./utils/socket-ref');
+const login = require('./utils/login');
+const health = require('./utils/health');
 
 // Use the modular handler directly
 const handler = require('./handler');
@@ -56,16 +58,49 @@ async function startBot() {
             browser: config.bot.browser
         });
         socketRef.set(sock);
+        health.report('connecting');
 
         sock.ev.on('creds.update', saveCreds);
 
-        sock.ev.on('connection.update', (update) => {
+        // How to link this device if there are no saved credentials yet.
+        // An invalid PAIRING_NUMBER is reported and falls back to the QR code
+        // rather than stopping the bot.
+        const pairing = login.parsePairingNumber(process.env.PAIRING_NUMBER);
+        if (pairing.error) logger.warn(`${pairing.error} — falling back to the QR code`);
+        const method = login.loginMethod({
+            registered: Boolean(state.creds?.registered),
+            pairingNumber: pairing.number
+        });
+        // Baileys re-emits `qr` every ~20s until linked; a pairing code is
+        // requested once per socket, and a failed request falls back to QR.
+        let pairingRequested = false;
+        let pairingFailed = false;
+
+        sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
-            if (qr) {
+            // Feeds the Docker HEALTHCHECK (scripts/healthcheck.js).
+            if (qr) health.report('linking');
+            if (connection) health.report(connection);
+
+            if (qr && method === 'pairing' && !pairingRequested) {
+                pairingRequested = true;
+                try {
+                    const code = await sock.requestPairingCode(pairing.number);
+                    console.log(login.pairingInstructions(code, pairing.number));
+                } catch (error) {
+                    pairingFailed = true;
+                    logger.warn(`Pairing code request failed (${error.message}) — use the QR code instead`);
+                }
+            }
+
+            if (qr && (method !== 'pairing' || pairingFailed)) {
                 console.log('\n📱 Scan QR Code below:\n');
                 qrcode.generate(qr, { small: true });
                 console.log('\n');
+                login.writeQrPng(qr)
+                    .then(file => console.log(`   (also saved as ${file})\n`))
+                    .catch(error => logger.warn(`Could not save QR image: ${error.message}`));
             }
 
             if (connection === 'close') {
@@ -81,11 +116,12 @@ async function startBot() {
                 if (shouldReconnect) {
                     setTimeout(() => startBot(), 3000);
                 } else {
-                    logger.info('Logged out, please restart and scan QR again');
+                    logger.info('Logged out, please restart and link the number again');
                     process.exit(0);
                 }
             } else if (connection === 'open') {
                 logger.system(`✅ ${config.bot.name} connected to WhatsApp!`);
+                login.removeQrPng();
             }
         });
 

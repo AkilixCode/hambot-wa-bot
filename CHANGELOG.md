@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Quality pass: security fixes, handler bugs, tests and CI.
+Quality pass, a new look and menu, typo-tolerant commands, Node 24 and a
+much easier Docker deploy.
 
 ### Security
 
@@ -35,6 +36,14 @@ Quality pass: security fixes, handler bugs, tests and CI.
 
 ### Changed
 
+- **Node 24 LTS.** Node 20 reached end-of-life in April 2026; `engines` is
+  now `>=22.12`, `.nvmrc` 24, CI tests 22 and 24, and the Docker image runs
+  `node:24-bookworm-slim`.
+- `axios` 1.20.0, `dotenv` 18.0.4, yt-dlp 2026.8.19 in the image; Deno is
+  pinned (2.9.7) instead of installed with an unpinned `curl | sh`.
+- **Slimmer Docker image:** compilers and `-dev` packages only in a build
+  stage; `tini` as PID 1 so the graceful shutdown runs; heap capped at
+  1536MB, below the container's 2G limit.
 - **New "bold heavy" look for every reply** (`┏━━` title in small caps,
   `┃` rail, `┗━━ ✧` footer). Hand-written replies (owner panel, `.netinfo`,
   meme fallbacks) are converted automatically, so no message is left in
@@ -50,6 +59,20 @@ Quality pass: security fixes, handler bugs, tests and CI.
 
 ### Added
 
+- **`./deploy.sh`** — one-command setup (creates `.env`, starts the bot,
+  shows the pairing code or QR) plus `update`, `logs`, `status` and `stop`.
+- **Prebuilt image on GHCR** (`ghcr.io/akilixcode/hambot-wa-bot`, amd64 and
+  arm64), built and smoke-tested by CI; `docker compose pull` replaces
+  building on the server. `HAMBOT_TAG` pins a version.
+- **Pairing-code login:** set `PAIRING_NUMBER` and type an 8-character code
+  on the phone instead of scanning a QR. The QR is also saved as
+  `data/qr.png`.
+- **Real Docker health check:** healthy while connected or waiting to be
+  linked, unhealthy after 5 minutes without a connection or if the process
+  stops responding. The old check always passed.
+- Dependabot: weekly PRs for npm packages, the Docker base images and
+  GitHub Actions (Baileys excluded; it is bumped deliberately).
+- Dependency-contract tests covering every third-party API the bot calls.
 - **Typo-tolerant commands.** An unambiguous typo (`.mneu`, `.stikcer`,
   `.wether`) runs the intended command, and the reply starts with a small
   "✏️ .mneu ➜ .menu" note. Ties get "did you mean" suggestions, owner-only
@@ -64,6 +87,7 @@ Quality pass: security fixes, handler bugs, tests and CI.
 
 ### Removed
 
+- `EXPOSE 3000` from the Dockerfile; nothing listened on it.
 - Dead `config.getPlaywrightProxyConfig()` and `httpClient.getProxyStatus()`
   (the latter returned proxy credentials).
 

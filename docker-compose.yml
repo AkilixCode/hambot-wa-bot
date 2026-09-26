@@ -1,15 +1,22 @@
 # ============================================================
 # HamBot WhatsApp Bot - Docker Compose
 # ============================================================
-# Usage:
-#   cp .env.example .env          # Configure your API keys
-#   docker compose up -d          # Start in background
-#   docker compose logs -f        # Follow logs
-#   docker compose down           # Stop
+# Easiest: ./deploy.sh (first setup) and ./deploy.sh update.
+#
+# By hand:
+#   cp .env.example .env          # set BOT_OWNER_ID, PAIRING_NUMBER, API keys
+#   docker compose pull           # prebuilt image from GHCR (amd64/arm64)
+#   docker compose up -d          # start in background
+#   docker compose logs -f        # pairing code / QR, then logs
+#   docker compose down           # stop
+#
+# `docker compose build` builds the image from this checkout instead of
+# pulling it. HAMBOT_TAG in .env pins a version (default: latest).
 # ============================================================
 
 services:
   hambot:
+    image: ghcr.io/akilixcode/hambot-wa-bot:${HAMBOT_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
