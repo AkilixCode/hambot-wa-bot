@@ -1,0 +1,35 @@
+# Weekly update PRs, so dependencies never pile up into a big risky jump.
+# Every PR runs the test suites (including the dependency-contract tests)
+# and the Docker build + smoke test before it can be merged.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Minor and patch bumps arrive as one PR; majors stay separate so each
+      # breaking change is reviewed on its own.
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Baileys ships breaking changes inside release candidates; bump it
+      # deliberately, not on a schedule.
+      - dependency-name: "@whiskeysockets/baileys"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]

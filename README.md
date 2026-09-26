@@ -31,32 +31,77 @@ reference tools. Command output is in Indonesian.
 No browser is required. `.pinterest` used to drive a headless Chromium; since
 3.2.0 it calls Pinterest's JSON endpoint over plain HTTP.
 
-Docker handles all of these for you.
+Docker handles all of these for you: you only need Docker Engine with the
+Compose v2 plugin.
 
 ## Installation
 
 ### Docker (recommended)
 
+Works on any Linux server with Docker and the Compose v2 plugin, on x86-64
+and ARM64 (e.g. a Raspberry Pi 4/5 or an ARM VPS). A prebuilt image is
+published to `ghcr.io/akilixcode/hambot-wa-bot`, so nothing is compiled on
+your server.
+
+**Quick start**
+
 ```bash
 git clone https://github.com/AkilixCode/hambot-wa-bot.git
 cd hambot-wa-bot
-cp .env.example .env      # fill in BOT_OWNER_ID and any API keys
-docker compose up -d
-docker compose logs -f    # scan the QR code that appears
+./deploy.sh
 ```
 
-The image runs as a non-root user with all capabilities dropped, and persists
-the WhatsApp session in a named volume so it survives restarts.
+`deploy.sh` checks that Docker is ready, creates `.env` (asking for your owner
+number and, optionally, the bot's number for a pairing code), pulls the image,
+starts the bot, and shows the pairing code or QR code to link the number (see
+[Linking the number](#linking-the-number)). Add API keys to `.env` later and
+run `./deploy.sh update` to apply them.
+
+**Day to day**
+
+| Command | What it does |
+| --- | --- |
+| `./deploy.sh update` | Pull the latest image (and repo files) and restart |
+| `./deploy.sh logs` | Follow the logs |
+| `./deploy.sh status` | Container state and health |
+| `./deploy.sh stop` | Stop the bot; the WhatsApp session is kept |
+
+**Without the script**
+
+```bash
+cp .env.example .env      # set BOT_OWNER_ID, PAIRING_NUMBER and any API keys
+docker compose pull
+docker compose up -d
+docker compose logs -f    # pairing code or QR code, then the bot's logs
+```
+
+- **Pin a version:** set `HAMBOT_TAG` in `.env` (e.g. `HAMBOT_TAG=3.3.0` or
+  `sha-<commit>`) instead of following `latest`.
+- **Build it yourself:** `docker compose build && docker compose up -d`
+  builds the image from your checkout, e.g. after local code changes.
+  `deploy.sh` does this automatically if the pull fails.
+- **"denied" when pulling:** the image package on GitHub is private. Either
+  make it public (repository → Packages → hambot-wa-bot → Package settings →
+  Change visibility), or run `docker login ghcr.io` on the server with a token
+  that has `read:packages`.
+- **Health:** `docker compose ps` shows `healthy` while the bot is connected
+  or waiting to be linked, and `unhealthy` after 5 minutes without a
+  connection.
+
+The container runs as a non-root user with all capabilities dropped. The
+WhatsApp session, logs and runtime state live in named volumes
+(`hambot_auth`, `hambot_logs`, `hambot_data`), so they survive restarts and
+updates.
 
 ### Local
 
 ```bash
 git clone https://github.com/AkilixCode/hambot-wa-bot.git
 cd hambot-wa-bot
-npm install
-pip install yt-dlp
+npm install               # needs Node.js 22.12+ (24 LTS recommended)
+pip install yt-dlp        # plus ffmpeg from your package manager
 curl -fsSL https://deno.land/install.sh | sh
-cp .env.example .env      # fill in BOT_OWNER_ID and any API keys
+cp .env.example .env      # set BOT_OWNER_ID, PAIRING_NUMBER and any API keys
 npm start
 ```
 
@@ -358,15 +403,27 @@ push and pull request.
 
 ## Troubleshooting
 
-**QR code will not scan.** The terminal must render block characters. Widen the
-window, or use `docker compose logs -f`.
+**QR code will not scan.** Use a pairing code instead: set `PAIRING_NUMBER` in
+`.env` and restart. Or open the saved image: `data/qr.png` locally, or
+`docker compose cp hambot:/app/data/qr.png .` with Docker (`./deploy.sh` does
+this for you).
 
-**Repeated disconnects.** Delete `auth_info_baileys/` and pair again. This logs
-the device out, so re-link it from the phone.
+**Pairing code expired.** Codes last about a minute. Restart the bot
+(`docker compose restart`) for a fresh one.
+
+**Repeated disconnects.** Unlink and pair again. Locally, delete
+`auth_info_baileys/`; with Docker, `docker compose down` then
+`docker volume rm hambot_auth` and `./deploy.sh`. Either way the device is
+logged out, so re-link it from the phone.
+
+**Container shows `unhealthy`.** The bot has had no WhatsApp connection for 5
+minutes. `./deploy.sh logs` shows why — usually a logged-out session (re-link
+as above) or no internet on the server.
 
 **`.video` or `.music` fails.** Run `.security media` first — it reports the
 yt-dlp version and age, the player clients in use, and the egress state in one
-message. A stale yt-dlp is the most common cause (`pip install -U yt-dlp`); the
+message. A stale yt-dlp is the most common cause (`./deploy.sh update` with Docker,
+`pip install -U yt-dlp` locally); the
 next is a retired player client, which you fix by changing
 `YTDLP_PLAYER_CLIENTS` in `.env`. If YouTube is blocking the server outright,
 turn on the proxy with `.security proxy on`. `.music` falls back to SoundCloud
