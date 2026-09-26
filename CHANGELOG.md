@@ -35,11 +35,28 @@ Quality pass: security fixes, handler bugs, tests and CI.
 
 ### Changed
 
+- **New "bold heavy" look for every reply** (`┏━━` title in small caps,
+  `┃` rail, `┗━━ ✧` footer). Hand-written replies (owner panel, `.netinfo`,
+  meme fallbacks) are converted automatically, so no message is left in
+  the old style.
+- **`.menu` is one message: a picture with the menu as its caption.** The
+  overview is now compact (an ASCII-framed name, then every command grouped
+  by category) to fit the caption; descriptions moved to
+  `.menu <kategori>`.
+- `.security logs` shows the log in a monospace block, so `*` and `_` in
+  log lines no longer turn into formatting.
 - Media downloads are concatenated once instead of per chunk; spawned
   process output is capped at 16 MB.
 
 ### Added
 
+- **Typo-tolerant commands.** An unambiguous typo (`.mneu`, `.stikcer`,
+  `.wether`) runs the intended command, and the reply starts with a small
+  "✏️ .mneu ➜ .menu" note. Ties get "did you mean" suggestions, owner-only
+  commands are never guessed, and chat that merely starts with a dot
+  (`.ok`, `...`) is still ignored. `.menu <typo>` works the same way.
+- Menu picture: `MENU_IMAGE` (file path or URL), or `assets/menu.jpg`, or
+  a banner the bot draws itself. `BOT_TAGLINE` sets the line under the name.
 - `npm run test:commands` — regression tests driven through a fake socket.
 - GitHub Actions workflow running `test:all` and `npm audit` on Node 20/22.
 - `HAMBOT_DATA_DIR` to relocate `data/`; the tests no longer overwrite the
