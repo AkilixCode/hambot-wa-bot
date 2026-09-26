@@ -30,6 +30,7 @@ const AUTH_DIR = process.env.HAMBOT_AUTH_DIR || 'auth_info_baileys';
 let closeCounters = session.freshCounters();
 let pairingCodesIssued = 0;
 let reconnectTimer = null;
+let startupLogged = false;
 
 /**
  * Detach and close the current socket before a new one replaces it.
@@ -105,6 +106,16 @@ async function startBot() {
 
         // Validate configuration
         config.validate();
+
+        // Show how the owner number was understood, once, so a typo in
+        // BOT_OWNER_ID is visible in the first lines of the log.
+        if (!startupLogged) {
+            startupLogged = true;
+            const owners = config.getOwnerIds();
+            logger.info(owners.length
+                ? `Owner: ${owners.join(', ')} (wrong? ./deploy.sh config)`
+                : 'Owner: NOT SET — owner-only commands are disabled (set it with ./deploy.sh config)');
+        }
 
         // Reapply the persisted proxy toggle before any command can run, so
         // `.security proxy on` survives a restart instead of silently reverting

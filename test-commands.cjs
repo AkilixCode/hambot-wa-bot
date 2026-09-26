@@ -717,6 +717,46 @@ async function main() {
         }
     });
 
+    // ── Owner lock-out guards ────────────────────────────────────────
+    console.log('\n🔑 Owner lock-out guards...\n');
+
+    await test('BOT_OWNER_ID typos are rejected and explained, not silently kept', () => {
+        const Config = require('./config').constructor;
+        const saved = process.env.BOT_OWNER_ID;
+        try {
+            const check = (value) => { process.env.BOT_OWNER_ID = value; const c = new Config(); return { ids: c.bot.ownerIds, problems: c.ownerIdProblems() }; };
+            let r = check('081234567890');
+            assert.deepStrictEqual(r.ids, [], 'a local 0-prefixed number can never match');
+            assert.match(r.problems[0], /country code/);
+            assert.match(check('12').problems[0], /8-15/);
+            r = check('+62 812-3456-7890, 1234567890123@lid');
+            assert.deepStrictEqual(r.ids, ['6281234567890@s.whatsapp.net', '1234567890123@lid']);
+            assert.deepStrictEqual(r.problems, []);
+        } finally {
+            if (saved === undefined) delete process.env.BOT_OWNER_ID; else process.env.BOT_OWNER_ID = saved;
+        }
+    });
+
+    await test('ONLY_GROUP_MODE ignores private chats, but never the owner', async () => {
+        const config = require('./config');
+        const savedOwners = config.bot.ownerIds;
+        const savedMode = config.bot.onlyGroupMode;
+        config.bot.ownerIds = ['6281200000001@s.whatsapp.net'];
+        config.bot.onlyGroupMode = true;
+        try {
+            const dm = async (jid) => {
+                const sock = fakeSock();
+                await handler(sock, { messages: [{ key: { remoteJid: jid, id: 'X' }, message: { conversation: '.flip' } }], type: 'notify' });
+                return sock.sent.filter(s => !s.content.react).length;
+            };
+            assert.strictEqual(await dm('6281200000002@s.whatsapp.net'), 0, 'others are ignored in private');
+            assert.strictEqual(await dm('6281200000001@s.whatsapp.net'), 1, 'the owner can still use the bot in private');
+        } finally {
+            config.bot.ownerIds = savedOwners;
+            config.bot.onlyGroupMode = savedMode;
+        }
+    });
+
     // ── Session recovery ─────────────────────────────────────────────
     // Last: index.js registers process signal handlers when required.
     console.log('\n🛟 Session recovery...\n');

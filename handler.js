@@ -160,8 +160,11 @@ module.exports = async (sock, m) => {
         const sender = msg.key.participant || from;
         const isGroup = from.endsWith('@g.us');
 
-        // Private mode: ignore private messages if ONLY_GROUP_MODE is enabled
-        if (config.bot.onlyGroupMode && !isGroup) {
+        // Private mode: ignore private messages if ONLY_GROUP_MODE is enabled.
+        // The owner is exempt: `.security onlygroup on` sent from a private
+        // chat used to lock the owner out of that chat — and out completely if
+        // the bot was in no group — until a restart.
+        if (config.bot.onlyGroupMode && !isGroup && !config.isOwner(sender)) {
             return; // Silently ignore private messages
         }
 

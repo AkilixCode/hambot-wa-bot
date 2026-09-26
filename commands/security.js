@@ -1382,6 +1382,14 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
     }
 
     /**
+     * The prefix the bot starts with after a restart.
+     * @private
+     */
+    _envPrefix() {
+        return process.env.BOT_PREFIX || '.';
+    }
+
+    /**
      * @private
      */
     async _doSetPrefix(sock, from, msg, context, payload) {
@@ -1392,7 +1400,8 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
         await this.reply(sock, from, msg,
             `⚙️ *Prefix Diperbarui*\n\n` +
             `\`${oldPrefix}\` → \`${payload.newPrefix}\`\n\n` +
-            `_Gunakan \`${payload.newPrefix}security\` untuk perintah selanjutnya._`);
+            `_Gunakan \`${payload.newPrefix}security\` untuk perintah selanjutnya._\n` +
+            `_Lupa prefix? Restart bot mengembalikannya ke \`${this._envPrefix()}\` dari .env._`);
         await this.react(sock, msg, '✅');
     }
 
@@ -1935,9 +1944,16 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
         const pm2ProcessName = process.env.PM2_PROCESS_NAME || 'hambot';
         this._audit('owner.process.stop', context, { outcome: 'warning', detail: pm2ProcessName });
 
+        // Under Docker there is no pm2: the process exits and the restart
+        // policy starts it again, so "stop" is really a restart there. Say so
+        // rather than giving pm2 instructions that do not apply.
+        const inDocker = fs.existsSync('/.dockerenv');
         await this.reply(sock, from, msg,
             '🛑 *Menghentikan proses bot…*\n\n' +
-            `Nyalakan lagi dari server dengan \`pm2 start ${pm2ProcessName}\`.`);
+            (inDocker
+                ? 'Di Docker, bot akan otomatis menyala lagi (restart).\n' +
+                  'Untuk mematikan permanen, jalankan `./deploy.sh stop` di server.'
+                : `Nyalakan lagi dari server dengan \`pm2 start ${pm2ProcessName}\`.`));
 
         await new Promise(resolve => setTimeout(resolve, 1000));
 
