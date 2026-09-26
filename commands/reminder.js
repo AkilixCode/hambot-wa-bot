@@ -9,6 +9,29 @@ const ui = require('../utils/ui');
 // In-memory storage for active reminders
 const activeReminders = new Map();
 
+// Every reminder is a live timer held in memory for up to 7 days. Without a
+// ceiling one user could queue thousands of them at the rate-limit pace.
+const MAX_PER_USER = 5;
+const MAX_TOTAL = 500;
+
+// Monotonic suffix for reminder IDs. A timestamp alone collides when two
+// reminders land in the same millisecond, and the second silently replaced
+// the first in the map while its timer still ran.
+let nextReminderSeq = 0;
+
+/**
+ * Number of pending reminders a sender owns.
+ * @param {string} sender
+ * @returns {number}
+ */
+function countForSender(sender) {
+    let count = 0;
+    for (const reminder of activeReminders.values()) {
+        if (reminder.sender === sender) count++;
+    }
+    return count;
+}
+
 class ReminderCommand extends CommandBase {
     constructor() {
         super({
@@ -76,10 +99,26 @@ class ReminderCommand extends CommandBase {
             });
         }
 
+        if (countForSender(sender) >= MAX_PER_USER) {
+            return await this.replyError(sock, from, msg,
+                `Kamu sudah punya ${MAX_PER_USER} pengingat aktif.`, {
+                    title: 'Batas Tercapai',
+                    hint: ['Tunggu salah satu pengingat selesai dulu']
+                });
+        }
+
+        if (activeReminders.size >= MAX_TOTAL) {
+            return await this.replyError(sock, from, msg,
+                'Bot sedang menyimpan terlalu banyak pengingat.', {
+                    title: 'Penuh',
+                    hint: ['Coba lagi nanti']
+                });
+        }
+
         await this.react(sock, msg, '⏰');
 
         // Generate reminder ID
-        const reminderId = `${sender}_${Date.now()}`;
+        const reminderId = `${sender}_${Date.now()}_${++nextReminderSeq}`;
         
         // Set the reminder
         const timeout = setTimeout(async () => {
@@ -178,3 +217,6 @@ class ReminderCommand extends CommandBase {
 // The activeReminders Map will be garbage collected when the process exits
 
 module.exports = ReminderCommand;
+module.exports.activeReminders = activeReminders;
+module.exports.MAX_PER_USER = MAX_PER_USER;
+module.exports.MAX_TOTAL = MAX_TOTAL;

@@ -219,7 +219,7 @@ async function smartSearchIMDb(query, omdbApiKey = null) {
     // --- Strategy 2: OMDB Search API (?s=) ---
     if (omdbApiKey) {
         try {
-            const searchUrl = `http://www.omdbapi.com/?s=${encodeURIComponent(sanitizedQuery)}&apikey=${omdbApiKey}`;
+            const searchUrl = `https://www.omdbapi.com/?s=${encodeURIComponent(sanitizedQuery)}&apikey=${omdbApiKey}`;
             const { data: searchData } = await httpClient.get(searchUrl, { timeout: 5000 });
 
             if (searchData.Response === 'True' && searchData.Search && searchData.Search.length > 0) {
