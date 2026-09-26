@@ -9,7 +9,8 @@
  * Healthy means:
  *   - connected ("open"), or
  *   - waiting to be linked ("linking": a QR or pairing code is on screen,
- *     which can legitimately take a while on first setup), or
+ *     which can legitimately take a while on first setup) for less than
+ *     LINKING_LIMIT_MS — past that, nobody is coming to scan it, or
  *   - briefly between connections — a reconnect is normal, so "connecting"
  *     and "close" only count as unhealthy after DISCONNECTED_GRACE_MS;
  * and in every case the file must have been refreshed recently. A heartbeat
@@ -23,9 +24,12 @@ const { dataDir } = require('./paths');
 const HEALTH_FILE_NAME = 'health.json';
 const DISCONNECTED_GRACE_MS = 5 * 60 * 1000;
 const STALE_AFTER_MS = 3 * 60 * 1000;
+const LINKING_LIMIT_MS = 30 * 60 * 1000;
 const HEARTBEAT_MS = 60 * 1000;
 
-let current = { state: 'starting', since: Date.now() };
+// linkingSince survives the close/connecting blips between QR cycles, so a
+// bot that has shown codes for an hour is not "freshly linking" each minute.
+let current = { state: 'starting', since: Date.now(), linkingSince: null };
 let heartbeat = null;
 
 /** @returns {string} Absolute path of the health file */
@@ -50,8 +54,10 @@ function write() {
  */
 function report(state) {
     if (state !== current.state) {
-        current = { state, since: Date.now() };
+        current = { ...current, state, since: Date.now() };
     }
+    if (state === 'linking' && !current.linkingSince) current.linkingSince = Date.now();
+    if (state === 'open') current.linkingSince = null;
     write();
 
     if (!heartbeat) {
@@ -75,6 +81,11 @@ function evaluate(record, now = Date.now()) {
         return { healthy: false, reason: `health file is stale (${Math.round(age / 1000)}s old)` };
     }
     if (record.state === 'open') return { healthy: true, reason: 'connected' };
+
+    const linkingFor = record.linkingSince ? now - Number(record.linkingSince) : 0;
+    if (linkingFor > LINKING_LIMIT_MS) {
+        return { healthy: false, reason: `waiting to be linked for ${Math.round(linkingFor / 60000)} min — see ./deploy.sh logs` };
+    }
     if (record.state === 'linking') return { healthy: true, reason: 'waiting to be linked (QR / pairing code)' };
 
     const down = now - Number(record.since || 0);
@@ -104,5 +115,6 @@ module.exports = {
     check,
     healthFilePath,
     DISCONNECTED_GRACE_MS,
-    STALE_AFTER_MS
+    STALE_AFTER_MS,
+    LINKING_LIMIT_MS
 };

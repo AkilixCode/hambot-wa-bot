@@ -43,16 +43,51 @@ function parsePairingNumber(raw) {
     return { number: digits, error: null };
 }
 
+// Pairing codes requested per process before falling back to the QR code.
+// A code nobody types in (wrong number, expired, rejected on the phone) would
+// otherwise be re-requested on every QR timeout cycle — forever, and into
+// WhatsApp's pairing rate limit. LOGIN_METHOD=code allows a few more.
+const MAX_PAIRING_CODES = { auto: 2, code: 5 };
+
 /**
- * Decide how this connection should be linked.
+ * Decide how this connection should be linked, and explain any fallback.
+ *
  * @param {Object} opts
  * @param {boolean} opts.registered Whether saved credentials already exist
  * @param {string|null} opts.pairingNumber Validated number, or null
+ * @param {string} [opts.preference] LOGIN_METHOD: 'auto' (default), 'code' or 'qr'
+ * @param {number} [opts.codesIssued] Pairing codes already requested this process
+ * @returns {{method: 'none'|'pairing'|'qr', notice: string|null}}
+ */
+function chooseLoginMethod({ registered, pairingNumber, preference, codesIssued = 0 }) {
+    if (registered) return { method: 'none', notice: null };
+
+    const pref = String(preference || 'auto').trim().toLowerCase();
+    if (pref === 'qr') return { method: 'qr', notice: null };
+
+    const mode = pref === 'code' ? 'code' : 'auto';
+    if (!pairingNumber) {
+        return {
+            method: 'qr',
+            notice: mode === 'code' ? 'LOGIN_METHOD=code needs a valid PAIRING_NUMBER — using the QR code' : null
+        };
+    }
+    if (codesIssued >= MAX_PAIRING_CODES[mode]) {
+        return {
+            method: 'qr',
+            notice: `Pairing did not complete after ${codesIssued} codes — switching to the QR code. ` +
+                'Check PAIRING_NUMBER (./deploy.sh config) or relink with ./deploy.sh relink.'
+        };
+    }
+    return { method: 'pairing', notice: null };
+}
+
+/**
+ * Shorthand for the method alone.
  * @returns {'none'|'pairing'|'qr'}
  */
-function loginMethod({ registered, pairingNumber }) {
-    if (registered) return 'none';
-    return pairingNumber ? 'pairing' : 'qr';
+function loginMethod(opts) {
+    return chooseLoginMethod(opts).method;
 }
 
 /**
@@ -80,7 +115,8 @@ function pairingInstructions(code, number) {
         `  For number +${number}. On that phone:`,
         '  WhatsApp → Linked devices → Link a device',
         '  → "Link with phone number instead" → type the code.',
-        '  The code expires in about a minute; restart to get a new one.',
+        '  The code expires in about a minute; a new one follows once, then the QR code.',
+        '  Wrong number? ./deploy.sh config, or ./deploy.sh relink --qr',
         ''
     ].join('\n');
 }
@@ -137,6 +173,8 @@ async function removeQrPng() {
 module.exports = {
     parsePairingNumber,
     loginMethod,
+    chooseLoginMethod,
+    MAX_PAIRING_CODES,
     formatPairingCode,
     pairingInstructions,
     writeQrPng,

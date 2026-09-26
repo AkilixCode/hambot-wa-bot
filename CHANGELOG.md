@@ -18,6 +18,20 @@ much easier Docker deploy.
 
 ### Fixed
 
+- **Logged out = locked out.** Removing the linked device made the bot exit;
+  Docker restarted it into the same dead session, forever, with no QR or
+  code. It now archives the session (never deletes it) and relinks by
+  itself. Corrupted sessions relink after 3 failures, a session used by two
+  copies backs off instead of fighting, a banned number stops retrying, and
+  reconnects back off from 3s to 60s.
+- **Stuck pairing.** An unused or wrong pairing code was re-requested on
+  every cycle; now at most 2, then the QR code. `LOGIN_METHOD` overrides.
+  Waiting to be linked for 30+ minutes reports unhealthy.
+- **Owner lock-outs:** a `BOT_OWNER_ID` like `0812…` (no country code) was
+  silently unusable; it is now reported at startup. `.security onlygroup on`
+  no longer ignores the owner's private chat.
+- `.security stop` under Docker explains that it restarts, and points at
+  `./deploy.sh stop`.
 - `.security disable rateLimit` and the `autoBlock` toggle were ignored.
 - The chat filter rejected ordinary input (`.calc (2+3)*4`, URLs with `&`,
   words like "update") and counted it towards an auto-block.
@@ -59,6 +73,13 @@ much easier Docker deploy.
 
 ### Added
 
+- **Recovery commands:** `./deploy.sh config` (fix a mistyped owner or
+  pairing number), `./deploy.sh relink [--qr | --code <number>]`,
+  `./deploy.sh restore-session` (undo a relink), and a read-back
+  confirmation for every number typed into `deploy.sh`. `status` shows the
+  configured numbers and login method.
+- `npm run test:deploy` — runs `deploy.sh` against a fake Docker under a
+  pseudo-terminal, including the misclick paths.
 - **`./deploy.sh`** — one-command setup (creates `.env`, starts the bot,
   shows the pairing code or QR) plus `update`, `logs`, `status` and `stop`.
 - **Prebuilt image on GHCR** (`ghcr.io/akilixcode/hambot-wa-bot`, amd64 and

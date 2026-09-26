@@ -264,15 +264,59 @@ class Config {
         let normalized = ownerId.trim();
         
         // Accept both @s.whatsapp.net and @lid formats directly
-        if (normalized.endsWith('@s.whatsapp.net') || normalized.endsWith('@lid')) {
+        if (normalized.endsWith('@lid')) {
             return normalized;
         }
+        if (normalized.endsWith('@s.whatsapp.net')) {
+            const local = normalized.slice(0, -'@s.whatsapp.net'.length);
+            return this._isPlausibleNumber(local) ? normalized : null;
+        }
         
-        // Otherwise, assume it's a phone number - normalize and add @s.whatsapp.net suffix
+        // Otherwise, assume it's a phone number - normalize and add @s.whatsapp.net suffix.
+        // A number that can never be a WhatsApp ID (local 0-prefixed form, or
+        // the wrong length) is dropped here and reported by ownerIdProblems(),
+        // instead of silently becoming an owner ID nobody can ever match.
         const number = normalized.replace(/\D/g, '');
-        if (!number) return null;
+        if (!this._isPlausibleNumber(number)) return null;
         
         return `${number}@s.whatsapp.net`;
+    }
+
+    /**
+     * Could this be a phone number in international form, as WhatsApp uses?
+     * No country code starts with 0, and E.164 numbers have at most 15 digits.
+     * @param {string} digits
+     * @returns {boolean}
+     * @private
+     */
+    _isPlausibleNumber(digits) {
+        return /^[1-9]\d{7,14}$/.test(digits);
+    }
+
+    /**
+     * Human-readable problems with BOT_OWNER_ID, one per unusable entry.
+     * A typo here silently locks the owner out of every owner-only command,
+     * so it is worth saying loudly at startup.
+     * @param {string} [raw] Defaults to the BOT_OWNER_ID environment variable
+     * @returns {string[]}
+     */
+    ownerIdProblems(raw = process.env.BOT_OWNER_ID) {
+        if (!raw) return [];
+        const problems = [];
+        for (const entry of String(raw).split(',').map(e => e.trim()).filter(Boolean)) {
+            if (entry.endsWith('@lid')) continue;
+            const digits = entry.replace(/@s\.whatsapp\.net$/, '').replace(/\D/g, '');
+            if (!digits) {
+                problems.push(`"${entry}" contains no phone number`);
+            } else if (digits.startsWith('0')) {
+                problems.push(`"${entry}" starts with 0 — use the country code instead (e.g. 62812… not 0812…)`);
+            } else if (!this._isPlausibleNumber(digits)) {
+                problems.push(`"${entry}" is ${digits.length} digits — a number with country code has 8-15`);
+            } else if (entry.endsWith('@s.whatsapp.net') && entry !== `${digits}@s.whatsapp.net`) {
+                problems.push(`"${entry}" has extra characters before @s.whatsapp.net`);
+            }
+        }
+        return problems;
     }
 
     /**
@@ -374,8 +418,11 @@ class Config {
             errors.push('COOLDOWN_MS harus non-negatif');
         }
 
+        // Note: console.warn here instead of logger to avoid a circular dependency
+        for (const problem of this.ownerIdProblems()) {
+            console.warn(`⚠️ BOT_OWNER_ID: ${problem}. That entry is ignored — fix it with ./deploy.sh config or in .env.`);
+        }
         if (!this.bot.ownerIds || this.bot.ownerIds.length === 0) {
-            // Note: Using console.warn here instead of logger to avoid circular dependency
             console.warn('⚠️ PERINGATAN: BOT_OWNER_ID tidak dikonfigurasi. Perintah owner-only tidak akan berfungsi.');
         }
 
