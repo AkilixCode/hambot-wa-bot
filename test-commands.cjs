@@ -280,6 +280,81 @@ async function main() {
         assert.strictEqual(ui.plain(fancy), 'hello World 42 ok v1.0');
     });
 
+    // ── Menu ─────────────────────────────────────────────────────────
+    console.log('\n📋 Menu...\n');
+
+    const MenuCommand = require('./commands/menu');
+    const menuImage = require('./utils/menu-image');
+    const menu = new MenuCommand();
+    const os = require('os');
+    const sharp = require('sharp');
+
+    const runMenu = async (isOwner = false) => {
+        const sock = fakeSock();
+        await menu.execute(sock, fakeMsg('1@g.us', 'x'), [], { from: '1@g.us', isOwner });
+        return sock.sent.filter(s => !s.content.react);
+    };
+
+    await test('.menu is one message: the image with the menu as its caption', async () => {
+        menuImage.clearCache();
+        const sent = await runMenu();
+        assert.strictEqual(sent.length, 1, `expected 1 message, got ${sent.length}`);
+        const { image, caption } = sent[0].content;
+        assert.ok(Buffer.isBuffer(image) && image.length > 1000, 'image must be attached');
+        assert.ok(caption.length <= 1024, `caption is ${caption.length} chars`);
+        assert.ok(ui.plain(caption).includes('.music'), 'caption lists the commands');
+    });
+
+    await test('.menu command rows never exceed the narrow-phone width', () => {
+        const { body } = menu.buildOverview('Ilham', true);
+        for (const line of body.split('\n').filter(l => l.startsWith('   .'))) {
+            assert.ok(line.length <= 30, `"${line}" is ${line.length} chars`);
+        }
+    });
+
+    await test('.menu hides owner-only commands from everyone else', () => {
+        const { body } = menu.buildOverview('x', false);
+        assert.ok(!/\.(security|spam)\b/.test(body), 'owner-only commands leaked into the menu');
+    });
+
+    await test('MENU_IMAGE overrides the generated banner', async () => {
+        const file = path.join(os.tmpdir(), `menu-test-${process.pid}.png`);
+        await sharp({ create: { width: 64, height: 32, channels: 3, background: '#ff0000' } }).png().toFile(file);
+        process.env.MENU_IMAGE = file;
+        menuImage.clearCache();
+        try {
+            const meta = await sharp(await menuImage.getMenuImage()).metadata();
+            assert.strictEqual(meta.width, 64, 'the override image must be used');
+        } finally {
+            delete process.env.MENU_IMAGE;
+            menuImage.clearCache();
+            fs.unlinkSync(file);
+        }
+    });
+
+    await test('A broken MENU_IMAGE falls back to the generated banner', async () => {
+        process.env.MENU_IMAGE = '/definitely/not/here.jpg';
+        menuImage.clearCache();
+        try {
+            const meta = await sharp(await menuImage.getMenuImage()).metadata();
+            assert.strictEqual(meta.width, 1280);
+        } finally {
+            delete process.env.MENU_IMAGE;
+            menuImage.clearCache();
+        }
+    });
+
+    await test('.menu still answers in text when the image cannot be sent', async () => {
+        const sock = fakeSock();
+        const realSend = sock.sendMessage;
+        sock.sendMessage = async (jid, content, opts) => {
+            if (content.image) throw new Error('upload failed');
+            return realSend.call(sock, jid, content, opts);
+        };
+        await menu.execute(sock, fakeMsg('1@g.us', 'x'), [], { from: '1@g.us', isOwner: false });
+        assert.ok(texts(sock).some(t => t.includes('.music')), 'the menu text must still be delivered');
+    });
+
     // ── Chat output ──────────────────────────────────────────────────
     console.log('\n💬 Chat output...\n');
 

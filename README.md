@@ -75,6 +75,8 @@ and edit. Every value has a working default except the API keys.
 | --- | --- | --- |
 | `BOT_NAME` | `HamBot` | Name shown in the menu |
 | `BOT_OWNER` | — | Name shown in the menu footer |
+| `BOT_TAGLINE` | `Asisten WhatsApp serba bisa` | Line under the name on the menu image and caption |
+| `MENU_IMAGE` | — | Picture on top of `.menu`: a file path or http(s) URL. Falls back to `assets/menu.jpg`, then to a generated banner |
 | `BOT_PREFIX` | `.` | Command prefix |
 | `BOT_OWNER_ID` | — | Owner JID. Accepts `<number>@s.whatsapp.net`, `<id>@lid`, or a bare number. Comma-separate to register both formats. |
 | `ONLY_GROUP_MODE` | `false` | Ignore private messages entirely |
