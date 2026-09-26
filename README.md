@@ -5,7 +5,7 @@ with a modular command system, media downloading, and a set of networking
 reference tools. Command output is in Indonesian.
 
 [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE.md)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen.svg)](https://nodejs.org)
 
 ## Contents
 
@@ -21,7 +21,7 @@ reference tools. Command output is in Indonesian.
 
 ## Requirements
 
-- Node.js 20.19 or newer
+- Node.js 22.12 or newer (24 LTS recommended; Node 20 is end-of-life)
 - `python3` with `yt-dlp` installed — used by `.video` and `.music`
 - `ffmpeg` — used by `.say` and `.toimg`
 - `deno` — yt-dlp needs a JS runtime to solve YouTube's n-challenge. Without it
