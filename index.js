@@ -32,6 +32,13 @@ let pairingCodesIssued = 0;
 let reconnectTimer = null;
 let startupLogged = false;
 
+// Baileys can sit in "connecting" forever when WhatsApp's servers are
+// unreachable (outbound traffic dropped by a firewall, broken IPv6, a blocked
+// network): no QR, no error, no close. Give up on the socket after this long
+// and retry with backoff, saying why.
+const CONNECT_WATCHDOG_MS = Number(process.env.HAMBOT_CONNECT_TIMEOUT_MS) || 45 * 1000;
+let connectWatchdog = null;
+
 /**
  * Detach and close the current socket before a new one replaces it.
  */
@@ -62,11 +69,10 @@ function handleClose(lastDisconnect) {
     const decision = session.decideOnClose(statusCode, closeCounters);
     closeCounters = decision.next;
 
-    logger.warn(`Connection closed: ${decision.message}`, {
-        statusCode,
-        action: decision.action,
-        reason: lastDisconnect?.error?.message
-    });
+    // logger.system, not warn: this is shown in the default "simple" log
+    // mode too, so a failing connection is never silent.
+    const reason = lastDisconnect?.error?.message;
+    logger.system(`Disconnected (${statusCode ?? 'no code'}${reason ? `: ${reason}` : ''}) — ${decision.message}`);
 
     if (decision.action === 'relink') {
         try {
@@ -143,7 +149,9 @@ async function startBot() {
             auth: state,
             printQRInTerminal: false,
             logger: pino({ level: config.logging.silent ? 'silent' : 'fatal' }),
-            browser: config.bot.browser
+            browser: config.bot.browser,
+            // Test hook: point the socket at a local stub instead of WhatsApp.
+            ...(process.env.HAMBOT_WA_URL ? { waWebSocketUrl: process.env.HAMBOT_WA_URL } : {})
         });
         socketRef.set(sock);
         health.report('connecting');
@@ -154,14 +162,14 @@ async function startBot() {
         // An invalid PAIRING_NUMBER is reported and falls back to the QR code
         // rather than stopping the bot.
         const pairing = login.parsePairingNumber(process.env.PAIRING_NUMBER);
-        if (pairing.error) logger.warn(`${pairing.error} — falling back to the QR code`);
+        if (pairing.error) logger.system(`${pairing.error} — falling back to the QR code`);
         const { method, notice } = login.chooseLoginMethod({
             registered: Boolean(state.creds?.registered),
             pairingNumber: pairing.number,
             preference: process.env.LOGIN_METHOD,
             codesIssued: pairingCodesIssued
         });
-        if (notice) logger.warn(notice);
+        if (notice) logger.system(notice);
 
         // Baileys re-emits `qr` every ~20s until linked. A pairing code is
         // requested at most once per socket and a limited number of times per
@@ -170,8 +178,17 @@ async function startBot() {
         let pairingFailed = false;
         const thisSock = sock;
 
+        clearTimeout(connectWatchdog);
+        connectWatchdog = setTimeout(() => {
+            if (sock !== thisSock) return;
+            logger.system(`No answer from WhatsApp after ${Math.round(CONNECT_WATCHDOG_MS / 1000)}s. ` +
+                'Check that this server can reach the internet (outbound HTTPS/443 to web.whatsapp.com; DNS; firewall).');
+            handleClose({ error: { message: 'no answer from WhatsApp', output: { statusCode: session.REASON.timedOut } } });
+        }, CONNECT_WATCHDOG_MS);
+
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
+            if (qr || connection === 'open' || connection === 'close') clearTimeout(connectWatchdog);
 
             // Feeds the Docker HEALTHCHECK (scripts/healthcheck.js).
             if (qr) health.report('linking');
@@ -185,7 +202,7 @@ async function startBot() {
                     console.log(login.pairingInstructions(code, pairing.number));
                 } catch (error) {
                     pairingFailed = true;
-                    logger.warn(`Pairing code request failed (${error.message}) — use the QR code instead`);
+                    logger.system(`Pairing code request failed (${error.message}) — use the QR code instead`);
                 }
             }
 
@@ -231,9 +248,10 @@ async function shutdown() {
 
     try {
         // Close WhatsApp connection
-        if (sock) {
-            await sock.end();
-        }
+        // Detach first, so closing the socket doesn't schedule a reconnect.
+        clearTimeout(reconnectTimer);
+        clearTimeout(connectWatchdog);
+        retireSocket();
 
         // Cleanup cache
         cache.destroy();
@@ -267,5 +285,5 @@ if (require.main === module) {
 
 module.exports = {
     handleClose,
-    cancelScheduledStart: () => clearTimeout(reconnectTimer)
+    cancelScheduledStart: () => { clearTimeout(reconnectTimer); clearTimeout(connectWatchdog); }
 };

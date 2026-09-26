@@ -873,6 +873,47 @@ async function main() {
         }
     });
 
+    await test('Unreachable WhatsApp: the bot says so and retries instead of hanging silently', async () => {
+        // A server that accepts the connection and never answers, like a
+        // firewall that swallows traffic. Baileys alone waits forever here.
+        const net = require('net');
+        const sockets = [];
+        const server = net.createServer(s => sockets.push(s));
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        const dir = tempAuth();
+        const data = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-data-'));
+        const child = require('child_process').spawn(process.execPath, ['index.js'], {
+            cwd: __dirname,
+            env: {
+                ...process.env,
+                HAMBOT_WA_URL: `ws://127.0.0.1:${server.address().port}/ws`,
+                HAMBOT_CONNECT_TIMEOUT_MS: '1500',
+                HAMBOT_AUTH_DIR: dir,
+                HAMBOT_DATA_DIR: data,
+                BOT_OWNER_ID: '6281234567890',
+                LOG_LEVEL: 'simple'
+            }
+        });
+        let out = '';
+        child.stdout.on('data', chunk => { out += chunk; });
+        child.stderr.on('data', chunk => { out += chunk; });
+        try {
+            const deadline = Date.now() + 20000;
+            while (!/Disconnected \(408/.test(out) && Date.now() < deadline) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            assert.match(out, /No answer from WhatsApp after 2s/, out);
+            assert.match(out, /Disconnected \(408: no answer from WhatsApp\) — Reconnecting in 3s/, 'visible in the default log mode');
+            assert.strictEqual(child.exitCode, null, 'still running, retrying');
+        } finally {
+            child.kill('SIGKILL');
+            sockets.forEach(s => s.destroy());
+            server.close();
+            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(data, { recursive: true, force: true });
+        }
+    });
+
     // ── Summary ───────────────────────────────────────────────────────
     console.log('\n' + '='.repeat(60));
     console.log('📊 COMMAND TEST SUMMARY');

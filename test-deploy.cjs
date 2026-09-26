@@ -43,8 +43,12 @@ function sandbox() {
     fs.writeFileSync(path.join(dir, 'bin', 'docker'), [
         '#!/bin/sh',
         'printf "%s\\n" "$*" >> "$(dirname "$0")/../docker.calls"',
+        'here="$(dirname "$0")/.."',
         'case "$*" in',
-        '  "compose logs --no-log-prefix hambot") echo "✅ HamBot connected to WhatsApp!" ;;',
+        // Tests can script the bot's log and container state with files.
+        '  "compose logs --no-log-prefix hambot") if [ -f "$here/logs.txt" ]; then cat "$here/logs.txt"; else echo "✅ HamBot connected to WhatsApp!"; fi ;;',
+        '  "compose logs --no-log-prefix --tail 25 hambot") cat "$here/logs.txt" 2>/dev/null ;;',
+        '  compose\\ ps*) cat "$here/state.txt" 2>/dev/null ;;',
         'esac',
         'exit 0',
         ''
@@ -59,8 +63,8 @@ function sandbox() {
  * @param {string[]} args
  * @param {string[]|null} lines Lines typed at the prompts; null = no terminal
  */
-function run(dir, args, lines) {
-    const env = { ...process.env, PATH: `${path.join(dir, 'bin')}:${process.env.PATH}` };
+function run(dir, args, lines, extraEnv = {}) {
+    const env = { ...process.env, PATH: `${path.join(dir, 'bin')}:${process.env.PATH}`, ...extraEnv };
     const command = ['./deploy.sh', ...args].join(' ');
     const result = lines === null
         ? spawnSync('sh', ['-c', `${command} </dev/null`], { cwd: dir, env, encoding: 'utf8' })
@@ -186,6 +190,33 @@ if (!hasScript) {
             assert.match(r.output, /Owner number:\s+6282222222222/);
             assert.match(r.output, /Pairing number:\s+6287712345678/);
             assert.match(r.output, /Login method:\s+code/);
+        });
+
+        test('Waiting for the bot relays "no answer from WhatsApp" and gives up with a hint', () => {
+            fs.writeFileSync(path.join(dir, 'logs.txt'), [
+                '⚙️ Command system initialized',
+                '⚙️ No answer from WhatsApp after 45s. Check that this server can reach the internet.',
+                '⚙️ Disconnected (408: no answer from WhatsApp) — Reconnecting in 3s.'
+            ].join('\n') + '\n');
+            fs.writeFileSync(path.join(dir, 'state.txt'), 'running\n');
+            const r = run(dir, ['relink', '-y'], null, { HAMBOT_WAIT_TRIES: '2' });
+            assert.strictEqual(r.status, 0, r.output);
+            assert.strictEqual((r.output.match(/No answer from WhatsApp after/g) || []).length, 2, 'relayed once, then shown again in the final log tail');
+            assert.match(r.output, /can't reach WhatsApp.*firewall/);
+            assert.match(r.output, /deploy\.sh logs/);
+        });
+
+        test('Waiting for the bot stops early when the container crashed', () => {
+            fs.writeFileSync(path.join(dir, 'logs.txt'), '❌ [bot-startup] BOT_OWNER_ID is not set\n');
+            fs.writeFileSync(path.join(dir, 'state.txt'), 'restarting\n');
+            const started = Date.now();
+            const r = run(dir, ['relink', '-y'], null);
+            assert.notStrictEqual(r.status, 0, 'a crashed bot is a failed setup');
+            assert.ok(Date.now() - started < 20000, 'does not sit out the full 2 minutes');
+            assert.match(r.output, /container is restarting/);
+            assert.match(r.output, /BOT_OWNER_ID is not set/);
+            fs.rmSync(path.join(dir, 'logs.txt'));
+            fs.rmSync(path.join(dir, 'state.txt'));
         });
 
         test('Unknown commands fail with a hint', () => {

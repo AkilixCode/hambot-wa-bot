@@ -175,10 +175,16 @@ session_tool() {
 }
 
 # Wait for the bot to print a pairing code, a QR code, or "connected".
+# Problems it reports on the way (no answer from WhatsApp, disconnects, a
+# crash) are shown as they happen instead of waiting silently.
 show_login() {
     info "Waiting for the bot to start (Ctrl+C stops waiting; the bot keeps running)"
     tries=0
-    while [ $tries -lt 60 ]; do
+    shown=0
+    problems=""
+    # HAMBOT_WAIT_TRIES exists for the tests; each try is 2 seconds.
+    max_tries=${HAMBOT_WAIT_TRIES:-60}
+    while [ $tries -lt "$max_tries" ]; do
         tries=$((tries + 1))
         sleep 2
         logs=$(docker compose logs --no-log-prefix "$SERVICE" 2>&1 || true)
@@ -203,8 +209,32 @@ show_login() {
             info "Scan it with WhatsApp → Linked devices. Then check: ./deploy.sh logs"
             return 0
         fi
+
+        # Relay new problem lines so a stuck start explains itself.
+        problems=$(printf '%s\n' "$logs" | grep -E "No answer from WhatsApp|Disconnected \(|Pairing code request failed|falling back to the QR|❌" || true)
+        count=$(printf '%s' "$problems" | grep -c . || true)
+        if [ "$count" -gt "$shown" ]; then
+            printf '%s\n' "$problems" | tail -n $((count - shown)) | sed 's/^/   /'
+            shown=$count
+        fi
+
+        # A container that exited or keeps restarting will never get there.
+        state=$(docker compose ps -a --format '{{.State}}' "$SERVICE" 2>/dev/null | head -n 1)
+        case "$state" in
+            exited|dead|restarting)
+                warn "The bot container is $state. Its last log lines:"
+                docker compose logs --no-log-prefix --tail 25 "$SERVICE"
+                warn "Fix the error above (settings: ./deploy.sh config), then: ./deploy.sh update"
+                return 1
+                ;;
+        esac
     done
-    warn "No pairing code, QR or connection after 2 minutes. Check: ./deploy.sh logs"
+    warn "No pairing code, QR or connection after 2 minutes. Last log lines:"
+    docker compose logs --no-log-prefix --tail 25 "$SERVICE"
+    if [ "$shown" -gt 0 ] && printf '%s' "$problems" | grep -q "No answer from WhatsApp"; then
+        warn "This server can't reach WhatsApp. Check its internet, DNS and firewall (outbound 443)."
+    fi
+    warn "The bot keeps trying in the background. Follow it with: ./deploy.sh logs"
 }
 
 cmd_setup() {
