@@ -65,6 +65,9 @@ run `./deploy.sh update` to apply them.
 | `./deploy.sh logs` | Follow the logs |
 | `./deploy.sh status` | Container state and health |
 | `./deploy.sh stop` | Stop the bot; the WhatsApp session is kept |
+| `./deploy.sh config` | Fix the owner or pairing number (typo? run this) |
+| `./deploy.sh relink [--qr \| --code <number>]` | Link the WhatsApp number again from scratch |
+| `./deploy.sh restore-session` | Undo the last relink |
 
 **Without the script**
 
@@ -408,17 +411,38 @@ push and pull request.
 `docker compose cp hambot:/app/data/qr.png .` with Docker (`./deploy.sh` does
 this for you).
 
-**Pairing code expired.** Codes last about a minute. Restart the bot
-(`docker compose restart`) for a fresh one.
+**Typed the wrong number** (owner or pairing). `./deploy.sh config` asks
+again, showing the current values; the WhatsApp session is kept. The owner
+number as the bot understood it is printed at startup (`Owner: …`), and a
+number it cannot use — e.g. `0812…` without the country code — is reported
+there instead of silently ignored.
 
-**Repeated disconnects.** Unlink and pair again. Locally, delete
-`auth_info_baileys/`; with Docker, `docker compose down` then
-`docker volume rm hambot_auth` and `./deploy.sh`. Either way the device is
-logged out, so re-link it from the phone.
+**Pairing code doesn't work** (expired, rejected on the phone, or sent to the
+wrong number). The bot issues at most two codes, then switches to the QR code
+by itself. To start over right away: `./deploy.sh relink --qr`, or
+`./deploy.sh relink --code <the bot's number>` for a new code. Without the
+script: set `LOGIN_METHOD=qr` in `.env` and restart.
 
-**Container shows `unhealthy`.** The bot has had no WhatsApp connection for 5
-minutes. `./deploy.sh logs` shows why — usually a logged-out session (re-link
-as above) or no internet on the server.
+**Removed the linked device on the phone / logged out.** Nothing to do: the
+bot archives the dead session and shows a new pairing code or QR in the logs
+(`./deploy.sh logs`). Relinked by mistake? `./deploy.sh restore-session` puts
+the previous session back (archives live in `auth_info_baileys/.archive/`).
+
+**"Another copy of the bot is using this session".** Two copies share one
+login — e.g. `npm start` while the container runs, or two containers. Stop one;
+the bot backs off (1, 5, then 15 minutes) instead of fighting for it.
+
+**Repeated disconnects.** The bot retries with growing delays (up to a minute)
+and relinks by itself if the saved session is corrupted. If it still will not
+stay connected, `./deploy.sh relink`.
+
+**Container shows `unhealthy`.** No WhatsApp connection for 5 minutes, or
+waiting to be linked for over 30 minutes. `./deploy.sh status` and
+`./deploy.sh logs` show which — usually a code or QR nobody scanned, or no
+internet on the server.
+
+**Changed the prefix and forgot it.** Restart the bot; the prefix comes back
+from `BOT_PREFIX` in `.env`.
 
 **`.video` or `.music` fails.** Run `.security media` first — it reports the
 yt-dlp version and age, the player clients in use, and the egress state in one
