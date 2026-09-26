@@ -355,6 +355,74 @@ async function main() {
         assert.ok(texts(sock).some(t => t.includes('.music')), 'the menu text must still be delivered');
     });
 
+    // ── Typo tolerance ───────────────────────────────────────────────
+    console.log('\n✏️ Typo tolerance...\n');
+
+    const handler = require('./handler');
+    const registry = require('./commands/registry');
+    const config = require('./config');
+    let typoSender = 0;
+    // A fresh sender per call: this file runs with RATE_LIMIT_MAX=1.
+    const say = async (text) => {
+        const sock = fakeSock();
+        const sender = `62890${++typoSender}@s.whatsapp.net`;
+        await handler(sock, { messages: [textMsg('777@g.us', sender, text)], type: 'notify' });
+        return sock.sent
+            .filter(s => !s.content.react)
+            .map(s => ui.plain(s.content.text ?? s.content.caption ?? '').toLowerCase());
+    };
+
+    await test('Common typos resolve to the intended command', () => {
+        const visible = n => !config.isOwnerOnlyCommand(n);
+        for (const [typo, meant] of [['mneu', 'menu'], ['stikcer', 'sticker'], ['wether', 'weather'],
+            ['vidoe', 'video'], ['muisc', 'music'], ['trnaslate', 'translate'], ['pnig', 'ping']]) {
+            const m = registry.match(typo, { filter: visible });
+            assert.ok(m.confident && m.name === meant, `${typo} -> ${JSON.stringify(m)}`);
+        }
+    });
+
+    await test('A typo runs the command, with a correction note in the same reply', async () => {
+        const replies = await say('.mneu');
+        assert.strictEqual(replies.length, 1, `expected one message, got ${replies.length}`);
+        assert.ok(replies[0].startsWith('✏️ _.mneu'), replies[0].slice(0, 60));
+        assert.ok(replies[0].includes('.music'), 'the menu itself must follow the note');
+    });
+
+    await test('Ordinary chat that happens to start with a dot gets no reply', async () => {
+        for (const text of ['.ok', '.wkwk', '...', '. ', '.mantap', '.haha lucu', '.5 juta']) {
+            const replies = await say(text);
+            assert.strictEqual(replies.length, 0, `"${text}" got a reply: ${replies[0]}`);
+        }
+    });
+
+    await test('Messages without the dot prefix are never treated as commands', async () => {
+        for (const text of ['menu', 'mneu', 'sticker pls', 'halo .menu']) {
+            assert.strictEqual((await say(text)).length, 0, `"${text}" got a reply`);
+        }
+    });
+
+    await test('Owner-only commands are never guessed from a typo', async () => {
+        assert.strictEqual(registry.match('secrity', { filter: n => !config.isOwnerOnlyCommand(n) }).name, null);
+        const replies = await say('.secrity');
+        assert.ok(!replies.some(r => r.includes('security')), 'must not run or reveal .security');
+    });
+
+    await test('An ambiguous typo asks instead of guessing', async () => {
+        const m = registry.match('dic', { filter: n => !config.isOwnerOnlyCommand(n) });
+        assert.ok(!m.confident && m.candidates.includes('dice') && m.candidates.includes('dns'), JSON.stringify(m));
+        const replies = await say('.dic');
+        assert.strictEqual(replies.length, 1);
+        assert.ok(replies[0].includes('.dice') && replies[0].includes('.dns'), replies[0]);
+    });
+
+    await test('.menu <typo> shows the page it meant, with a note', async () => {
+        const sock = fakeSock();
+        await menu.execute(sock, fakeMsg('1@g.us', 'x'), ['vidoe'], { from: '1@g.us', isOwner: false });
+        const [reply] = texts(sock);
+        assert.ok(reply.startsWith('✏️ _vidoe'), reply.slice(0, 40));
+        assert.ok(reply.includes('*.video*'), 'the .video help page must follow');
+    });
+
     // ── Chat output ──────────────────────────────────────────────────
     console.log('\n💬 Chat output...\n');
 
@@ -394,7 +462,6 @@ async function main() {
     // ── Runtime security toggles ─────────────────────────────────────
     console.log('\n🎛️ Runtime toggles...\n');
 
-    const handler = require('./handler');
     const security = require('./utils/security');
 
     await test('`.security disable rateLimit` actually disables the rate limiter', async () => {

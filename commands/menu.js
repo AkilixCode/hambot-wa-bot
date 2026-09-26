@@ -9,6 +9,7 @@ const commandRegistry = require('./registry');
 const config = require('../config');
 const ui = require('../utils/ui');
 const menuImage = require('../utils/menu-image');
+const { withCorrectionNote, correctionNote } = require('../utils/correction');
 
 // WhatsApp truncates long captions; base.replyMedia clamps to this too.
 const CAPTION_LIMIT = 1024;
@@ -613,8 +614,23 @@ class MenuCommand extends CommandBase {
                 return await this.sendCategoryHelp(sock, from, msg, query, isOwnerViewer);
             }
 
+            // A clear typo of a command or category: show that page, with a
+            // note saying what was assumed.
+            const visible = name => isOwnerViewer || !config.isOwnerOnlyCommand(name);
+            const guess = commandRegistry.match(query, {
+                extra: commandRegistry.getCategories(),
+                filter: visible
+            });
+            if (guess.confident) {
+                const noted = withCorrectionNote(sock, correctionNote(query, guess.name));
+                const guessedCommand = commandRegistry.get(guess.name);
+                return guessedCommand
+                    ? await this.sendCommandHelp(noted, from, msg, guessedCommand)
+                    : await this.sendCategoryHelp(noted, from, msg, guess.name, isOwnerViewer);
+            }
+
             // Not found - point at the closest matches rather than a generic list
-            const near = this._suggest(query, isOwnerViewer);
+            const near = [...new Set([...guess.candidates, ...this._suggest(query, isOwnerViewer)])].slice(0, 3);
             return await this.replyError(sock, from, msg,
                 `Tidak ada perintah atau kategori bernama ${ui.mono(ui.truncate(args[0], 24))}.`,
                 {

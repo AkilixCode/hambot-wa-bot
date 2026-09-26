@@ -271,6 +271,97 @@ class CommandRegistry {
     }
 
     /**
+     * Edit distance with adjacent transpositions (optimal string alignment).
+     *
+     * Counts the typos people actually make on a phone keyboard as one edit
+     * each: a wrong letter (`menj`), a missing one (`stiker`), an extra one
+     * (`menuu`) and two swapped neighbours (`mneu`).
+     *
+     * @param {string} a
+     * @param {string} b
+     * @returns {number}
+     * @private
+     */
+    _editDistance(a, b) {
+        const rows = a.length + 1;
+        const cols = b.length + 1;
+        const d = Array.from({ length: rows }, (_, i) => {
+            const row = new Array(cols).fill(0);
+            row[0] = i;
+            return row;
+        });
+        for (let j = 0; j < cols; j++) d[0][j] = j;
+
+        for (let i = 1; i < rows; i++) {
+            for (let j = 1; j < cols; j++) {
+                const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+                d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+                if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+                    d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+                }
+            }
+        }
+        return d[a.length][b.length];
+    }
+
+    /**
+     * Resolve a mistyped command name.
+     *
+     * Deliberately conservative, because a wrong guess runs the wrong command:
+     *   - only letters and digits, at least 3 characters (so "...", ".", ".p"
+     *     and the like are never "corrected" into a command);
+     *   - at most 1 edit for 3-4 character input, 2 edits for longer input;
+     *   - candidates shorter than 3 characters are ignored — a one-letter
+     *     alias is within 2 edits of half the dictionary;
+     *   - `confident` only when exactly one command is closest. A tie means we
+     *     cannot tell what was meant, so the caller should ask instead.
+     *
+     * @param {string} query Raw command token the user typed
+     * @param {Object} [opts]
+     * @param {string[]} [opts.extra] Extra candidates, e.g. category names
+     * @param {function(string): boolean} [opts.filter] Keep only candidates
+     *   (canonical names) that pass. Callers use it to exclude commands that
+     *   must never be guessed, such as owner-only ones.
+     * @returns {{name: string|null, distance: number|null, confident: boolean, candidates: string[]}}
+     */
+    match(query, { extra = [], filter } = {}) {
+        const none = { name: null, distance: null, confident: false, candidates: [] };
+        const needle = String(query || '').toLowerCase();
+        if (needle.length < 3 || !/^[a-z0-9]+$/.test(needle)) return none;
+
+        const maxDistance = needle.length <= 4 ? 1 : 2;
+        const best = new Map(); // canonical -> smallest distance
+
+        for (const candidate of new Set([...this.commands.keys(), ...this.aliases.keys(), ...extra])) {
+            const lower = candidate.toLowerCase();
+            if (lower.length < 3) continue;
+
+            const canonical = this.resolveName(candidate) || candidate;
+            if (filter && !filter(canonical)) continue;
+
+            // Cheap reject: the length gap alone already exceeds the budget.
+            if (Math.abs(lower.length - needle.length) > maxDistance) continue;
+
+            const distance = this._editDistance(needle, lower);
+            if (distance > maxDistance) continue;
+            if (!best.has(canonical) || best.get(canonical) > distance) best.set(canonical, distance);
+        }
+
+        if (best.size === 0) return none;
+
+        const ranked = Array.from(best.entries()).sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]));
+        const [topName, topDistance] = ranked[0];
+        const tied = ranked.filter(([, distance]) => distance === topDistance);
+
+        return {
+            name: topName,
+            distance: topDistance,
+            confident: tied.length === 1,
+            candidates: ranked.slice(0, 3).map(([name]) => name)
+        };
+    }
+
+    /**
      * Get all categories
      */
     getCategories() {
