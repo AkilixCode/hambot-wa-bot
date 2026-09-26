@@ -160,6 +160,41 @@ async function main() {
     await test('restart falls back when pm2 exits with an error', () =>
         waitForFallback('false'));
 
+    // ── Command parsing ──────────────────────────────────────────────
+    console.log('\n🔤 Command parsing...\n');
+
+    const { parseCommand } = require('./handler');
+
+    await test('Parses a plain command with arguments', () => {
+        assert.deepStrictEqual(parseCommand('.remind 10m masak mie', '.'),
+            { commandName: 'remind', args: ['10m', 'masak', 'mie'] });
+    });
+
+    await test('Tolerates a space after the prefix', () => {
+        assert.deepStrictEqual(parseCommand('. Menu', '.'), { commandName: 'menu', args: [] });
+    });
+
+    await test('Works with a multi-character prefix followed by a space', () => {
+        // slice(2) used to turn this into command "! menu".
+        assert.deepStrictEqual(parseCommand('hb! menu sticker', 'hb!'),
+            { commandName: 'menu', args: ['sticker'] });
+    });
+
+    await test('A newline ends the command name', () => {
+        assert.deepStrictEqual(parseCommand('.menu\nsticker', '.'),
+            { commandName: 'menu', args: ['sticker'] });
+    });
+
+    await test('Line breaks inside an argument are preserved', () => {
+        assert.deepStrictEqual(parseCommand('.say baris satu\nbaris dua', '.'),
+            { commandName: 'say', args: ['baris', 'satu\nbaris', 'dua'] });
+    });
+
+    await test('handler.js registers no SIGINT listener of its own', () => {
+        assert.strictEqual(process.listenerCount('SIGINT'), 0,
+            'a SIGINT listener here pre-empts index.js graceful shutdown');
+    });
+
     // ── Runtime security toggles ─────────────────────────────────────
     console.log('\n🎛️ Runtime toggles...\n');
 
