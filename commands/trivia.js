@@ -47,10 +47,12 @@ class TriviaCommand extends CommandBase {
                 logger.info('Trivia: question loaded');
                 const question = data.results[0];
                 
-                // Decode HTML entities
-                const decodedQuestion = this.decodeHTML(question.question);
-                const correctAnswer = this.decodeHTML(question.correct_answer);
-                const incorrectAnswers = question.incorrect_answers.map(a => this.decodeHTML(a));
+                // Decode HTML entities, then strip WhatsApp markdown: this is
+                // third-party text rendered inside our own formatting.
+                const decodedQuestion = ui.safe(this.decodeHTML(question.question), 300);
+                const correctAnswer = ui.safe(this.decodeHTML(question.correct_answer), 100);
+                const incorrectAnswers = question.incorrect_answers.map(a => ui.safe(this.decodeHTML(a), 100));
+                const category = ui.safe(this.decodeHTML(question.category), 60);
                 
                 // Shuffle answers
                 const allAnswers = [correctAnswer, ...incorrectAnswers]
@@ -77,7 +79,7 @@ class TriviaCommand extends CommandBase {
                     title: 'Kuis Trivia',
                     lines: [
                         ui.kv('Tingkat', difficultyName, difficultyEmoji),
-                        ui.kv('Kategori', question.category, '📚'),
+                        ui.kv('Kategori', category, '📚'),
                         '',
                         `❓ ${ui.bold(decodedQuestion)}`,
                         '',
@@ -117,20 +119,40 @@ class TriviaCommand extends CommandBase {
         }
     }
 
+    /**
+     * Decode the HTML entities Open Trivia DB returns.
+     *
+     * Numeric entities (&#039;, &#x27;) are decoded generically. Named ones
+     * are limited to a table, which previously lacked accented letters, so
+     * names like "Pok&eacute;mon" came through raw.
+     *
+     * @param {string} text
+     * @returns {string}
+     */
     decodeHTML(text) {
         const entities = {
-            '&quot;': '"',
-            '&#039;': "'",
-            '&amp;': '&',
-            '&lt;': '<',
-            '&gt;': '>',
-            '&rsquo;': "'",
-            '&lsquo;': "'",
-            '&ldquo;': '"',
-            '&rdquo;': '"'
+            quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: ' ',
+            rsquo: "'", lsquo: "'", ldquo: '"', rdquo: '"',
+            hellip: '…', ndash: '–', mdash: '—', shy: '',
+            eacute: 'é', Eacute: 'É', egrave: 'è', ecirc: 'ê', euml: 'ë',
+            aacute: 'á', agrave: 'à', acirc: 'â', auml: 'ä', Auml: 'Ä', aring: 'å', atilde: 'ã',
+            iacute: 'í', icirc: 'î', iuml: 'ï',
+            oacute: 'ó', ocirc: 'ô', ouml: 'ö', Ouml: 'Ö', otilde: 'õ', oslash: 'ø',
+            uacute: 'ú', ucirc: 'û', uuml: 'ü', Uuml: 'Ü',
+            ntilde: 'ñ', ccedil: 'ç', szlig: 'ß', deg: '°', pi: 'π', micro: 'µ'
         };
-        
-        return text.replace(/&[^;]+;/g, match => entities[match] || match);
+
+        return String(text ?? '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, body) => {
+            if (body[0] === '#') {
+                const code = body[1].toLowerCase() === 'x'
+                    ? parseInt(body.slice(2), 16)
+                    : parseInt(body.slice(1), 10);
+                return Number.isFinite(code) && code > 0 && code <= 0x10ffff
+                    ? String.fromCodePoint(code)
+                    : match;
+            }
+            return Object.prototype.hasOwnProperty.call(entities, body) ? entities[body] : match;
+        });
     }
 }
 

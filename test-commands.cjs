@@ -247,6 +247,42 @@ async function main() {
         assert.ok(Date.now() - started >= 1450, `waited only ${Date.now() - started}ms`);
     });
 
+    // ── Chat output ──────────────────────────────────────────────────
+    console.log('\n💬 Chat output...\n');
+
+    await test('.port echoes a search query without WhatsApp markdown', async () => {
+        const PortCommand = require('./commands/port');
+        const sock = fakeSock();
+        await new PortCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['*zzz_nothing*'], { from: '1@g.us' });
+        const [reply] = texts(sock);
+        assert.ok(reply.includes('zzznothing'), reply);
+        assert.ok(!reply.includes('*zzz'), 'user-supplied markdown must be stripped');
+    });
+
+    await test('.port renders a known port as a card', async () => {
+        const PortCommand = require('./commands/port');
+        const sock = fakeSock();
+        await new PortCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['22'], { from: '1@g.us' });
+        const [reply] = texts(sock);
+        assert.ok(reply.startsWith('╭'), 'expected the standard card frame');
+        assert.ok(reply.includes('SSH'));
+    });
+
+    await test('.dns rejects an invalid domain with the standard error card', async () => {
+        const DnsCommand = require('./commands/dns');
+        const sock = fakeSock();
+        await new DnsCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['not a domain!'], { from: '1@g.us' });
+        const [reply] = texts(sock);
+        assert.ok(reply.startsWith('╭') && reply.includes('Domain Tidak Valid'), reply);
+    });
+
+    await test('Trivia decodes numeric and accented HTML entities', () => {
+        const TriviaCommand = require('./commands/trivia');
+        const t = new TriviaCommand();
+        assert.strictEqual(t.decodeHTML('Pok&eacute;mon &amp; &#039;Z&#x27; &quot;x&quot;'), 'Pokémon & \'Z\' "x"');
+        assert.strictEqual(t.decodeHTML('&unknown;'), '&unknown;');
+    });
+
     // ── Runtime security toggles ─────────────────────────────────────
     console.log('\n🎛️ Runtime toggles...\n');
 
