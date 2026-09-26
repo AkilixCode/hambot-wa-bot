@@ -16,7 +16,7 @@ FROM denoland/deno:bin-2.9.7 AS deno
 # canvas and sharp normally download prebuilt binaries that bundle their own
 # libraries. The compilers and -dev headers are here only as the fallback for
 # a platform without a prebuild, and never reach the runtime image.
-FROM node:24-bookworm-slim AS builder
+FROM node:26-bookworm-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates python3 g++ make pkg-config \
@@ -28,7 +28,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 # ---- Runtime ----
-FROM node:24-bookworm-slim
+FROM node:26-bookworm-slim
 
 # ffmpeg (.say, .toimg), python3 + pip (yt-dlp), fonts (.brat, menu banner),
 # tini (PID 1: forwards signals so the graceful shutdown runs, reaps
