@@ -195,6 +195,58 @@ async function main() {
             'a SIGINT listener here pre-empts index.js graceful shutdown');
     });
 
+    // ── Hygiene fixes ────────────────────────────────────────────────
+    console.log('\n🧹 Hygiene...\n');
+
+    await test('A title with no poster yields null, not a dead placeholder URL', async () => {
+        const { getValidPosterUrl } = require('./utils/helpers');
+        assert.strictEqual(await getValidPosterUrl('N/A'), null);
+        assert.strictEqual(await getValidPosterUrl(''), null);
+    });
+
+    await test('Proxy credentials are URL-encoded', () => {
+        const saved = { ...process.env };
+        try {
+            Object.assign(process.env, {
+                PROXY_HOST: '100.64.0.1', PROXY_PORT: '8080', PROXY_TYPE: 'http',
+                PROXY_USER: 'me@home', PROXY_PASS: 'p@ss:w/rd'
+            });
+            delete process.env.HB_PROXY_URL;
+            const Config = require('./config').constructor;
+            const url = new Config().proxy.url;
+            const parsed = new URL(url);
+            assert.strictEqual(parsed.hostname, '100.64.0.1');
+            assert.strictEqual(decodeURIComponent(parsed.username), 'me@home');
+            assert.strictEqual(decodeURIComponent(parsed.password), 'p@ss:w/rd');
+        } finally {
+            for (const k of ['PROXY_HOST', 'PROXY_PORT', 'PROXY_TYPE', 'PROXY_USER', 'PROXY_PASS']) {
+                if (k in saved) process.env[k] = saved[k]; else delete process.env[k];
+            }
+        }
+    });
+
+    await test('Stale security event counters are pruned', () => {
+        const security = require('./utils/security');
+        security.logSecurityEvent('test_event', { userId: '628666@s.whatsapp.net' });
+        const [key] = [...security.securityEvents.keys()].filter(k => k.startsWith('test_event_'));
+        assert.ok(key, 'event must be counted');
+
+        security.securityEvents.get(key).lastSeen = Date.now() - 25 * 60 * 60 * 1000;
+        security.cleanup();
+        assert.ok(!security.securityEvents.has(key), 'a day-old counter must be dropped');
+    });
+
+    await test('Spam waits at least its advertised 1.5 s between messages', async () => {
+        const SpamCommand = require('./commands/spam');
+        const spam = new SpamCommand();
+        spam.THINKING_PAUSE_CHANCE = 0; // keep the test's runtime bounded
+        const sock = { sendPresenceUpdate: async () => {} };
+
+        const started = Date.now();
+        await spam.humanBehaviorDelay(sock, '1@g.us', 1, 10);
+        assert.ok(Date.now() - started >= 1450, `waited only ${Date.now() - started}ms`);
+    });
+
     // ── Runtime security toggles ─────────────────────────────────────
     console.log('\n🎛️ Runtime toggles...\n');
 

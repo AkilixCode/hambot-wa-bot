@@ -145,12 +145,18 @@ class MovieCommand extends CommandBase {
                 footer: `${ui.sourceBadge(fromCache)} ${ui.SYM.dot} OMDb`
             });
 
-            // Via replyMedia so the caption gets clamped to WhatsApp's 1024-char
-            // limit — a long synopsis plus a full metadata card can exceed it.
-            await this.replyMedia(sock, from, msg, {
-                image: { url: poster },
-                caption: info
-            });
+            if (poster) {
+                // Via replyMedia so the caption gets clamped to WhatsApp's 1024-char
+                // limit — a long synopsis plus a full metadata card can exceed it.
+                await this.replyMedia(sock, from, msg, {
+                    image: { url: poster },
+                    caption: info
+                });
+            } else {
+                // No poster on OMDb: send the card on its own rather than
+                // failing the whole lookup over a missing picture.
+                await this.reply(sock, from, msg, info);
+            }
 
             await this.react(sock, msg, '✅');
 
