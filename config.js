@@ -86,7 +86,7 @@ class Config {
             chatFilterEnabled: process.env.SECURITY_CHAT_FILTER !== 'false'
         };
 
-        // Proxy configuration for yt-dlp, axios, Playwright and other services
+        // Proxy configuration for yt-dlp, axios and other services
         // Supports HTTP, HTTPS, and SOCKS5 proxies (e.g., Tailscale + Every Proxy)
         this.proxy = {
             // Enable/disable proxy globally
@@ -158,7 +158,9 @@ class Config {
             }
 
             if (user && pass) {
-                return `${protocol}://${user}:${pass}@${host}:${port}`;
+                // Encoded so a password containing @, : or / does not break
+                // the URL (and with it every proxied request).
+                return `${protocol}://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
             }
             return `${protocol}://${host}:${port}`;
         }
@@ -218,28 +220,6 @@ class Config {
      */
     getYtDlpNetworkArgs() {
         return this.network.forceIPv4 ? ['--force-ipv4'] : [];
-    }
-
-    /**
-     * Get proxy configuration for Playwright browser context
-     * Returns null if proxy is not enabled or not configured
-     * @returns {Object|null} Playwright proxy config { server, username?, password? }
-     */
-    getPlaywrightProxyConfig() {
-        if (!this.proxy.enabled || !this.proxy.host || !this.proxy.port) {
-            return null;
-        }
-
-        const proxyConfig = {
-            server: this.proxy.url || `${this.proxy.type || 'http'}://${this.proxy.host}:${this.proxy.port}`
-        };
-
-        if (this.proxy.user && this.proxy.pass) {
-            proxyConfig.username = this.proxy.user;
-            proxyConfig.password = this.proxy.pass;
-        }
-
-        return proxyConfig;
     }
 
     /**

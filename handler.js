@@ -5,7 +5,6 @@
 
 require('dotenv').config({ quiet: true });
 const config = require('./config');
-const cache = require('./utils/cache');
 const RateLimiter = require('./utils/rate-limiter');
 const logger = require('./utils/logger');
 const security = require('./utils/security');
@@ -99,6 +98,26 @@ async function sendUnknownCommandHint(sock, msg, from, sender, commandName, isOw
 }
 
 /**
+ * Split a prefixed message into a command name and its arguments.
+ *
+ * Tolerates a space after the prefix (`. menu`) for any prefix length — this
+ * used to be `slice(2)`, which only worked for single-character prefixes —
+ * and ends the command name at any whitespace, so `.menu` followed by a
+ * newline is still `menu`. Arguments keep splitting on spaces only, so a
+ * multi-line argument (e.g. for `.say`) keeps its line breaks.
+ *
+ * @param {string} text Message text, already known to start with the prefix
+ * @param {string} prefix
+ * @returns {{commandName: string, args: string[]}}
+ */
+function parseCommand(text, prefix) {
+    const body = text.slice(prefix.length).replace(/^\s+/, '');
+    const commandToken = body.match(/^\S*/)[0];
+    const args = body.slice(commandToken.length).trim().split(/ +/).filter(Boolean);
+    return { commandName: commandToken.toLowerCase(), args };
+}
+
+/**
  * Main message handler with security
  */
 module.exports = async (sock, m) => {
@@ -150,13 +169,7 @@ module.exports = async (sock, m) => {
         // SECURITY: Sanitize input
         textBody = security.sanitizeInput(textBody, 2000);
         
-        // Clean up prefix
-        if (textBody.startsWith(config.bot.prefix + ' ')) {
-            textBody = config.bot.prefix + textBody.slice(2).trim();
-        }
-
-        const commandName = textBody.split(' ')[0].toLowerCase().slice(config.bot.prefix.length);
-        const args = textBody.trim().split(/ +/).slice(1);
+        const { commandName, args } = parseCommand(textBody, config.bot.prefix);
 
         // SECURITY: Detect malicious patterns.
         // Both the .env setting and the runtime toggle (.security disable chatFilter)
@@ -274,7 +287,11 @@ module.exports = async (sock, m) => {
         }
 
         // --- Rate Limiting ---
-        const rateLimit = rateLimiter.check(sender);
+        // `.security disable rateLimit` flips this toggle; it used to be
+        // displayed in the panel but never consulted.
+        const rateLimit = security.isFeatureEnabled('rateLimit')
+            ? rateLimiter.check(sender)
+            : { allowed: true };
         if (!rateLimit.allowed) {
             security.trackSuspiciousActivity(sender, 'rate_limit_exceeded');
             logger.commandEnd(tracker, 'blocked', `Rate limit exceeded (retry in ${rateLimit.retryAfter}s)`);
@@ -308,10 +325,6 @@ module.exports = async (sock, m) => {
             return;
         }
 
-        const cooldownMs = command.cooldown || config.performance.cooldownMs;
-        userCooldowns.set(sender, { warned: false, expiresAt: Date.now() + cooldownMs });
-        setTimeout(() => userCooldowns.delete(sender), cooldownMs);
-
         // --- Queue Management for Heavy Commands ---
         isHeavyCommand = command.isHeavy;
         if (isHeavyCommand) {
@@ -330,6 +343,13 @@ module.exports = async (sock, m) => {
             }
             activeProcesses++;
         }
+
+        // Start the cooldown only once the command is actually going to run.
+        // It used to be set before the busy check above, so a user told
+        // "server busy" was also locked out for the cooldown.
+        const cooldownMs = command.cooldown || config.performance.cooldownMs;
+        userCooldowns.set(sender, { warned: false, expiresAt: Date.now() + cooldownMs });
+        setTimeout(() => userCooldowns.delete(sender), cooldownMs);
 
         // --- Validate Command ---
         const validation = await command.validate(msg, context);
@@ -396,10 +416,8 @@ try {
     logger.error(error, { context: 'command-loading' });
 }
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-    logger.info('Shutting down handler...');
-    cache.destroy();
-    rateLimiter.destroy();
-    process.exit(0);
-});
+// No signal handlers here. This module is required before index.js registers
+// its own, so a SIGINT listener here ran first and called process.exit()
+// before index.js could close the WhatsApp socket gracefully.
+
+module.exports.parseCommand = parseCommand;

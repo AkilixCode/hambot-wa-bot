@@ -166,12 +166,16 @@ Stated plainly, because a security document that claims completeness is not
 useful:
 
 - DNS rebinding between our resolution check and yt-dlp's own fetch is not
-  covered.
+  covered, and neither are HTTP redirects: yt-dlp follows them, so a public URL
+  that redirects to an internal address still reaches it. Restrict the
+  container's egress at the network layer if that matters for your deployment.
 - Runtime state (blocks, disabled commands, lockdown) is in memory and does not
   survive a restart.
-- The malicious-pattern filter is a blunt instrument that matches on shell and
-  SQL metacharacters. It will produce false positives, and it is not a substitute
-  for the argument validation each command does.
+- The malicious-pattern filter only matches path traversal, `<script>` tags and
+  null bytes. It used to match shell and SQL metacharacters too, but nothing in
+  the bot runs a shell or a database, so that only produced false positives
+  (`.calc (2+3)*4`, URLs containing `&`). It is not a substitute for the argument
+  validation each command does.
 - Dependency vulnerabilities are the largest realistic exposure. Baileys
   authenticates every inbound message; keeping it current matters more than any
   control listed above.

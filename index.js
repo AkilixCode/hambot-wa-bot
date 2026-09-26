@@ -8,6 +8,7 @@ const cache = require('./utils/cache');
 const security = require('./utils/security');
 const egress = require('./utils/egress');
 const tempdir = require('./utils/tempdir');
+const socketRef = require('./utils/socket-ref');
 
 // Use the modular handler directly
 const handler = require('./handler');
@@ -54,6 +55,7 @@ async function startBot() {
             logger: pino({ level: config.logging.silent ? 'silent' : 'fatal' }),
             browser: config.bot.browser
         });
+        socketRef.set(sock);
 
         sock.ev.on('creds.update', saveCreds);
 

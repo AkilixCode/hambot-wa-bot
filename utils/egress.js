@@ -26,7 +26,12 @@ const axios = require('axios');
 const config = require('../config');
 const logger = require('./logger');
 
-const STATE_DIR = path.join(__dirname, '..', 'data');
+// HAMBOT_DATA_DIR exists mainly so the test suite can point this somewhere
+// disposable — otherwise running the tests on a live server overwrote the
+// owner's persisted proxy toggle.
+const STATE_DIR = process.env.HAMBOT_DATA_DIR
+    ? path.resolve(process.env.HAMBOT_DATA_DIR)
+    : path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(STATE_DIR, 'egress.json');
 
 // Public endpoint that echoes the caller's IP. Plain text, tiny response.
@@ -216,6 +221,7 @@ function status() {
 }
 
 module.exports = {
+    STATE_FILE,
     isEnabled,
     isConfigured,
     restore,

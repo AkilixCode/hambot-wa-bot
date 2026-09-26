@@ -143,24 +143,28 @@ class PortCommand extends CommandBase {
             if (portNum <= 1023) category = 'Well-known';
             else if (portNum <= 49151) category = 'Registered';
 
-            return await this.reply(sock, from, msg, 
-                `🔌 *Port ${portNum}*\n\n` +
-                `📊 Kategori: ${category}\n` +
-                `❓ Status: Tidak ada di database\n\n` +
-                `💡 Port ini mungkin digunakan oleh layanan custom atau tidak umum.`);
+            return await this.reply(sock, from, msg, ui.card({
+                icon: '🔌',
+                title: `Port ${portNum}`,
+                lines: [
+                    ui.kv('Kategori', category, '📊'),
+                    ui.kv('Status', 'Tidak ada di database', '❓'),
+                    '',
+                    `${ui.EMOJI.tip} Port ini mungkin dipakai layanan custom atau tidak umum.`
+                ]
+            }));
         }
 
-        const response = 
-`🔌 *INFO PORT ${portNum}*
-
-• Nama: ${portInfo.name}
-• Port: ${portNum}
-• Protokol: ${portInfo.protocol}
-• Deskripsi: ${portInfo.desc}
-
-💡 *Kategori:* ${portNum <= 1023 ? 'Well-known Port' : 'Registered Port'}`;
-
-        await this.reply(sock, from, msg, response);
+        await this.reply(sock, from, msg, ui.card({
+            icon: '🔌',
+            title: `Port ${portNum} ${ui.SYM.dot} ${portInfo.name}`,
+            lines: [
+                ui.kv('Protokol', portInfo.protocol, '📡'),
+                ui.kv('Kategori', portNum <= 1023 ? 'Well-known' : 'Registered', '📊'),
+                '',
+                portInfo.desc
+            ]
+        }));
         await this.react(sock, msg, '✅');
     }
 
@@ -176,27 +180,31 @@ class PortCommand extends CommandBase {
             }
         }
 
+        // The query is echoed back, so strip WhatsApp markdown from it.
+        const shown = ui.safe(query, 40);
+
         if (results.length === 0) {
-            return await this.reply(sock, from, msg, 
-                `❌ Tidak ditemukan port dengan kata kunci "${query}"\n\n` +
-                `Coba: \`.port ssh\`, \`.port http\`, \`.port mysql\``);
+            return await this.replyError(sock, from, msg,
+                `Tidak ada port dengan kata kunci ${ui.mono(shown)}.`, {
+                    title: 'Tidak Ditemukan',
+                    hint: ['.port ssh', '.port http', '.port mysql']
+                });
         }
 
-        const sections = [];
-        sections.push(`🔍 *HASIL PENCARIAN: ${query.toUpperCase()}*`);
-        sections.push('');
-
+        const lines = [];
         for (const result of results.slice(0, 10)) {
-            sections.push(`🔌 *Port ${result.port}* - ${result.name}`);
-            sections.push(`📡 ${result.protocol} | ${result.desc}`);
-            sections.push('');
+            lines.push(`${ui.SYM.bullet} ${ui.bold(String(result.port))} ${ui.SYM.dot} ${result.name}`);
+            lines.push(`   ${result.protocol} ${ui.SYM.dot} ${result.desc}`);
         }
-
         if (results.length > 10) {
-            sections.push(`\n_...dan ${results.length - 10} hasil lainnya_`);
+            lines.push('', ui.italic(`…dan ${results.length - 10} hasil lainnya`));
         }
 
-        await this.reply(sock, from, msg, sections.join('\n'));
+        await this.reply(sock, from, msg, ui.card({
+            icon: '🔍',
+            title: `Hasil: ${shown}`,
+            lines
+        }));
         await this.react(sock, msg, '✅');
     }
 }

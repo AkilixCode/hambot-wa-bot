@@ -14,6 +14,11 @@
 const assert = require('assert');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+
+// Keep the egress tests away from the real data/egress.json. Must be set
+// before utils/egress is required.
+process.env.HAMBOT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-test-'));
 
 let passed = 0;
 let failed = 0;
@@ -210,7 +215,9 @@ async function main() {
         const { spawnPromise } = require('./utils/helpers');
         const started = Date.now();
         await assert.rejects(
-            () => spawnPromise('ping', ['-i', '1', '-c', '30', '127.0.0.1'], { timeout: 1200 }),
+            // node rather than ping: it is on the allowlist and is always
+            // installed wherever the tests run, while slim images lack ping.
+            () => spawnPromise('node', ['-e', 'setTimeout(() => {}, 30000)'], { timeout: 1200 }),
             (err) => {
                 assert.strictEqual(err.timedOut, true, 'error must be flagged as a timeout');
                 return true;
@@ -293,6 +300,13 @@ async function main() {
     console.log('\n🛰️  Egress Toggle...\n');
 
     const egress = require('./utils/egress');
+
+    await test('Egress state is written to HAMBOT_DATA_DIR, not the repo', () => {
+        assert.strictEqual(
+            path.dirname(egress.STATE_FILE),
+            path.resolve(process.env.HAMBOT_DATA_DIR)
+        );
+    });
 
     await test('Enabling without a configured host is refused', async () => {
         const savedHost = config.proxy.host;

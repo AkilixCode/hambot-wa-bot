@@ -19,7 +19,7 @@ rely on — a bad reconnection loop can get a number rate-limited.
 npm run test:all
 ```
 
-All three suites must pass. If you change behaviour that a test asserts, update
+All suites must pass (CI runs them on every push). If you change behaviour that a test asserts, update
 the test in the same commit and say why in the message.
 
 ## Conventions

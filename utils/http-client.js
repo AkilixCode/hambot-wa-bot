@@ -216,20 +216,6 @@ function isProxyEnabled() {
     return config.proxy.enabled && config.proxy.host && config.proxy.port;
 }
 
-/**
- * Get proxy status for debugging
- * @returns {Object}
- */
-function getProxyStatus() {
-    return {
-        enabled: config.proxy.enabled,
-        type: config.proxy.type,
-        host: config.proxy.host,
-        port: config.proxy.port,
-        url: config.proxy.enabled ? config.getProxyUrl() : null
-    };
-}
-
 module.exports = {
     createHttpClient,
     createLocalHttpClient,
@@ -237,6 +223,5 @@ module.exports = {
     post,
     head,
     isProxyEnabled,
-    isProxyConnectionError,
-    getProxyStatus
+    isProxyConnectionError
 };

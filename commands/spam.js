@@ -82,7 +82,8 @@ class SpamCommand extends CommandBase {
         
         // Random variation in typing speed
         const pattern = this.typingPatterns[Math.floor(Math.random() * this.typingPatterns.length)];
-        
+        const started = Date.now();
+
         try {
             // Send typing indicator (presence) to look more human
             await sock.sendPresenceUpdate('composing', targetJid);
@@ -97,8 +98,15 @@ class SpamCommand extends CommandBase {
             await sleep(this.randomDelay(pattern.pause, pattern.pause * 2));
             
         } catch (presenceError) {
-            // Ignore presence errors, just wait the base delay
-            await sleep(baseDelay);
+            // Ignore presence errors; the base delay below still applies
+        }
+
+        // baseDelay is the floor between messages. It used to be applied only
+        // when a presence update failed, so the advertised 1.5–5 s gap never
+        // happened on the normal path.
+        const remaining = baseDelay - (Date.now() - started);
+        if (remaining > 0) {
+            await sleep(remaining);
         }
     }
 

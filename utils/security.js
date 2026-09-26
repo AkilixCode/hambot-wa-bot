@@ -11,6 +11,11 @@ const redact = require('./redact');
 // How many audit entries are kept in memory (ring buffer).
 const AUDIT_LOG_MAX = 200;
 
+// Per-user security event counters are forgotten after this long without a
+// new event. They were never pruned before, so the map grew for as long as
+// the process ran — one key per event type per user ever seen.
+const SECURITY_EVENT_TTL_MS = 24 * 60 * 60 * 1000;
+
 // Unauthorized attempts on owner-only commands: window and escalating penalties.
 const UNAUTHORIZED_WINDOW_MS = 10 * 60 * 1000;
 const UNAUTHORIZED_PENALTIES = [
@@ -21,14 +26,16 @@ const UNAUTHORIZED_PENALTIES = [
 
 class SecurityManager {
     constructor() {
-        // Blacklist for malicious patterns
+        // Blacklist for malicious patterns.
+        //
+        // Shell metacharacters and SQL keywords used to be listed here too.
+        // Nothing in the bot runs a shell (every spawn is shell:false) or a
+        // database, so they guarded nothing — while rejecting `.calc (2+3)*4`,
+        // any URL with `&` in its query string, and plain words like "update"
+        // or "union", each hit counting towards an auto-block.
         this.blacklistedPatterns = [
-            // Command injection
-            /[;&|`$(){}[\]<>]/g,
             // Path traversal
             /\.\.[\/\\]/g,
-            // SQL injection patterns
-            /(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION)\b)/gi,
             // Script injection
             /<script[^>]*>.*?<\/script>/gi,
             // Null bytes
@@ -38,14 +45,11 @@ class SecurityManager {
         // Whitelist patterns are now handled by stripExpressionTags() and stripLanguageTags()
         // methods which remove safe patterns before malicious pattern detection
 
-        // Rate limit tracking for security events
+        // Security event counters: `${event}_${userId}` -> { count, lastSeen }
         this.securityEvents = new Map();
         
         // Blocked users (temporary)
         this.blockedUsers = new Map();
-        
-        // Command execution limits per user
-        this.commandLimits = new Map();
         
         // Suspicious activity tracking
         this.suspiciousActivity = new Map();
@@ -676,7 +680,9 @@ class SecurityManager {
         // Check for abuse patterns
         const recentActivities = activities.filter(a => Date.now() - a.timestamp < 60000);
         
-        if (recentActivities.length > 20) {
+        // Respect the owner's `.security disable autoBlock` toggle — previously
+        // only the owner-command path honoured it.
+        if (recentActivities.length > 20 && this.runtimeSettings.autoBlockEnabled) {
             const result = this.blockUser(userId, 1800000, 'Excessive suspicious activity');
             return result.success;
         }
@@ -696,10 +702,10 @@ class SecurityManager {
 
         // Track security events
         const key = `${event}_${context.userId || 'unknown'}`;
-        if (!this.securityEvents.has(key)) {
-            this.securityEvents.set(key, 0);
-        }
-        this.securityEvents.set(key, this.securityEvents.get(key) + 1);
+        const counter = this.securityEvents.get(key) || { count: 0, lastSeen: 0 };
+        counter.count++;
+        counter.lastSeen = Date.now();
+        this.securityEvents.set(key, counter);
 
         // Mirror into the audit trail so `.security audit` shows threats too
         const { userId, ...rest } = context;
@@ -823,7 +829,7 @@ class SecurityManager {
             .slice(0, limit);
 
         const events = Array.from(this.securityEvents.entries())
-            .map(([key, count]) => ({ event: key.split('_').slice(0, -1).join('_') || key, count }))
+            .map(([key, { count }]) => ({ event: key.split('_').slice(0, -1).join('_') || key, count }))
             .reduce((acc, item) => {
                 acc[item.event] = (acc[item.event] || 0) + item.count;
                 return acc;
@@ -961,6 +967,13 @@ class SecurityManager {
                 this.suspiciousActivity.delete(userId);
             } else {
                 this.suspiciousActivity.set(userId, recent);
+            }
+        }
+
+        // Forget event counters nobody has triggered for a day
+        for (const [key, counter] of this.securityEvents.entries()) {
+            if (now - counter.lastSeen > SECURITY_EVENT_TTL_MS) {
+                this.securityEvents.delete(key);
             }
         }
 

@@ -330,10 +330,13 @@ Conventions worth following:
 npm test                 # module loading, config, registry, helpers
 npm run test:integration # command metadata and alias integrity
 npm run test:security    # sanitising, URL guards, permissions, blocking
+npm run test:media       # yt-dlp runner, provider cascade, egress toggle
+npm run test:commands    # handler and command regressions, via a fake socket
 npm run test:all
 ```
 
-All three suites pass on `main`.
+All suites run offline, and CI (`.github/workflows/test.yml`) runs them on every
+push and pull request.
 
 ## Troubleshooting
 

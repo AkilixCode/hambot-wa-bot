@@ -40,6 +40,7 @@ function spawnPromise(command, args, options = {}) {
     // SIGTERM lets ffmpeg finish writing/removing its partial output; SIGKILL
     // is the escalation for a process that ignores it.
     const KILL_GRACE_MS = 5000;
+    const MAX_OUTPUT = 16 * 1024 * 1024;
 
     return new Promise((resolve, reject) => {
         // Validate command to prevent injection
@@ -74,8 +75,10 @@ function spawnPromise(command, args, options = {}) {
             finish(reject, error);
         }, timeout);
 
-        proc.stdout.on('data', (data) => stdout += data);
-        proc.stderr.on('data', (data) => stderr += data);
+        // Capped like utils/ytdlp.js, so a chatty process cannot grow the
+        // buffers without bound.
+        proc.stdout.on('data', (data) => { if (stdout.length < MAX_OUTPUT) stdout += data; });
+        proc.stderr.on('data', (data) => { if (stderr.length < MAX_OUTPUT) stderr += data; });
         proc.on('close', (code) => {
             if (code === 0) finish(resolve, stdout);
             else finish(reject, new Error(stderr || `Command failed with code ${code}`));
@@ -142,11 +145,13 @@ function getRandomPinterestHeaders() {
 async function downloadMedia(message, type) {
     const downloadContentFromMessage = await _loadBaileysHelper();
     const stream = await downloadContentFromMessage(message, type);
-    let buffer = Buffer.from([]);
-    for await (const chunk of stream) { 
-        buffer = Buffer.concat([buffer, chunk]); 
+    // Collect then concatenate once: concatenating inside the loop copied the
+    // whole buffer again for every chunk (quadratic in the file size).
+    const chunks = [];
+    for await (const chunk of stream) {
+        chunks.push(chunk);
     }
-    return buffer;
+    return Buffer.concat(chunks);
 }
 
 /**
@@ -219,7 +224,7 @@ async function smartSearchIMDb(query, omdbApiKey = null) {
     // --- Strategy 2: OMDB Search API (?s=) ---
     if (omdbApiKey) {
         try {
-            const searchUrl = `http://www.omdbapi.com/?s=${encodeURIComponent(sanitizedQuery)}&apikey=${omdbApiKey}`;
+            const searchUrl = `https://www.omdbapi.com/?s=${encodeURIComponent(sanitizedQuery)}&apikey=${omdbApiKey}`;
             const { data: searchData } = await httpClient.get(searchUrl, { timeout: 5000 });
 
             if (searchData.Response === 'True' && searchData.Search && searchData.Search.length > 0) {
@@ -256,10 +261,15 @@ async function smartSearchIMDb(query, omdbApiKey = null) {
  * Get valid high-resolution poster URL
  * Uses HTTP client with proxy support
  * Tries multiple HD resolutions, falls back to original if none available
+ *
+ * @param {string} originalUrl - OMDb Poster field
+ * @returns {Promise<string|null>} null when the title has no poster. This used
+ *   to return a via.placeholder.com URL; that service has shut down, so
+ *   sending it failed the whole .movie reply.
  */
 async function getValidPosterUrl(originalUrl) {
     if (!originalUrl || originalUrl === 'N/A') {
-        return 'https://via.placeholder.com/600x900?text=No+Poster';
+        return null;
     }
     
     // HD resolutions to try (from highest to lowest)

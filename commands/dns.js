@@ -45,8 +45,10 @@ class DNSCommand extends CommandBase {
 
         // Basic domain validation
         if (!this.isValidDomain(domain)) {
-            return await this.reply(sock, from, msg, 
-                '❌ Format domain tidak valid!\n\nContoh: `.dns google.com`');
+            return await this.replyError(sock, from, msg, 'Format domain tidak valid.', {
+                title: 'Domain Tidak Valid',
+                hint: ['.dns google.com']
+            });
         }
 
         try {

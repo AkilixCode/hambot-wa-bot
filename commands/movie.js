@@ -55,7 +55,7 @@ class MovieCommand extends CommandBase {
         }
 
         try {
-            const titleUrl = `http://www.omdbapi.com/?t=${encodeURIComponent(query)}&apikey=${config.apis.omdb.key}&plot=full`;
+            const titleUrl = `https://www.omdbapi.com/?t=${encodeURIComponent(query)}&apikey=${config.apis.omdb.key}&plot=full`;
 
             // 1) Search by title first
             logger.info(`Movie: searching by title "${query}"`);
@@ -86,7 +86,7 @@ class MovieCommand extends CommandBase {
                         });
                 }
 
-                const idUrl = `http://www.omdbapi.com/?i=${searchResult.id}&apikey=${config.apis.omdb.key}&plot=full`;
+                const idUrl = `https://www.omdbapi.com/?i=${searchResult.id}&apikey=${config.apis.omdb.key}&plot=full`;
                 logger.info(`Movie: retrying via ${searchResult.method}, IMDb ID "${searchResult.id}" for query "${query}"`);
                 ({ data } = await httpClient.get(idUrl, { timeout: 10000 }));
 
@@ -145,12 +145,18 @@ class MovieCommand extends CommandBase {
                 footer: `${ui.sourceBadge(fromCache)} ${ui.SYM.dot} OMDb`
             });
 
-            // Via replyMedia so the caption gets clamped to WhatsApp's 1024-char
-            // limit — a long synopsis plus a full metadata card can exceed it.
-            await this.replyMedia(sock, from, msg, {
-                image: { url: poster },
-                caption: info
-            });
+            if (poster) {
+                // Via replyMedia so the caption gets clamped to WhatsApp's 1024-char
+                // limit — a long synopsis plus a full metadata card can exceed it.
+                await this.replyMedia(sock, from, msg, {
+                    image: { url: poster },
+                    caption: info
+                });
+            } else {
+                // No poster on OMDb: send the card on its own rather than
+                // failing the whole lookup over a missing picture.
+                await this.reply(sock, from, msg, info);
+            }
 
             await this.react(sock, msg, '✅');
 
