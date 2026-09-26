@@ -70,6 +70,113 @@ function texts(sock) {
 async function main() {
     console.log('\n🧪 COMMAND & HANDLER REGRESSION TESTS\n' + '='.repeat(60));
 
+    // ── Dependency contract ──────────────────────────────────────────
+    // Every third-party API the bot calls, exercised offline, so a package
+    // upgrade that changes one fails here instead of in a chat.
+    console.log('\n📦 Dependency contract...\n');
+
+    const os = require('os');
+
+    await test('Baileys: the exports index.js and helpers.js use still exist', async () => {
+        const baileys = await import('@whiskeysockets/baileys');
+        assert.strictEqual(typeof baileys.default, 'function', 'makeWASocket (default export)');
+        assert.strictEqual(typeof baileys.useMultiFileAuthState, 'function');
+        assert.strictEqual(typeof baileys.downloadContentFromMessage, 'function');
+        assert.strictEqual(typeof baileys.DisconnectReason?.loggedOut, 'number');
+    });
+
+    await test('Baileys: a socket exposes the methods the bot calls', async () => {
+        const baileys = await import('@whiskeysockets/baileys');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-auth-'));
+        const { state, saveCreds } = await baileys.useMultiFileAuthState(dir);
+        assert.strictEqual(typeof saveCreds, 'function');
+        assert.strictEqual(state.creds.registered, false, 'fresh auth state is unregistered');
+
+        // Pointed at a closed local port: the socket is built but never
+        // reaches WhatsApp.
+        const sock = baileys.default({
+            auth: state,
+            logger: require('pino')({ level: 'silent' }),
+            waWebSocketUrl: 'ws://127.0.0.1:9/ws'
+        });
+        try {
+            for (const method of ['sendMessage', 'groupMetadata', 'sendPresenceUpdate', 'requestPairingCode', 'end']) {
+                assert.strictEqual(typeof sock[method], 'function', `sock.${method}`);
+            }
+            assert.strictEqual(typeof sock.ev?.on, 'function', 'sock.ev.on');
+        } finally {
+            try { sock.end(undefined); } catch { /* already closed */ }
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    await test('dotenv: config({ quiet: true }) loads a file without printing', () => {
+        const file = path.join(os.tmpdir(), `hambot-env-${process.pid}`);
+        fs.writeFileSync(file, 'HAMBOT_CONTRACT_CHECK=ok\n');
+        const realWrite = process.stdout.write;
+        let printed = '';
+        process.stdout.write = (chunk, ...rest) => { printed += chunk; return true; };
+        try {
+            require('dotenv').config({ path: file, quiet: true });
+        } finally {
+            process.stdout.write = realWrite;
+            fs.unlinkSync(file);
+        }
+        assert.strictEqual(process.env.HAMBOT_CONTRACT_CHECK, 'ok');
+        assert.strictEqual(printed, '', `dotenv printed: ${printed}`);
+        delete process.env.HAMBOT_CONTRACT_CHECK;
+    });
+
+    await test('axios (via http-client): JSON, arraybuffer and maxContentLength behave', async () => {
+        const http = require('http');
+        const server = http.createServer((req, res) => {
+            if (req.url === '/json') return res.end(JSON.stringify({ ok: true }));
+            if (req.url === '/bin') return res.end(Buffer.from([1, 2, 3]));
+            res.end(Buffer.alloc(2 * 1024 * 1024));
+        });
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        const base = `http://127.0.0.1:${server.address().port}`;
+        const httpClient = require('./utils/http-client');
+        try {
+            const json = await httpClient.get(`${base}/json`);
+            assert.deepStrictEqual(json.data, { ok: true });
+
+            const bin = await httpClient.get(`${base}/bin`, { responseType: 'arraybuffer' });
+            assert.deepStrictEqual([...Buffer.from(bin.data)], [1, 2, 3]);
+
+            await assert.rejects(
+                () => httpClient.get(`${base}/big`, { responseType: 'arraybuffer', maxContentLength: 1024 * 1024 }),
+                /maxContentLength/i
+            );
+        } finally {
+            server.close();
+        }
+    });
+
+    await test('canvas: the calls the menu banner makes still work', () => {
+        const { renderBanner } = require('./utils/menu-image');
+        const jpeg = renderBanner();
+        assert.ok(jpeg.length > 1000 && jpeg[0] === 0xff && jpeg[1] === 0xd8, 'banner must be a JPEG');
+    });
+
+    await test('sharp: rotate + resize + jpeg, as the menu image and .sticker use', async () => {
+        const sharp = require('sharp');
+        const png = await sharp({ create: { width: 2000, height: 1000, channels: 3, background: '#123456' } }).png().toBuffer();
+        const out = await sharp(png).rotate().resize({ width: 1280, withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+        const meta = await sharp(out).metadata();
+        assert.strictEqual(meta.format, 'jpeg');
+        assert.strictEqual(meta.width, 1280);
+        const webp = await sharp(png).resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).webp().toBuffer();
+        assert.strictEqual((await sharp(webp).metadata()).format, 'webp');
+    });
+
+    await test('pino and socks-proxy-agent construct as index.js and http-client do', () => {
+        const logger = require('pino')({ level: 'silent' });
+        assert.strictEqual(typeof logger.info, 'function');
+        const { SocksProxyAgent } = require('socks-proxy-agent');
+        assert.ok(new SocksProxyAgent('socks5://127.0.0.1:1080'));
+    });
+
     // ── Security: no API key over plain HTTP ──────────────────────────
     console.log('\n🔐 Transport...\n');
 
@@ -320,7 +427,6 @@ async function main() {
     const MenuCommand = require('./commands/menu');
     const menuImage = require('./utils/menu-image');
     const menu = new MenuCommand();
-    const os = require('os');
     const sharp = require('sharp');
 
     const runMenu = async (isOwner = false) => {
