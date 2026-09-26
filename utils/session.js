@@ -100,7 +100,7 @@ function decideOnClose(statusCode, counters = freshCounters()) {
 
     const delayMs = Math.min(BACKOFF_BASE_MS * 2 ** next.reconnects, BACKOFF_MAX_MS);
     next.reconnects += 1;
-    return { action: 'reconnect', delayMs, message: `Connection closed; reconnecting in ${Math.round(delayMs / 1000)}s.`, next };
+    return { action: 'reconnect', delayMs, message: `Reconnecting in ${Math.round(delayMs / 1000)}s.`, next };
 }
 
 /**

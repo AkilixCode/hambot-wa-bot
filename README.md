@@ -406,6 +406,16 @@ push and pull request.
 
 ## Troubleshooting
 
+**Stuck on "Waiting for the bot to start".** The bot never got a QR, code or
+connection. `./deploy.sh` now shows why while it waits:
+- *"No answer from WhatsApp"* — the server can't reach WhatsApp. Check its
+  internet, DNS and firewall (outbound port 443 to `web.whatsapp.com`); on a
+  VPS, also the provider's firewall. The bot keeps retrying on its own.
+- *"The bot container is restarting/exited"* — it crashed at startup; the
+  error is printed right below (often a setting: `./deploy.sh config`).
+
+Nothing shown? `./deploy.sh logs` follows the bot live.
+
 **QR code will not scan.** Use a pairing code instead: set `PAIRING_NUMBER` in
 `.env` and restart. Or open the saved image: `data/qr.png` locally, or
 `docker compose cp hambot:/app/data/qr.png .` with Docker (`./deploy.sh` does

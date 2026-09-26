@@ -18,6 +18,13 @@ much easier Docker deploy.
 
 ### Fixed
 
+- **Stuck on "Waiting for the bot to start".** When the server could not
+  reach WhatsApp, the bot sat in "connecting" forever without a word, and
+  `./deploy.sh` waited blind. The bot now gives up on a silent connection
+  after 45s, says so, and retries with backoff; disconnect reasons and
+  pairing problems show in the default log mode too. `./deploy.sh` relays
+  those messages while it waits, stops early if the container crashed, and
+  prints the last log lines when it gives up.
 - **Logged out = locked out.** Removing the linked device made the bot exit;
   Docker restarted it into the same dead session, forever, with no QR or
   code. It now archives the session (never deletes it) and relinks by
