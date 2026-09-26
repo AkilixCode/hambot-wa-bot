@@ -5,6 +5,51 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Quality pass: security fixes, handler bugs, tests and CI.
+
+### Security
+
+- `sharp` upgraded to 0.35.4 (libheif advisories, reachable via `.sticker`).
+- OMDB lookups use https; the API key was sent over plain http.
+- Reminders capped at 5 per user and 500 in total.
+
+### Fixed
+
+- `.security disable rateLimit` and the `autoBlock` toggle were ignored.
+- The chat filter rejected ordinary input (`.calc (2+3)*4`, URLs with `&`,
+  words like "update") and counted it towards an auto-block.
+- `.security restart|stop` did nothing without pm2 (e.g. in Docker).
+- Reminders were lost after a reconnect, and two set in the same millisecond
+  overwrote each other.
+- Multi-character prefixes and a newline after the command name now parse.
+- The cooldown no longer starts when a heavy command is turned away as busy.
+- Ctrl-C now shuts down gracefully instead of skipping `sock.end()`.
+- `.movie` failed for titles without a poster (dead placeholder service).
+- `.spam` now waits its advertised 1.5–5 s between messages.
+- Proxy credentials containing `@`, `:` or `/` broke the proxy URL.
+- Security event counters grew forever; now pruned after 24 h.
+- `.port`, `.dns` and `.trivia` now use the standard cards and escape
+  third-party and user text; `.trivia` decodes all HTML entities.
+
+### Changed
+
+- Media downloads are concatenated once instead of per chunk; spawned
+  process output is capped at 16 MB.
+
+### Added
+
+- `npm run test:commands` — regression tests driven through a fake socket.
+- GitHub Actions workflow running `test:all` and `npm audit` on Node 20/22.
+- `HAMBOT_DATA_DIR` to relocate `data/`; the tests no longer overwrite the
+  live `data/egress.json`.
+
+### Removed
+
+- Dead `config.getPlaywrightProxyConfig()` and `httpClient.getProxyStatus()`
+  (the latter returned proxy credentials).
+
 ## [3.2.0] - 2026-08-02
 
 Media reliability release. The commands that fetch from YouTube and Pinterest
