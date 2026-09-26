@@ -14,6 +14,7 @@ process.env.RATE_LIMIT_MAX = '1';
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const ui = require('./utils/ui');
 
 let passed = 0;
 let failed = 0;
@@ -61,7 +62,9 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Text of every non-reaction message sent. */
 function texts(sock) {
-    return sock.sent.filter(s => s.content.text).map(s => s.content.text);
+    // Plain lowercase text: card titles are set in decorative small capitals,
+    // which only map back to lowercase.
+    return sock.sent.filter(s => s.content.text).map(s => ui.plain(s.content.text).toLowerCase());
 }
 
 async function main() {
@@ -101,7 +104,7 @@ async function main() {
         }
 
         assert.strictEqual(activeReminders.size, MAX_PER_USER, 'extra reminder must be rejected');
-        assert.ok(texts(sock).some(t => t.includes('Batas Tercapai')), 'user must be told why');
+        assert.ok(texts(sock).some(t => t.includes('batas tercapai')), 'user must be told why');
     });
 
     await test('Another user is not affected by someone else hitting the cap', async () => {
@@ -137,7 +140,7 @@ async function main() {
         await fire();
 
         assert.ok(texts(newSock).some(t => t.includes('minum air')), 'reminder must go out on the new socket');
-        assert.ok(!texts(oldSock).some(t => t.includes('minum air') && t.includes('Pengingat') && !t.includes('Dipasang')),
+        assert.ok(!texts(oldSock).some(t => t.includes('minum air') && t.includes('pengingat') && !t.includes('dipasang')),
             'reminder must not be sent on the stale socket');
         socketRef.set(null);
         clearReminders();
@@ -247,6 +250,213 @@ async function main() {
         assert.ok(Date.now() - started >= 1450, `waited only ${Date.now() - started}ms`);
     });
 
+    // ── Theme ────────────────────────────────────────────────────────
+    console.log('\n🎨 Theme...\n');
+
+    await test('The ASCII frame never exceeds 23 columns, whatever the name', () => {
+        for (const name of ['HamBot', 'Bot', 'A Really Very Long Bot Name Indeed', 'Émile Ω 🤖', '']) {
+            const body = ui.frame(name).replace(/```/g, '').split('\n');
+            assert.strictEqual(body.length, 3, 'frame is three lines');
+            for (const line of body) {
+                assert.strictEqual(line.length, 23, `"${name}": line "${line}" is ${line.length} columns`);
+                assert.ok(/^[\x20-\x7e]+$/.test(line), 'frame must be pure ASCII to stay aligned');
+            }
+        }
+    });
+
+    await test('Cards use the heavy rail and small-caps titles', () => {
+        const out = ui.card({ icon: '🎵', title: 'Musik', lines: ['a', '', 'b'], footer: 'f' }).split('\n');
+        assert.strictEqual(out[0], `┏━━ 🎵 *${ui.smallCaps('Musik')}*`);
+        assert.deepStrictEqual(out.slice(1, 4), ['┃ a', '┃', '┃ b']);
+        assert.strictEqual(out[4], '┗━━ ✧ _f_');
+    });
+
+    await test('rawTitle keeps command names typeable', () => {
+        assert.ok(ui.card({ title: '.menu', rawTitle: true }).startsWith('┏━━ *.menu*'));
+    });
+
+    await test('restyle() turns a hand-written titled message into a card', () => {
+        const out = ui.restyle('🩺 *HEALTH CHECK*\n\n📌 *Detail:*\n• satu\n\n\n• dua\n\n_catatan kaki_').split('\n');
+        assert.deepStrictEqual(out, [
+            `┏━━ 🩺 *${ui.smallCaps('HEALTH CHECK')}*`,
+            `┃ ❖ 📌 *${ui.smallCaps('Detail')}*`,
+            '┃ ▸ satu',
+            '┃',
+            '┃ ▸ dua',
+            '┗━━ ✧ _catatan kaki_'
+        ]);
+    });
+
+    await test('restyle() gives a bare status notice a title', () => {
+        const out = ui.plain(ui.restyle('❌ Prefix tidak valid.\n\nContoh: .security prefix !'));
+        assert.ok(out.startsWith('┏━━ ❌ *gagal*'), out);
+        assert.ok(out.includes('┃ Prefix tidak valid.'));
+    });
+
+    await test('restyle() leaves prose, cards and code blocks alone', () => {
+        for (const text of ['halo semua', '😂 lucu banget', ui.card({ title: 'x' }), '```a\nb```', '']) {
+            assert.strictEqual(ui.restyle(text), text);
+        }
+    });
+
+    await test('Every netinfo topic comes out as a card under the message limit', () => {
+        const NetInfo = require('./commands/netinfo');
+        const netinfo = new NetInfo();
+        for (const [topic, render] of Object.entries(netinfo.topics)) {
+            const out = ui.restyle(render());
+            assert.ok(out.startsWith('┏━━'), `${topic} was not converted`);
+            assert.ok(out.length <= ui.MAX_MESSAGE_LENGTH, `${topic} is ${out.length} chars`);
+        }
+    });
+
+    await test('plain() maps every decorative alphabet back to ASCII', () => {
+        const fancy = [ui.smallCaps('Hello'), ui.fancy('World 42'), ui.fancyItalic('ok'), ui.fancyMono('v1.0')].join(' ');
+        assert.strictEqual(ui.plain(fancy), 'hello World 42 ok v1.0');
+    });
+
+    // ── Menu ─────────────────────────────────────────────────────────
+    console.log('\n📋 Menu...\n');
+
+    const MenuCommand = require('./commands/menu');
+    const menuImage = require('./utils/menu-image');
+    const menu = new MenuCommand();
+    const os = require('os');
+    const sharp = require('sharp');
+
+    const runMenu = async (isOwner = false) => {
+        const sock = fakeSock();
+        await menu.execute(sock, fakeMsg('1@g.us', 'x'), [], { from: '1@g.us', isOwner });
+        return sock.sent.filter(s => !s.content.react);
+    };
+
+    await test('.menu is one message: the image with the menu as its caption', async () => {
+        menuImage.clearCache();
+        const sent = await runMenu();
+        assert.strictEqual(sent.length, 1, `expected 1 message, got ${sent.length}`);
+        const { image, caption } = sent[0].content;
+        assert.ok(Buffer.isBuffer(image) && image.length > 1000, 'image must be attached');
+        assert.ok(caption.length <= 1024, `caption is ${caption.length} chars`);
+        assert.ok(ui.plain(caption).includes('.music'), 'caption lists the commands');
+    });
+
+    await test('.menu command rows never exceed the narrow-phone width', () => {
+        const { body } = menu.buildOverview('Ilham', true);
+        for (const line of body.split('\n').filter(l => l.startsWith('   .'))) {
+            assert.ok(line.length <= 30, `"${line}" is ${line.length} chars`);
+        }
+    });
+
+    await test('.menu hides owner-only commands from everyone else', () => {
+        const { body } = menu.buildOverview('x', false);
+        assert.ok(!/\.(security|spam)\b/.test(body), 'owner-only commands leaked into the menu');
+    });
+
+    await test('MENU_IMAGE overrides the generated banner', async () => {
+        const file = path.join(os.tmpdir(), `menu-test-${process.pid}.png`);
+        await sharp({ create: { width: 64, height: 32, channels: 3, background: '#ff0000' } }).png().toFile(file);
+        process.env.MENU_IMAGE = file;
+        menuImage.clearCache();
+        try {
+            const meta = await sharp(await menuImage.getMenuImage()).metadata();
+            assert.strictEqual(meta.width, 64, 'the override image must be used');
+        } finally {
+            delete process.env.MENU_IMAGE;
+            menuImage.clearCache();
+            fs.unlinkSync(file);
+        }
+    });
+
+    await test('A broken MENU_IMAGE falls back to the generated banner', async () => {
+        process.env.MENU_IMAGE = '/definitely/not/here.jpg';
+        menuImage.clearCache();
+        try {
+            const meta = await sharp(await menuImage.getMenuImage()).metadata();
+            assert.strictEqual(meta.width, 1280);
+        } finally {
+            delete process.env.MENU_IMAGE;
+            menuImage.clearCache();
+        }
+    });
+
+    await test('.menu still answers in text when the image cannot be sent', async () => {
+        const sock = fakeSock();
+        const realSend = sock.sendMessage;
+        sock.sendMessage = async (jid, content, opts) => {
+            if (content.image) throw new Error('upload failed');
+            return realSend.call(sock, jid, content, opts);
+        };
+        await menu.execute(sock, fakeMsg('1@g.us', 'x'), [], { from: '1@g.us', isOwner: false });
+        assert.ok(texts(sock).some(t => t.includes('.music')), 'the menu text must still be delivered');
+    });
+
+    // ── Typo tolerance ───────────────────────────────────────────────
+    console.log('\n✏️ Typo tolerance...\n');
+
+    const handler = require('./handler');
+    const registry = require('./commands/registry');
+    const config = require('./config');
+    let typoSender = 0;
+    // A fresh sender per call: this file runs with RATE_LIMIT_MAX=1.
+    const say = async (text) => {
+        const sock = fakeSock();
+        const sender = `62890${++typoSender}@s.whatsapp.net`;
+        await handler(sock, { messages: [textMsg('777@g.us', sender, text)], type: 'notify' });
+        return sock.sent
+            .filter(s => !s.content.react)
+            .map(s => ui.plain(s.content.text ?? s.content.caption ?? '').toLowerCase());
+    };
+
+    await test('Common typos resolve to the intended command', () => {
+        const visible = n => !config.isOwnerOnlyCommand(n);
+        for (const [typo, meant] of [['mneu', 'menu'], ['stikcer', 'sticker'], ['wether', 'weather'],
+            ['vidoe', 'video'], ['muisc', 'music'], ['trnaslate', 'translate'], ['pnig', 'ping']]) {
+            const m = registry.match(typo, { filter: visible });
+            assert.ok(m.confident && m.name === meant, `${typo} -> ${JSON.stringify(m)}`);
+        }
+    });
+
+    await test('A typo runs the command, with a correction note in the same reply', async () => {
+        const replies = await say('.mneu');
+        assert.strictEqual(replies.length, 1, `expected one message, got ${replies.length}`);
+        assert.ok(replies[0].startsWith('✏️ _.mneu'), replies[0].slice(0, 60));
+        assert.ok(replies[0].includes('.music'), 'the menu itself must follow the note');
+    });
+
+    await test('Ordinary chat that happens to start with a dot gets no reply', async () => {
+        for (const text of ['.ok', '.wkwk', '...', '. ', '.mantap', '.haha lucu', '.5 juta']) {
+            const replies = await say(text);
+            assert.strictEqual(replies.length, 0, `"${text}" got a reply: ${replies[0]}`);
+        }
+    });
+
+    await test('Messages without the dot prefix are never treated as commands', async () => {
+        for (const text of ['menu', 'mneu', 'sticker pls', 'halo .menu']) {
+            assert.strictEqual((await say(text)).length, 0, `"${text}" got a reply`);
+        }
+    });
+
+    await test('Owner-only commands are never guessed from a typo', async () => {
+        assert.strictEqual(registry.match('secrity', { filter: n => !config.isOwnerOnlyCommand(n) }).name, null);
+        const replies = await say('.secrity');
+        assert.ok(!replies.some(r => r.includes('security')), 'must not run or reveal .security');
+    });
+
+    await test('An ambiguous typo asks instead of guessing', async () => {
+        const m = registry.match('dic', { filter: n => !config.isOwnerOnlyCommand(n) });
+        assert.ok(!m.confident && m.candidates.includes('dice') && m.candidates.includes('dns'), JSON.stringify(m));
+        const replies = await say('.dic');
+        assert.strictEqual(replies.length, 1);
+        assert.ok(replies[0].includes('.dice') && replies[0].includes('.dns'), replies[0]);
+    });
+
+    await test('.menu <typo> shows the page it meant, with a note', async () => {
+        const sock = fakeSock();
+        await menu.execute(sock, fakeMsg('1@g.us', 'x'), ['vidoe'], { from: '1@g.us', isOwner: false });
+        const [reply] = texts(sock);
+        assert.ok(reply.startsWith('✏️ _vidoe'), reply.slice(0, 40));
+        assert.ok(reply.includes('*.video*'), 'the .video help page must follow');
+    });
+
     // ── Chat output ──────────────────────────────────────────────────
     console.log('\n💬 Chat output...\n');
 
@@ -264,8 +474,8 @@ async function main() {
         const sock = fakeSock();
         await new PortCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['22'], { from: '1@g.us' });
         const [reply] = texts(sock);
-        assert.ok(reply.startsWith('╭'), 'expected the standard card frame');
-        assert.ok(reply.includes('SSH'));
+        assert.ok(reply.startsWith('┏'), 'expected the standard card frame');
+        assert.ok(reply.includes('ssh'));
     });
 
     await test('.dns rejects an invalid domain with the standard error card', async () => {
@@ -273,7 +483,7 @@ async function main() {
         const sock = fakeSock();
         await new DnsCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['not a domain!'], { from: '1@g.us' });
         const [reply] = texts(sock);
-        assert.ok(reply.startsWith('╭') && reply.includes('Domain Tidak Valid'), reply);
+        assert.ok(reply.startsWith('┏') && reply.includes('domain tidak valid'), reply);
     });
 
     await test('Trivia decodes numeric and accented HTML entities', () => {
@@ -286,7 +496,6 @@ async function main() {
     // ── Runtime security toggles ─────────────────────────────────────
     console.log('\n🎛️ Runtime toggles...\n');
 
-    const handler = require('./handler');
     const security = require('./utils/security');
 
     await test('`.security disable rateLimit` actually disables the rate limiter', async () => {
@@ -294,7 +503,7 @@ async function main() {
         const from = '999@g.us';
         const sender = '628333@s.whatsapp.net';
         const run = () => handler(sock, { messages: [textMsg(from, sender, '.flip')], type: 'notify' });
-        const limited = () => texts(sock).some(t => t.includes('Terlalu Banyak Permintaan'));
+        const limited = () => texts(sock).some(t => t.includes('terlalu banyak permintaan'));
 
         try {
             await run();

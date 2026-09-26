@@ -16,6 +16,8 @@ class Config {
             name: process.env.BOT_NAME || 'HamBot',
             owner: process.env.BOT_OWNER || 'Name',
             prefix: process.env.BOT_PREFIX || '.',
+            // One line under the name on the menu image and caption
+            tagline: process.env.BOT_TAGLINE || 'Asisten WhatsApp serba bisa',
             version: VERSION,
             browser: ['HamBot', 'Chrome', VERSION],
             // Private mode: ignore private messages when true

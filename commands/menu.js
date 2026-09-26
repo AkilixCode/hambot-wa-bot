@@ -8,6 +8,14 @@ const CommandBase = require('./base');
 const commandRegistry = require('./registry');
 const config = require('../config');
 const ui = require('../utils/ui');
+const menuImage = require('../utils/menu-image');
+const { withCorrectionNote, correctionNote } = require('../utils/correction');
+
+// WhatsApp truncates long captions; base.replyMedia clamps to this too.
+const CAPTION_LIMIT = 1024;
+// Command-name rows stay under this so they never wrap on a small screen
+// (the 3-space indent brings the full line to about 30 characters).
+const ROW_WIDTH = 27;
 
 // Deliberate ordering for the menu. Alphabetical order buried the everyday
 // commands (media, tools) below novelty ones, so categories are listed roughly
@@ -606,8 +614,23 @@ class MenuCommand extends CommandBase {
                 return await this.sendCategoryHelp(sock, from, msg, query, isOwnerViewer);
             }
 
+            // A clear typo of a command or category: show that page, with a
+            // note saying what was assumed.
+            const visible = name => isOwnerViewer || !config.isOwnerOnlyCommand(name);
+            const guess = commandRegistry.match(query, {
+                extra: commandRegistry.getCategories(),
+                filter: visible
+            });
+            if (guess.confident) {
+                const noted = withCorrectionNote(sock, correctionNote(query, guess.name));
+                const guessedCommand = commandRegistry.get(guess.name);
+                return guessedCommand
+                    ? await this.sendCommandHelp(noted, from, msg, guessedCommand)
+                    : await this.sendCategoryHelp(noted, from, msg, guess.name, isOwnerViewer);
+            }
+
             // Not found - point at the closest matches rather than a generic list
-            const near = this._suggest(query, isOwnerViewer);
+            const near = [...new Set([...guess.candidates, ...this._suggest(query, isOwnerViewer)])].slice(0, 3);
             return await this.replyError(sock, from, msg,
                 `Tidak ada perintah atau kategori bernama ${ui.mono(ui.truncate(args[0], 24))}.`,
                 {
@@ -619,56 +642,95 @@ class MenuCommand extends CommandBase {
             );
         }
 
+        const { header, body } = this.buildOverview(msg.pushName, isOwnerViewer);
+        const caption = `${header}\n${body}`;
+
+        // One message: the picture with the menu as its caption. If there is
+        // no picture, or sending it fails, the same text still goes out.
+        const image = await menuImage.getMenuImage().catch(() => null);
+        if (image) {
+            try {
+                if (caption.length <= CAPTION_LIMIT) {
+                    await this.replyMedia(sock, from, msg, { image, caption });
+                } else {
+                    // Only reachable once the command list outgrows a caption:
+                    // keep the greeting on the picture, the list right after.
+                    await this.replyMedia(sock, from, msg, { image, caption: header });
+                    await this.reply(sock, from, msg, body);
+                }
+                await this.react(sock, msg, '✅');
+                return;
+            } catch (error) {
+                this.logError(error, { context: 'menu-image-send' });
+            }
+        }
+
+        await this.reply(sock, from, msg, caption);
+        await this.react(sock, msg, '✅');
+    }
+
+    /**
+     * The `.menu` overview, split into the greeting header and the command
+     * list so the two can be sent apart if the caption ever gets too long.
+     *
+     * Compact on purpose: every command name, grouped by category and packed
+     * onto short lines. Descriptions live behind `.menu <kategori>` — with them
+     * the menu ran past 2,000 characters, twice what fits in a caption.
+     *
+     * @param {string} [pushName] Sender's WhatsApp display name
+     * @param {boolean} isOwnerViewer
+     * @returns {{header: string, body: string}}
+     */
+    buildOverview(pushName, isOwnerViewer) {
         const prefix = config.bot.prefix;
         const visible = this._visibleCommands(commandRegistry.getAll(), isOwnerViewer);
-        const sections = [];
 
-        sections.push(ui.banner({
-            title: config.bot.name,
-            subtitle: `Asisten WhatsApp ${ui.SYM.dot} v${config.bot.version}`
-        }));
-        sections.push('');
-        sections.push(ui.greeting(msg.pushName));
-        sections.push(`Ada ${ui.bold(visible.length + ' perintah')} siap dipakai.`);
-        sections.push('');
+        const header = [
+            ui.frame(config.bot.name),
+            ui.italic(ui.safe(config.bot.tagline, 40)),
+            '',
+            ui.greeting(pushName),
+            `⏰ ${ui.clock()}  ${ui.SYM.dot}  📦 ${visible.length} perintah`
+        ].join('\n');
 
-        // Commands per category, one compact line each. Full descriptions live
-        // behind `.menu <perintah>` — packing them all in here produced a wall
-        // of text that no one reads on a phone.
+        const lines = [ui.rule()];
         for (const category of this._orderCategories(commandRegistry.getCategories())) {
             const commands = this._visibleCommands(commandRegistry.getByCategory(category), isOwnerViewer);
             if (commands.length === 0) continue;
 
-            const lines = commands
-                .slice()
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map(cmd => {
-                    const desc = cmd.description ? ` ${ui.SYM.dot} ${ui.truncate(cmd.description, 34)}` : '';
-                    return `${ui.SYM.bullet} ${ui.bold(prefix + cmd.name)}${desc}`;
-                });
-
-            sections.push(ui.card({
-                icon: this.getCategoryEmoji(category),
-                title: ui.smallCaps(this.getCategoryNameID(category)),
-                lines
-            }));
-            sections.push('');
+            const names = commands.map(cmd => prefix + cmd.name).sort();
+            lines.push(ui.section(this.getCategoryNameID(category), this.getCategoryEmoji(category)));
+            lines.push(...this._packNames(names).map(row => `   ${row}`));
         }
+        lines.push(ui.rule());
+        lines.push(`💡 ${ui.mono(prefix + 'menu <perintah>')} detail`);
+        lines.push(`📂 ${ui.mono(prefix + 'menu <kategori>')} isi`);
+        lines.push(`> ${config.bot.name} ${ui.fancyMono('v' + config.bot.version)} ${ui.SYM.dot} ${ui.safe(config.bot.owner, 24)}`);
 
-        sections.push(ui.card({
-            icon: ui.EMOJI.tip,
-            title: ui.smallCaps('Tips'),
-            lines: [
-                `${ui.SYM.bullet} ${ui.mono(prefix + 'menu <perintah>')} ${ui.SYM.dot} detail & contoh`,
-                `${ui.SYM.bullet} ${ui.mono(prefix + 'menu <kategori>')} ${ui.SYM.dot} isi satu kategori`,
-                '',
-                `Contoh: ${ui.mono(prefix + 'menu video')}, ${ui.mono(prefix + 'menu fun')}`
-            ],
-            footer: `${config.bot.name} v${config.bot.version} ${ui.SYM.dot} ${config.bot.owner}`
-        }));
+        return { header, body: lines.join('\n') };
+    }
 
-        await this.reply(sock, from, msg, sections.join('\n'));
-        await this.react(sock, msg, '✅');
+    /**
+     * Pack command names onto rows no wider than ROW_WIDTH characters, so a
+     * row never wraps on a narrow phone and breaks the grid.
+     * @param {string[]} names
+     * @returns {string[]}
+     * @private
+     */
+    _packNames(names) {
+        const rows = [];
+        let row = '';
+        for (const name of names) {
+            const next = row ? `${row}  ${name}` : name;
+            if (row && next.length > ROW_WIDTH) {
+                rows.push(row);
+                row = name;
+            } else {
+                row = next;
+            }
+        }
+        if (row) rows.push(row);
+        return rows;
     }
 
     /**
@@ -746,6 +808,7 @@ class MenuCommand extends CommandBase {
         await this.reply(sock, from, msg, ui.card({
             icon: this.getCategoryEmoji(command.category),
             title: prefix + command.name,
+            rawTitle: true,
             lines,
             footer: `${this.getCategoryNameID(command.category)} ${ui.SYM.dot} ${config.bot.name}`
         }));

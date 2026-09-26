@@ -10,6 +10,7 @@ const logger = require('./utils/logger');
 const security = require('./utils/security');
 const ui = require('./utils/ui');
 const commandRegistry = require('./commands/registry');
+const { withCorrectionNote, correctionNote } = require('./utils/correction');
 const path = require('path');
 
 // Initialize rate limiter
@@ -66,14 +67,19 @@ async function isGroupAdmin(sock, groupJid, senderJid) {
  * @param {string} commandName The unrecognised name the user typed
  * @param {boolean} isOwnerSender
  */
-async function sendUnknownCommandHint(sock, msg, from, sender, commandName, isOwnerSender) {
+async function sendUnknownCommandHint(sock, msg, from, sender, commandName, isOwnerSender, match = null) {
     if (!commandName || commandName.length > 32) return;
 
-    const suggestions = commandRegistry.suggest(commandName, {
-        // Never suggest owner-only commands to anyone else — the menu hides
-        // them on purpose, and a typo must not become a way to enumerate them.
-        filter: name => isOwnerSender || !config.isOwnerOnlyCommand(name)
-    });
+    // Never suggest owner-only commands to anyone else — the menu hides
+    // them on purpose, and a typo must not become a way to enumerate them.
+    const visible = name => isOwnerSender || !config.isOwnerOnlyCommand(name);
+
+    // Edit-distance candidates first (ties the matcher could not break),
+    // then prefix completions such as `.transl` for `.translate`.
+    const suggestions = [...new Set([
+        ...(match?.candidates || []).filter(visible),
+        ...commandRegistry.suggest(commandName, { filter: visible })
+    ])].slice(0, 3);
 
     // Stay quiet unless there is something useful to say. Replying to every
     // stray message that merely starts with the prefix would make the bot noisy
@@ -95,6 +101,25 @@ async function sendUnknownCommandHint(sock, msg, from, sender, commandName, isOw
             ]
         })
     }, { quoted: msg });
+}
+
+/**
+ * Resolve a command the user mistyped, if the guess is safe to act on.
+ *
+ * Owner-only commands are never guessed, not even for the owner: a typo in
+ * `.security` must not quietly run a different panel action, and a guess
+ * must not reveal the hidden commands to anyone else.
+ *
+ * @param {string} commandName What the user typed after the prefix
+ * @returns {{command: Object|null, match: Object}} command set only when the
+ *   match is unambiguous
+ */
+function resolveTypo(commandName) {
+    const match = commandRegistry.match(commandName, {
+        filter: name => !config.isOwnerOnlyCommand(name)
+    });
+    const command = match.confident ? commandRegistry.get(match.name) : null;
+    return { command, match };
 }
 
 /**
@@ -195,11 +220,24 @@ module.exports = async (sock, m) => {
             }
         }
 
-        // Get command from registry
+        // Get command from registry, forgiving an unambiguous typo.
+        // Everything after this point (permissions, rate limit, cooldown)
+        // applies to the corrected command exactly as if it had been typed.
         command = commandRegistry.get(commandName);
+        let correctedFrom = null;
         if (!command) {
-            await sendUnknownCommandHint(sock, msg, from, sender, commandName, isOwnerSender);
-            return;
+            const { command: guessed, match } = resolveTypo(commandName);
+            if (!guessed) {
+                await sendUnknownCommandHint(sock, msg, from, sender, commandName, isOwnerSender, match);
+                return;
+            }
+            command = guessed;
+            correctedFrom = commandName;
+            sock = withCorrectionNote(sock, correctionNote(
+                config.bot.prefix + commandName,
+                config.bot.prefix + command.name
+            ));
+            logger.info(`Typo corrected: "${commandName}" -> "${command.name}"`);
         }
 
         // SECURITY: always authorise against the canonical command name.
@@ -226,6 +264,7 @@ module.exports = async (sock, m) => {
             isOwner: isOwnerSender,
             commandName: canonicalName,
             invokedAs: commandName,
+            correctedFrom,
             startTime
         };
 

@@ -75,10 +75,11 @@ class CommandBase {
      *
      * Every plain-text reply in the bot funnels through here, which makes it the
      * one place that can guarantee a message is never long enough for WhatsApp
-     * to silently drop the tail.
+     * to silently drop the tail — and that a hand-written reply still comes out
+     * in the card theme (see ui.restyle).
      */
     async reply(sock, from, msg, text) {
-        return await sock.sendMessage(from, { text: ui.clamp(text) }, { quoted: msg });
+        return await sock.sendMessage(from, { text: ui.clamp(ui.restyle(text)) }, { quoted: msg });
     }
 
     /**
