@@ -11,14 +11,88 @@ const tempdir = require('./utils/tempdir');
 const socketRef = require('./utils/socket-ref');
 const login = require('./utils/login');
 const health = require('./utils/health');
+const session = require('./utils/session');
 
 // Use the modular handler directly
 const handler = require('./handler');
 
 // Baileys is ESM-only since v7 — must use dynamic import()
-let makeWASocket, useMultiFileAuthState, DisconnectReason;
+let makeWASocket, useMultiFileAuthState;
 
 let sock = null;
+
+// Where Baileys keeps the linked session (a Docker volume in production).
+// HAMBOT_AUTH_DIR exists for the tests, which must never touch a real session.
+const AUTH_DIR = process.env.HAMBOT_AUTH_DIR || 'auth_info_baileys';
+
+// Survive reconnects within this process: backoff state, and how many
+// pairing codes were already requested (capped, then QR — see utils/login).
+let closeCounters = session.freshCounters();
+let pairingCodesIssued = 0;
+let reconnectTimer = null;
+
+/**
+ * Detach and close the current socket before a new one replaces it.
+ */
+function retireSocket() {
+    if (!sock) return;
+    for (const event of ['creds.update', 'connection.update', 'messages.upsert']) {
+        try { sock.ev.removeAllListeners(event); } catch { /* already gone */ }
+    }
+    try { sock.end(undefined); } catch { /* already closed */ }
+}
+
+/**
+ * Schedule the next startBot(), replacing any pending one.
+ * @param {number} delayMs
+ */
+function scheduleStart(delayMs) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => startBot(), delayMs);
+}
+
+/**
+ * React to a closed connection according to why it closed
+ * (see utils/session.decideOnClose).
+ * @param {Object} [lastDisconnect]
+ */
+function handleClose(lastDisconnect) {
+    const statusCode = lastDisconnect?.error?.output?.statusCode;
+    const decision = session.decideOnClose(statusCode, closeCounters);
+    closeCounters = decision.next;
+
+    logger.warn(`Connection closed: ${decision.message}`, {
+        statusCode,
+        action: decision.action,
+        reason: lastDisconnect?.error?.message
+    });
+
+    if (decision.action === 'relink') {
+        try {
+            const archived = session.archiveSession(AUTH_DIR);
+            if (archived) {
+                console.log([
+                    '',
+                    '  The old session was archived, not deleted:',
+                    `    ${archived}`,
+                    '  If this was a mistake: ./deploy.sh restore-session',
+                    '  (or move those files back into auth_info_baileys/).',
+                    '  A new pairing code or QR code follows below.',
+                    ''
+                ].join('\n'));
+            }
+        } catch (error) {
+            logger.error(error, { context: 'session-archive' });
+        }
+        pairingCodesIssued = 0;
+        scheduleStart(decision.delayMs);
+    } else if (decision.action === 'stop') {
+        // Stay up without reconnecting; the health check turns unhealthy.
+        health.report('close');
+    } else {
+        scheduleStart(decision.delayMs);
+    }
+}
 
 async function startBot() {
     try {
@@ -27,7 +101,6 @@ async function startBot() {
             const baileys = await import('@whiskeysockets/baileys');
             makeWASocket = baileys.default;
             useMultiFileAuthState = baileys.useMultiFileAuthState;
-            DisconnectReason = baileys.DisconnectReason;
         }
 
         // Validate configuration
@@ -49,7 +122,11 @@ async function startBot() {
             logger.info(`Safety fallback: Cleared ${clearedBlocks} block(s) on owner IDs`);
         }
         
-        const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+        const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+
+        // Detach the previous socket first: startBot() runs again on every
+        // reconnect, and without this each dead socket kept its listeners.
+        retireSocket();
 
         sock = makeWASocket({
             auth: state,
@@ -67,14 +144,20 @@ async function startBot() {
         // rather than stopping the bot.
         const pairing = login.parsePairingNumber(process.env.PAIRING_NUMBER);
         if (pairing.error) logger.warn(`${pairing.error} — falling back to the QR code`);
-        const method = login.loginMethod({
+        const { method, notice } = login.chooseLoginMethod({
             registered: Boolean(state.creds?.registered),
-            pairingNumber: pairing.number
+            pairingNumber: pairing.number,
+            preference: process.env.LOGIN_METHOD,
+            codesIssued: pairingCodesIssued
         });
-        // Baileys re-emits `qr` every ~20s until linked; a pairing code is
-        // requested once per socket, and a failed request falls back to QR.
+        if (notice) logger.warn(notice);
+
+        // Baileys re-emits `qr` every ~20s until linked. A pairing code is
+        // requested at most once per socket and a limited number of times per
+        // process (see chooseLoginMethod); a failed request falls back to QR.
         let pairingRequested = false;
         let pairingFailed = false;
+        const thisSock = sock;
 
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
@@ -85,8 +168,9 @@ async function startBot() {
 
             if (qr && method === 'pairing' && !pairingRequested) {
                 pairingRequested = true;
+                pairingCodesIssued++;
                 try {
-                    const code = await sock.requestPairingCode(pairing.number);
+                    const code = await thisSock.requestPairingCode(pairing.number);
                     console.log(login.pairingInstructions(code, pairing.number));
                 } catch (error) {
                     pairingFailed = true;
@@ -104,22 +188,10 @@ async function startBot() {
             }
 
             if (connection === 'close') {
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                
-                logger.warn(`Connection closed`, { 
-                    statusCode, 
-                    shouldReconnect,
-                    reason: lastDisconnect?.error?.message 
-                });
-
-                if (shouldReconnect) {
-                    setTimeout(() => startBot(), 3000);
-                } else {
-                    logger.info('Logged out, please restart and link the number again');
-                    process.exit(0);
-                }
+                handleClose(lastDisconnect);
             } else if (connection === 'open') {
+                closeCounters = session.freshCounters();
+                pairingCodesIssued = 0;
                 logger.system(`✅ ${config.bot.name} connected to WhatsApp!`);
                 login.removeQrPng();
             }
@@ -176,5 +248,13 @@ process.on('unhandledRejection', (reason, promise) => {
     logger.error(new Error(String(reason)), { context: 'unhandled-rejection' });
 });
 
-// Start the bot
-startBot();
+// Start the bot when run directly (`node index.js`). Tests require this file
+// to exercise handleClose() without connecting to WhatsApp.
+if (require.main === module) {
+    startBot();
+}
+
+module.exports = {
+    handleClose,
+    cancelScheduledStart: () => clearTimeout(reconnectTimer)
+};

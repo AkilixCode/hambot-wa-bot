@@ -19,7 +19,8 @@ function selfTest() {
         [{ state: 'linking', since: now - 3600e3, updatedAt: now }, true],
         [{ state: 'close', since: now - 60e3, updatedAt: now }, true],
         [{ state: 'close', since: now - health.DISCONNECTED_GRACE_MS - 1, updatedAt: now }, false],
-        [{ state: 'open', since: now, updatedAt: now - health.STALE_AFTER_MS - 1 }, false]
+        [{ state: 'open', since: now, updatedAt: now - health.STALE_AFTER_MS - 1 }, false],
+        [{ state: 'linking', since: now, linkingSince: now - health.LINKING_LIMIT_MS - 1, updatedAt: now }, false]
     ];
     for (const [record, expected] of cases) {
         const { healthy, reason } = health.evaluate(record, now);

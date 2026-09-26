@@ -717,6 +717,122 @@ async function main() {
         }
     });
 
+    // ── Session recovery ─────────────────────────────────────────────
+    // Last: index.js registers process signal handlers when required.
+    console.log('\n🛟 Session recovery...\n');
+
+    const session = require('./utils/session');
+
+    await test('Close reasons: logout relinks, corruption relinks on the 3rd, ban stops', () => {
+        assert.strictEqual(session.decideOnClose(401).action, 'relink');
+        assert.strictEqual(session.decideOnClose(411).action, 'relink');
+        assert.strictEqual(session.decideOnClose(403).action, 'stop');
+        let c = session.freshCounters();
+        const actions = [500, 500, 500].map(code => { const d = session.decideOnClose(code, c); c = d.next; return d.action; });
+        assert.deepStrictEqual(actions, ['reconnect', 'reconnect', 'relink']);
+    });
+
+    await test('Close reasons: another copy pauses 1, 5, then 15 min instead of fighting', () => {
+        let c = session.freshCounters();
+        const delays = [440, 440, 440, 440].map(code => { const d = session.decideOnClose(code, c); c = d.next; assert.strictEqual(d.action, 'pause'); return d.delayMs / 60000; });
+        assert.deepStrictEqual(delays, [1, 5, 15, 15]);
+    });
+
+    await test('Reconnects back off 3s -> 60s; restartRequired is immediate', () => {
+        let c = session.freshCounters();
+        const delays = [428, 408, 503, 428, 428, 428, 428].map(code => { const d = session.decideOnClose(code, c); c = d.next; return d.delayMs / 1000; });
+        assert.deepStrictEqual(delays, [3, 6, 12, 24, 48, 60, 60]);
+        assert.ok(session.decideOnClose(515, c).delayMs < 1000);
+    });
+
+    const tempAuth = () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-session-'));
+        fs.writeFileSync(path.join(dir, 'creds.json'), '{"registered":true}');
+        fs.writeFileSync(path.join(dir, 'app-state-sync-key-1.json'), '{}');
+        return dir;
+    };
+
+    await test('archiveSession moves files aside (never deletes) and keeps the newest 3', () => {
+        const dir = tempAuth();
+        try {
+            const first = session.archiveSession(dir);
+            assert.ok(fs.existsSync(path.join(first, 'creds.json')), 'creds moved into the archive');
+            assert.deepStrictEqual(fs.readdirSync(dir), ['.archive'], 'session dir is empty apart from the archive');
+            assert.strictEqual(session.archiveSession(dir), null, 'nothing to archive twice');
+
+            for (let i = 0; i < 4; i++) {
+                fs.writeFileSync(path.join(dir, 'creds.json'), `{"n":${i}}`);
+                session.archiveSession(dir);
+            }
+            assert.strictEqual(session.listArchives(dir).length, 3);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    await test('restoreSession brings the newest archive back, and is itself undoable', () => {
+        const dir = tempAuth();
+        try {
+            session.archiveSession(dir);
+            fs.writeFileSync(path.join(dir, 'creds.json'), '{"fresh":true}');
+            session.restoreSession(dir);
+            assert.strictEqual(fs.readFileSync(path.join(dir, 'creds.json'), 'utf8'), '{"registered":true}');
+            const [newest] = session.listArchives(dir);
+            assert.strictEqual(fs.readFileSync(path.join(dir, '.archive', newest, 'creds.json'), 'utf8'), '{"fresh":true}',
+                'the session that was replaced is archived, not lost');
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    await test('Pairing: at most 2 codes, then the QR; LOGIN_METHOD overrides', () => {
+        const choose = (o) => login.chooseLoginMethod({ registered: false, pairingNumber: '6281234567890', ...o });
+        assert.strictEqual(choose({ codesIssued: 0 }).method, 'pairing');
+        assert.strictEqual(choose({ codesIssued: 1 }).method, 'pairing');
+        const fallback = choose({ codesIssued: 2 });
+        assert.strictEqual(fallback.method, 'qr');
+        assert.match(fallback.notice, /QR/);
+        assert.strictEqual(choose({ preference: 'qr' }).method, 'qr');
+        assert.strictEqual(choose({ preference: 'code', codesIssued: 4 }).method, 'pairing');
+        assert.strictEqual(choose({ preference: 'code', codesIssued: 5 }).method, 'qr');
+        assert.strictEqual(login.chooseLoginMethod({ registered: true, pairingNumber: null }).method, 'none');
+    });
+
+    await test('Health: stuck linking for 30+ min is unhealthy', () => {
+        const health = require('./utils/health');
+        const now = Date.now();
+        assert.strictEqual(health.evaluate({ state: 'linking', since: now, linkingSince: now - 10 * 60e3, updatedAt: now }, now).healthy, true);
+        assert.strictEqual(health.evaluate({ state: 'close', since: now, linkingSince: now - 31 * 60e3, updatedAt: now }, now).healthy, false);
+    });
+
+    await test('Logged out: the bot archives the session and relinks instead of exiting', async () => {
+        const dir = tempAuth();
+        const savedAuth = process.env.HAMBOT_AUTH_DIR;
+        const savedData = process.env.HAMBOT_DATA_DIR;
+        process.env.HAMBOT_AUTH_DIR = dir;
+        process.env.HAMBOT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-data-'));
+        const realExit = process.exit;
+        let exited = false;
+        process.exit = () => { exited = true; };
+        const realLog = console.log;
+        console.log = () => {};
+        try {
+            const bot = require('./index');
+            bot.handleClose({ error: { output: { statusCode: 401 }, message: 'logged out' } });
+            bot.cancelScheduledStart();
+            assert.strictEqual(exited, false, 'must not exit (Docker would restart it into the same dead session)');
+            assert.ok(!fs.existsSync(path.join(dir, 'creds.json')), 'dead session moved out of the way');
+            assert.strictEqual(session.listArchives(dir).length, 1, 'and archived, not deleted');
+        } finally {
+            process.exit = realExit;
+            console.log = realLog;
+            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(process.env.HAMBOT_DATA_DIR, { recursive: true, force: true });
+            if (savedAuth === undefined) delete process.env.HAMBOT_AUTH_DIR; else process.env.HAMBOT_AUTH_DIR = savedAuth;
+            if (savedData === undefined) delete process.env.HAMBOT_DATA_DIR; else process.env.HAMBOT_DATA_DIR = savedData;
+        }
+    });
+
     // ── Summary ───────────────────────────────────────────────────────
     console.log('\n' + '='.repeat(60));
     console.log('📊 COMMAND TEST SUMMARY');
