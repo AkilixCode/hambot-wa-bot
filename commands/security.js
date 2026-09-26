@@ -44,6 +44,7 @@ const cache = require('../utils/cache');
 const registry = require('./registry');
 const redact = require('../utils/redact');
 const ui = require('../utils/ui');
+const logger = require('../utils/logger');
 const egress = require('../utils/egress');
 const ytdlp = require('../utils/ytdlp');
 const providers = require('../utils/providers');
@@ -1909,18 +1910,9 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
         // Let the outgoing message flush before the process goes away
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        try {
-            const pm2Restart = spawn('pm2', ['restart', pm2ProcessName], {
-                detached: true,
-                stdio: 'ignore',
-                shell: false
-            });
-            pm2Restart.unref();
-        } catch (error) {
-            // No PM2: exit and rely on the supervisor to bring the bot back
-            this.logError(error, { context: 'pm2-restart-fallback' });
-            process.exit(0);
-        }
+        // No PM2 (the Docker image ships without it): exit and rely on the
+        // supervisor — Docker's restart policy — to bring the bot back.
+        this._runPm2(['restart', pm2ProcessName], () => process.exit(0));
     }
 
     /**
@@ -1936,16 +1928,50 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
 
         await new Promise(resolve => setTimeout(resolve, 1000));
 
+        this._runPm2(['stop', pm2ProcessName], () => process.exit(0));
+    }
+
+    /**
+     * Run a detached pm2 command, calling `onUnavailable` if it cannot do
+     * the job.
+     *
+     * spawn() does not throw when the binary is missing — it emits an async
+     * 'error' event. The previous try/catch therefore never fired, and with
+     * nothing listening for 'error' a missing pm2 meant `.security restart`
+     * announced a restart and then did nothing at all.
+     *
+     * @param {string[]} args - pm2 arguments
+     * @param {Function} onUnavailable - Fallback when pm2 is missing or fails
+     * @param {string} [bin='pm2'] - Binary to run (overridable for tests)
+     * @returns {import('child_process').ChildProcess|null}
+     * @private
+     */
+    _runPm2(args, onUnavailable, bin = 'pm2') {
+        let fellBack = false;
+        const fallBack = (reason) => {
+            if (fellBack) return;
+            fellBack = true;
+            logger.warn(`pm2 ${args[0]} unavailable (${reason}), using fallback`);
+            onUnavailable();
+        };
+
+        let proc;
         try {
-            const pm2Stop = spawn('pm2', ['stop', pm2ProcessName], {
-                detached: true,
-                stdio: 'ignore',
-                shell: false
-            });
-            pm2Stop.unref();
+            proc = spawn(bin, args, { detached: true, stdio: 'ignore', shell: false });
         } catch (error) {
-            process.exit(0);
+            fallBack(error.message);
+            return null;
         }
+
+        proc.on('error', (error) => fallBack(error.code || error.message));
+        // A non-zero exit means pm2 is installed but could not act, e.g. the
+        // bot is not running under it. On success pm2 takes this process down
+        // before the exit is ever observed.
+        proc.on('exit', (code) => {
+            if (code !== 0) fallBack(`exit code ${code}`);
+        });
+        proc.unref();
+        return proc;
     }
 
     // ─────────────────────────────────────────────────────

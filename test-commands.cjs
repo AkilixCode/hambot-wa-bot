@@ -113,6 +113,53 @@ async function main() {
         clearReminders();
     });
 
+    await test('A reminder is delivered through the socket that is live when it fires', async () => {
+        clearReminders();
+        const socketRef = require('./utils/socket-ref');
+        const oldSock = fakeSock();
+        const newSock = fakeSock();
+        const from = '123@g.us';
+        const sender = '628555@s.whatsapp.net';
+
+        // Capture the reminder's callback instead of waiting an hour for it.
+        let fire = null;
+        const realSetTimeout = global.setTimeout;
+        global.setTimeout = (fn) => { fire = fn; return realSetTimeout(() => {}, 0); };
+        try {
+            await reminder.execute(oldSock, fakeMsg(from, sender), ['1h', 'minum air'], { from, sender, commandName: 'reminder' });
+        } finally {
+            global.setTimeout = realSetTimeout;
+        }
+        assert.ok(fire, 'reminder must schedule a timer');
+
+        // Simulate a reconnect, then fire.
+        socketRef.set(newSock);
+        await fire();
+
+        assert.ok(texts(newSock).some(t => t.includes('minum air')), 'reminder must go out on the new socket');
+        assert.ok(!texts(oldSock).some(t => t.includes('minum air') && t.includes('Pengingat') && !t.includes('Dipasang')),
+            'reminder must not be sent on the stale socket');
+        socketRef.set(null);
+        clearReminders();
+    });
+
+    // ── Process control ──────────────────────────────────────────────
+    console.log('\n🔄 Process control...\n');
+
+    const SecurityCommand = require('./commands/security');
+    const securityCmd = new SecurityCommand();
+
+    const waitForFallback = (bin) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('fallback was never called')), 3000);
+        securityCmd._runPm2(['restart', 'hambot-test'], () => { clearTimeout(timer); resolve(); }, bin);
+    });
+
+    await test('restart falls back when pm2 is not installed', () =>
+        waitForFallback('hambot-definitely-not-a-binary'));
+
+    await test('restart falls back when pm2 exits with an error', () =>
+        waitForFallback('false'));
+
     // ── Runtime security toggles ─────────────────────────────────────
     console.log('\n🎛️ Runtime toggles...\n');
 

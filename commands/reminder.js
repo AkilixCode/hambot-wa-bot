@@ -5,6 +5,8 @@
 
 const CommandBase = require('./base');
 const ui = require('../utils/ui');
+const logger = require('../utils/logger');
+const socketRef = require('../utils/socket-ref');
 
 // In-memory storage for active reminders
 const activeReminders = new Map();
@@ -124,7 +126,10 @@ class ReminderCommand extends CommandBase {
         const timeout = setTimeout(async () => {
             try {
                 // Send reminder message
-                await sock.sendMessage(from, {
+                // Resolve the socket now, not when the reminder was set: a
+                // reconnect in between replaces it, and the old one is closed.
+                const liveSock = socketRef.get() || sock;
+                await liveSock.sendMessage(from, {
                     text: ui.clamp(ui.card({
                         icon: '⏰',
                         title: 'Pengingat',
@@ -138,7 +143,7 @@ class ReminderCommand extends CommandBase {
                 // Clean up from active reminders
                 activeReminders.delete(reminderId);
             } catch (error) {
-                console.error('Failed to send reminder:', error);
+                logger.error(error, { context: 'reminder-send' });
                 activeReminders.delete(reminderId);
             }
         }, duration);
