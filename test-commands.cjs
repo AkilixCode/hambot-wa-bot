@@ -177,6 +177,48 @@ async function main() {
         assert.ok(new SocksProxyAgent('socks5://127.0.0.1:1080'));
     });
 
+    // ── Linking the number ───────────────────────────────────────────
+    console.log('\n🔗 Login...\n');
+
+    const login = require('./utils/login');
+
+    await test('PAIRING_NUMBER is validated into international digits', () => {
+        assert.deepStrictEqual(login.parsePairingNumber('+62 812-3456-7890'), { number: '6281234567890', error: null });
+        assert.deepStrictEqual(login.parsePairingNumber(''), { number: null, error: null });
+        assert.deepStrictEqual(login.parsePairingNumber(undefined), { number: null, error: null });
+        assert.match(login.parsePairingNumber('081234567890').error, /country code/);
+        assert.match(login.parsePairingNumber('62abc').error, /digits/);
+        assert.match(login.parsePairingNumber('1234').error, /8-15/);
+    });
+
+    await test('Pairing code only when unregistered and a number is set', () => {
+        assert.strictEqual(login.loginMethod({ registered: true, pairingNumber: '62812' }), 'none');
+        assert.strictEqual(login.loginMethod({ registered: false, pairingNumber: '62812' }), 'pairing');
+        assert.strictEqual(login.loginMethod({ registered: false, pairingNumber: null }), 'qr');
+    });
+
+    await test('Pairing codes are shown the way the phone shows them', () => {
+        assert.strictEqual(login.formatPairingCode('abcd1234'), 'ABCD-1234');
+        assert.ok(login.pairingInstructions('ABCD1234', '6281').includes('ABCD-1234'));
+    });
+
+    await test('The login QR is saved as a PNG in the data directory, then removed', async () => {
+        const saved = process.env.HAMBOT_DATA_DIR;
+        process.env.HAMBOT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-data-'));
+        try {
+            const file = await login.writeQrPng('2@AbCdEf,GhIjKl,MnOpQr,StUvWx');
+            assert.ok(file.startsWith(process.env.HAMBOT_DATA_DIR), 'must write under HAMBOT_DATA_DIR');
+            const meta = await require('sharp')(file).metadata();
+            assert.strictEqual(meta.format, 'png');
+            assert.ok(meta.width >= 250 && meta.width === meta.height, `unexpected size ${meta.width}x${meta.height}`);
+            await login.removeQrPng();
+            assert.ok(!fs.existsSync(file), 'QR image must be removed once linked');
+        } finally {
+            fs.rmSync(process.env.HAMBOT_DATA_DIR, { recursive: true, force: true });
+            if (saved === undefined) delete process.env.HAMBOT_DATA_DIR; else process.env.HAMBOT_DATA_DIR = saved;
+        }
+    });
+
     // ── Security: no API key over plain HTTP ──────────────────────────
     console.log('\n🔐 Transport...\n');
 

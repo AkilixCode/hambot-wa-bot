@@ -60,9 +60,25 @@ cp .env.example .env      # fill in BOT_OWNER_ID and any API keys
 npm start
 ```
 
-Scan the QR code printed to the terminal with WhatsApp → Linked devices. The
-session is written to `auth_info_baileys/`; treat that directory as a
-credential, since anyone holding it can act as the linked account.
+Then link the bot's number (see below). The session is written to
+`auth_info_baileys/`; treat that directory as a credential, since anyone
+holding it can act as the linked account.
+
+### Linking the number
+
+On the first start the bot has to be linked as a device of its WhatsApp
+account. Two ways:
+
+- **Pairing code (easiest on a server).** Set `PAIRING_NUMBER` in `.env` to the
+  bot's number with country code (e.g. `6281234567890`). The logs show an
+  8-character code; on that phone open WhatsApp → Linked devices → Link a
+  device → *Link with phone number instead*, and type it.
+- **QR code.** Leave `PAIRING_NUMBER` empty and scan the QR printed in the
+  logs from WhatsApp → Linked devices. The same QR is saved as
+  `data/qr.png`, handy when the terminal mangles it. It is deleted once
+  linked.
+
+Either way this is needed only once; the session survives restarts.
 
 ## Configuration
 
