@@ -274,7 +274,11 @@ module.exports = async (sock, m) => {
         }
 
         // --- Rate Limiting ---
-        const rateLimit = rateLimiter.check(sender);
+        // `.security disable rateLimit` flips this toggle; it used to be
+        // displayed in the panel but never consulted.
+        const rateLimit = security.isFeatureEnabled('rateLimit')
+            ? rateLimiter.check(sender)
+            : { allowed: true };
         if (!rateLimit.allowed) {
             security.trackSuspiciousActivity(sender, 'rate_limit_exceeded');
             logger.commandEnd(tracker, 'blocked', `Rate limit exceeded (retry in ${rateLimit.retryAfter}s)`);

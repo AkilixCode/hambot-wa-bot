@@ -7,6 +7,10 @@
  *   npm run test:commands
  */
 
+// Must be set before config.js is first required: one request per window
+// makes the rate limiter observable within a couple of messages.
+process.env.RATE_LIMIT_MAX = '1';
+
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -45,6 +49,15 @@ function fakeMsg(from, sender) {
         message: { conversation: '' }
     };
 }
+
+function textMsg(from, sender, text) {
+    return {
+        key: { remoteJid: from, participant: sender, id: `T${Math.random()}` },
+        message: { conversation: text }
+    };
+}
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Text of every non-reaction message sent. */
 function texts(sock) {
@@ -98,6 +111,52 @@ async function main() {
         await reminder.execute(sock, fakeMsg(from, other), ['1h', 'punyaku'], { from, sender: other, commandName: 'reminder' });
         assert.strictEqual(activeReminders.size, MAX_PER_USER + 1);
         clearReminders();
+    });
+
+    // ── Runtime security toggles ─────────────────────────────────────
+    console.log('\n🎛️ Runtime toggles...\n');
+
+    const handler = require('./handler');
+    const security = require('./utils/security');
+
+    await test('`.security disable rateLimit` actually disables the rate limiter', async () => {
+        const sock = fakeSock();
+        const from = '999@g.us';
+        const sender = '628333@s.whatsapp.net';
+        const run = () => handler(sock, { messages: [textMsg(from, sender, '.flip')], type: 'notify' });
+        const limited = () => texts(sock).some(t => t.includes('Terlalu Banyak Permintaan'));
+
+        try {
+            await run();
+            await sleep(2100); // let the per-command cooldown lapse
+            await run();
+            assert.ok(limited(), 'baseline: second request in the window must be rate limited');
+
+            sock.sent.length = 0;
+            security.toggleFeature('rateLimit', false);
+            await sleep(2100);
+            await run();
+            assert.ok(!limited(), 'with the toggle off the request must go through');
+        } finally {
+            security.toggleFeature('rateLimit', true);
+        }
+    });
+
+    await test('`.security disable autoBlock` stops suspicious-activity blocks', () => {
+        const user = '628444@s.whatsapp.net';
+        try {
+            security.toggleFeature('autoBlock', false);
+            for (let i = 0; i < 25; i++) security.trackSuspiciousActivity(user, 'test');
+            assert.strictEqual(security.isUserBlocked(user), false, 'must not block while autoBlock is off');
+
+            security.toggleFeature('autoBlock', true);
+            security.trackSuspiciousActivity(user, 'test');
+            assert.strictEqual(security.isUserBlocked(user), true, 'must block again once re-enabled');
+        } finally {
+            security.toggleFeature('autoBlock', true);
+            security.unblockUser(user);
+            security.suspiciousActivity.delete(user);
+        }
     });
 
     // ── Summary ───────────────────────────────────────────────────────

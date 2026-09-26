@@ -21,14 +21,16 @@ const UNAUTHORIZED_PENALTIES = [
 
 class SecurityManager {
     constructor() {
-        // Blacklist for malicious patterns
+        // Blacklist for malicious patterns.
+        //
+        // Shell metacharacters and SQL keywords used to be listed here too.
+        // Nothing in the bot runs a shell (every spawn is shell:false) or a
+        // database, so they guarded nothing — while rejecting `.calc (2+3)*4`,
+        // any URL with `&` in its query string, and plain words like "update"
+        // or "union", each hit counting towards an auto-block.
         this.blacklistedPatterns = [
-            // Command injection
-            /[;&|`$(){}[\]<>]/g,
             // Path traversal
             /\.\.[\/\\]/g,
-            // SQL injection patterns
-            /(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION)\b)/gi,
             // Script injection
             /<script[^>]*>.*?<\/script>/gi,
             // Null bytes
@@ -676,7 +678,9 @@ class SecurityManager {
         // Check for abuse patterns
         const recentActivities = activities.filter(a => Date.now() - a.timestamp < 60000);
         
-        if (recentActivities.length > 20) {
+        // Respect the owner's `.security disable autoBlock` toggle — previously
+        // only the owner-command path honoured it.
+        if (recentActivities.length > 20 && this.runtimeSettings.autoBlockEnabled) {
             const result = this.blockUser(userId, 1800000, 'Excessive suspicious activity');
             return result.success;
         }

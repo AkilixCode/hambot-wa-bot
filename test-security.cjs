@@ -45,8 +45,14 @@ for (const test of maliciousInputs) {
 console.log('\n🎯 Testing Malicious Pattern Detection...\n');
 
 const maliciousPatterns = [
-    { input: 'SELECT * FROM users', shouldDetect: true, type: 'SQL injection' },
-    { input: 'DROP TABLE users', shouldDetect: true, type: 'SQL injection' },
+    // No shell or database sits behind any command, so these are ordinary
+    // input and must not be flagged (they used to be, as false positives).
+    { input: '.calc (2+3)*4', shouldDetect: false, type: 'Parenthesised maths' },
+    { input: '.video https://www.youtube.com/watch?v=abc&t=10', shouldDetect: false, type: 'URL with query string' },
+    { input: '.translate en please update my profile', shouldDetect: false, type: 'Word "update"' },
+    { input: '.wiki Union Station', shouldDetect: false, type: 'Word "union"' },
+    { input: '..\\windows\\system32', shouldDetect: true, type: 'Backslash path traversal' },
+    { input: 'hello\0world', shouldDetect: true, type: 'Null byte' },
     { input: '../../../etc/passwd', shouldDetect: true, type: 'Path traversal' },
     { input: '<script>alert("xss")</script>', shouldDetect: true, type: 'XSS' },
     { input: 'normal text', shouldDetect: false, type: 'Normal input' },
