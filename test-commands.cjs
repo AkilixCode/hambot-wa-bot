@@ -14,6 +14,7 @@ process.env.RATE_LIMIT_MAX = '1';
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const ui = require('./utils/ui');
 
 let passed = 0;
 let failed = 0;
@@ -61,7 +62,9 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Text of every non-reaction message sent. */
 function texts(sock) {
-    return sock.sent.filter(s => s.content.text).map(s => s.content.text);
+    // Plain lowercase text: card titles are set in decorative small capitals,
+    // which only map back to lowercase.
+    return sock.sent.filter(s => s.content.text).map(s => ui.plain(s.content.text).toLowerCase());
 }
 
 async function main() {
@@ -101,7 +104,7 @@ async function main() {
         }
 
         assert.strictEqual(activeReminders.size, MAX_PER_USER, 'extra reminder must be rejected');
-        assert.ok(texts(sock).some(t => t.includes('Batas Tercapai')), 'user must be told why');
+        assert.ok(texts(sock).some(t => t.includes('batas tercapai')), 'user must be told why');
     });
 
     await test('Another user is not affected by someone else hitting the cap', async () => {
@@ -137,7 +140,7 @@ async function main() {
         await fire();
 
         assert.ok(texts(newSock).some(t => t.includes('minum air')), 'reminder must go out on the new socket');
-        assert.ok(!texts(oldSock).some(t => t.includes('minum air') && t.includes('Pengingat') && !t.includes('Dipasang')),
+        assert.ok(!texts(oldSock).some(t => t.includes('minum air') && t.includes('pengingat') && !t.includes('dipasang')),
             'reminder must not be sent on the stale socket');
         socketRef.set(null);
         clearReminders();
@@ -247,6 +250,36 @@ async function main() {
         assert.ok(Date.now() - started >= 1450, `waited only ${Date.now() - started}ms`);
     });
 
+    // ── Theme ────────────────────────────────────────────────────────
+    console.log('\n🎨 Theme...\n');
+
+    await test('The ASCII frame never exceeds 23 columns, whatever the name', () => {
+        for (const name of ['HamBot', 'Bot', 'A Really Very Long Bot Name Indeed', 'Émile Ω 🤖', '']) {
+            const body = ui.frame(name).replace(/```/g, '').split('\n');
+            assert.strictEqual(body.length, 3, 'frame is three lines');
+            for (const line of body) {
+                assert.strictEqual(line.length, 23, `"${name}": line "${line}" is ${line.length} columns`);
+                assert.ok(/^[\x20-\x7e]+$/.test(line), 'frame must be pure ASCII to stay aligned');
+            }
+        }
+    });
+
+    await test('Cards use the heavy rail and small-caps titles', () => {
+        const out = ui.card({ icon: '🎵', title: 'Musik', lines: ['a', '', 'b'], footer: 'f' }).split('\n');
+        assert.strictEqual(out[0], `┏━━ 🎵 *${ui.smallCaps('Musik')}*`);
+        assert.deepStrictEqual(out.slice(1, 4), ['┃ a', '┃', '┃ b']);
+        assert.strictEqual(out[4], '┗━━ ✧ _f_');
+    });
+
+    await test('rawTitle keeps command names typeable', () => {
+        assert.ok(ui.card({ title: '.menu', rawTitle: true }).startsWith('┏━━ *.menu*'));
+    });
+
+    await test('plain() maps every decorative alphabet back to ASCII', () => {
+        const fancy = [ui.smallCaps('Hello'), ui.fancy('World 42'), ui.fancyItalic('ok'), ui.fancyMono('v1.0')].join(' ');
+        assert.strictEqual(ui.plain(fancy), 'hello World 42 ok v1.0');
+    });
+
     // ── Chat output ──────────────────────────────────────────────────
     console.log('\n💬 Chat output...\n');
 
@@ -264,8 +297,8 @@ async function main() {
         const sock = fakeSock();
         await new PortCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['22'], { from: '1@g.us' });
         const [reply] = texts(sock);
-        assert.ok(reply.startsWith('╭'), 'expected the standard card frame');
-        assert.ok(reply.includes('SSH'));
+        assert.ok(reply.startsWith('┏'), 'expected the standard card frame');
+        assert.ok(reply.includes('ssh'));
     });
 
     await test('.dns rejects an invalid domain with the standard error card', async () => {
@@ -273,7 +306,7 @@ async function main() {
         const sock = fakeSock();
         await new DnsCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['not a domain!'], { from: '1@g.us' });
         const [reply] = texts(sock);
-        assert.ok(reply.startsWith('╭') && reply.includes('Domain Tidak Valid'), reply);
+        assert.ok(reply.startsWith('┏') && reply.includes('domain tidak valid'), reply);
     });
 
     await test('Trivia decodes numeric and accented HTML entities', () => {
@@ -294,7 +327,7 @@ async function main() {
         const from = '999@g.us';
         const sender = '628333@s.whatsapp.net';
         const run = () => handler(sock, { messages: [textMsg(from, sender, '.flip')], type: 'notify' });
-        const limited = () => texts(sock).some(t => t.includes('Terlalu Banyak Permintaan'));
+        const limited = () => texts(sock).some(t => t.includes('terlalu banyak permintaan'));
 
         try {
             await run();

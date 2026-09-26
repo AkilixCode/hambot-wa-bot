@@ -107,6 +107,7 @@ class DNSCommand extends CommandBase {
             await this.reply(sock, from, msg, ui.card({
                 icon: '🔍',
                 title: ui.safe(domain, 60),
+                rawTitle: true,
                 lines,
                 footer: `DNS lookup ${ui.SYM.dot} ${ui.clock()}`
             }));

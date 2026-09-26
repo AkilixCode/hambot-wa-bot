@@ -746,6 +746,7 @@ class MenuCommand extends CommandBase {
         await this.reply(sock, from, msg, ui.card({
             icon: this.getCategoryEmoji(command.category),
             title: prefix + command.name,
+            rawTitle: true,
             lines,
             footer: `${this.getCategoryNameID(command.category)} ${ui.SYM.dot} ${config.bot.name}`
         }));

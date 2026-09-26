@@ -8,8 +8,13 @@
  *
  * Design notes:
  * - WhatsApp renders messages in a proportional font, so column alignment with
- *   spaces is unreliable. Every frame here is a LEFT RAIL ("│ text") which looks
- *   the same regardless of how wide the content is. Closed boxes are avoided.
+ *   spaces is unreliable. Every frame here is a LEFT RAIL ("┃ text") which looks
+ *   the same regardless of how wide the content is. Closed boxes are avoided —
+ *   except inside a ``` monospace block (see frame()), the one place WhatsApp
+ *   renders fixed-width, and even there only pure ASCII is used, since box and
+ *   emoji glyphs fall back to proportional fonts on some phones.
+ * - Narrow phones fit roughly 30 characters per line. Decorative lines built
+ *   here stay under that, so nothing wraps into a broken shape.
  * - WhatsApp markdown is limited to *bold*, _italic_, ~strike~ and `mono`.
  *   `**bold**` is NOT supported and renders with stray asterisks — use bold().
  * - Decorative Unicode fonts are unreadable to screen readers and break text
@@ -34,13 +39,14 @@ const MAX_MESSAGE_LENGTH = 4000;
  * Symbols
  * ------------------------------------------------------------------ */
 
+// The "bold heavy" theme: thick left rail, ✧ accent on the closing line.
 const SYM = {
-    railTop: '╭',
-    rail: '│',
-    railBottom: '╰',
-    railHeavyTop: '╭',
+    railTop: '┏',
+    rail: '┃',
+    railBottom: '┗',
+    railHeavyTop: '┏',
     railHeavy: '┃',
-    railHeavyBottom: '╰',
+    railHeavyBottom: '┗',
     branchLight: '─',
     branchHeavy: '━',
     bracketOpen: '「',
@@ -49,7 +55,9 @@ const SYM = {
     dot: '·',
     diamond: '◈',
     arrow: '➜',
-    star: '✦'
+    star: '✦',
+    accent: '✧',
+    section: '❖'
 };
 
 const EMOJI = {
@@ -82,6 +90,10 @@ const SMALL_CAPS = {
     j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
     s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ'
 };
+
+const SMALL_CAPS_REVERSE = Object.fromEntries(
+    Object.entries(SMALL_CAPS).filter(([ascii, cap]) => ascii !== cap).map(([ascii, cap]) => [cap, ascii])
+);
 
 /**
  * Remap ASCII letters/digits onto a contiguous Unicode alphabet block.
@@ -139,6 +151,35 @@ function smallCaps(text) {
         .join('');
 }
 
+/**
+ * Undo every decorative alphabet above, back to plain ASCII.
+ *
+ * For anything that has to read the bot's own output as text — tests,
+ * logs, search — rather than look at it.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function plain(text) {
+    let out = '';
+    for (const ch of String(text ?? '')) {
+        const code = ch.codePointAt(0);
+        const small = SMALL_CAPS_REVERSE[ch];
+        if (small) {
+            out += small;
+        } else if (code >= 0x1d400 && code <= 0x1d6a3) {
+            // Mathematical alphanumerics: 26 upper + 26 lower per style.
+            const offset = (code - 0x1d400) % 52;
+            out += String.fromCharCode(offset < 26 ? 0x41 + offset : 0x61 + offset - 26);
+        } else if (code >= 0x1d7ce && code <= 0x1d7ff) {
+            out += String.fromCharCode(0x30 + ((code - 0x1d7ce) % 10));
+        } else {
+            out += ch;
+        }
+    }
+    return out;
+}
+
 /* ------------------------------------------------------------------ *
  * WhatsApp markdown
  * ------------------------------------------------------------------ */
@@ -167,33 +208,95 @@ function _lines(input) {
 /**
  * A titled block with a left rail.
  *
- *   ╭──「 🌤️ *CUACA* 」
- *   │ 📍 Jakarta
- *   │ 🌡️ 31°C
- *   ╰─◈ _footer_
+ *   ┏━━ 🌤️ *ᴄᴜᴀᴄᴀ*
+ *   ┃ 📍 Jakarta
+ *   ┃ 🌡️ 31°C
+ *   ┗━━ ✧ _footer_
+ *
+ * The title is set in small capitals. Pass `rawTitle` when the title is
+ * something the user will copy and type — a command name, say — because small
+ * capitals are different characters and would not work as input.
  *
  * @param {Object} opts
  * @param {string} [opts.icon] Leading emoji for the title
  * @param {string} opts.title Title text (bolded automatically)
  * @param {Array<string>} [opts.lines] Body lines, each gets the rail prefix
  * @param {string} [opts.footer] Italic footer on the closing rail
- * @param {boolean} [opts.heavy] Use the heavy rail (for top-level headers)
+ * @param {boolean} [opts.rawTitle] Keep the title's letters as typed
  * @returns {string}
  */
-function card({ icon, title, lines = [], footer, heavy = false } = {}) {
-    const rail = heavy ? SYM.railHeavy : SYM.rail;
-    const branch = heavy ? SYM.branchHeavy : SYM.branchLight;
-    const head = [icon, title ? bold(title) : null].filter(Boolean).join(' ');
+function card({ icon, title, lines = [], footer, rawTitle = false } = {}) {
+    const shownTitle = title ? bold(rawTitle ? title : smallCaps(title)) : null;
+    const head = [icon, shownTitle].filter(Boolean).join(' ');
 
-    const out = [`${SYM.railTop}${branch.repeat(2)}${SYM.bracketOpen} ${head} ${SYM.bracketClose}`];
+    const out = [`${SYM.railTop}${SYM.branchHeavy.repeat(2)} ${head}`];
     for (const line of _lines(lines)) {
-        out.push(line === '' ? rail : `${rail} ${line}`);
+        out.push(line === '' ? SYM.rail : `${SYM.rail} ${line}`);
     }
     out.push(footer
-        ? `${SYM.railBottom}${branch}${SYM.diamond} ${italic(footer)}`
-        : `${SYM.railBottom}${branch.repeat(4)}`);
+        ? `${SYM.railBottom}${SYM.branchHeavy.repeat(2)} ${SYM.accent} ${italic(footer)}`
+        : `${SYM.railBottom}${SYM.branchHeavy.repeat(12)} ${SYM.accent}`);
 
     return out.join('\n');
+}
+
+/**
+ * A pure-ASCII framed title inside a monospace block — the one kind of
+ * "ASCII art" that renders identically on every phone.
+ *
+ *   ```
+ *   .-~-~-~-~-~-~-~-~-~-~-.
+ *   |   H A M B O T  ~*   |
+ *   '-~-~-~-~-~-~-~-~-~-~-'
+ *   ```
+ *
+ * Letters are spaced out when they fit and packed when they do not; anything
+ * still too long is truncated, so the frame can never exceed FRAME_WIDTH
+ * columns and wrap on a narrow screen. Non-ASCII characters are dropped, since
+ * they may render at a different width and break the right-hand edge.
+ *
+ * @param {string} text
+ * @param {Object} [opts]
+ * @param {string} [opts.tag] Short ASCII flourish after the text
+ * @returns {string}
+ */
+function frame(text, { tag = '~*' } = {}) {
+    const FRAME_WIDTH = 23;                    // total columns, edges included
+    const inner = FRAME_WIDTH - 2;
+
+    const ascii = String(text ?? '').toUpperCase().replace(/[^\x20-\x7e]/g, '').trim();
+    const suffix = tag ? `  ${tag}` : '';
+    const budget = inner - 2 - suffix.length;  // keep a margin on both sides
+
+    let label = ascii.split('').join(' ');
+    if (label.length > budget) label = ascii;
+    if (label.length > budget) label = ascii.slice(0, Math.max(0, budget));
+
+    const content = label + suffix;
+    const padLeft = Math.floor((inner - content.length) / 2);
+    const padRight = inner - content.length - padLeft;
+
+    const edge = '-' + '~-'.repeat((FRAME_WIDTH - 3) / 2);
+    return block([
+        `.${edge}.`,
+        `|${' '.repeat(padLeft)}${content}${' '.repeat(padRight)}|`,
+        `'${edge}'`
+    ].join('\n'));
+}
+
+/**
+ * A section heading inside a long message: `❖ 🎧 *ᴍᴇᴅɪᴀ*`
+ * @param {string} title
+ * @param {string} [icon]
+ * @returns {string}
+ */
+function section(title, icon) {
+    return [SYM.section, icon, bold(smallCaps(title))].filter(Boolean).join(' ');
+}
+
+/** A heavy horizontal rule, short enough never to wrap. */
+function rule(length = 18) {
+    return SYM.branchHeavy.repeat(length);
 }
 
 /**
@@ -207,11 +310,11 @@ function card({ icon, title, lines = [], footer, heavy = false } = {}) {
 function banner({ icon = EMOJI.bot, title, subtitle } = {}) {
     const bar = SYM.branchHeavy.repeat(18);
     const out = [
-        `${SYM.railHeavyTop}${bar}`,
+        `${SYM.railHeavyTop}${bar} ${SYM.accent}`,
         `${SYM.railHeavy}  ${icon}  ${fancy(String(title).toUpperCase())}`
     ];
     if (subtitle) out.push(`${SYM.railHeavy}  ${italic(subtitle)}`);
-    out.push(`${SYM.railHeavyBottom}${bar}`);
+    out.push(`${SYM.railHeavyBottom}${bar} ${SYM.accent}`);
     return out.join('\n');
 }
 
@@ -529,6 +632,7 @@ module.exports = {
     fancyItalic,
     fancyMono,
     smallCaps,
+    plain,
 
     // WhatsApp markdown
     bold,
@@ -540,6 +644,9 @@ module.exports = {
     // Structure
     card,
     banner,
+    frame,
+    section,
+    rule,
     kv,
     bullets,
     divider,
