@@ -2,12 +2,16 @@
 # ============================================================
 # HamBot deploy helper
 #
-#   ./deploy.sh           first-time setup: create .env, start the bot,
-#                         show the pairing code or QR
-#   ./deploy.sh update    pull the latest image (and repo files), restart
-#   ./deploy.sh logs      follow the logs
-#   ./deploy.sh status    container state and health
-#   ./deploy.sh stop      stop the bot (the WhatsApp session is kept)
+#   ./deploy.sh                 first-time setup: create .env, start the bot,
+#                               show the pairing code or QR
+#   ./deploy.sh update          pull the latest image (and repo files), restart
+#   ./deploy.sh config          fix the owner / pairing number (typo? run this)
+#   ./deploy.sh relink [--qr | --code <number>]
+#                               link the WhatsApp number again from scratch
+#   ./deploy.sh restore-session undo the last relink (put the old session back)
+#   ./deploy.sh status          numbers, login state and health
+#   ./deploy.sh logs            follow the logs
+#   ./deploy.sh stop            stop the bot (the WhatsApp session is kept)
 #
 # Needs Docker with the Compose v2 plugin (`docker compose`).
 # ============================================================
@@ -31,8 +35,14 @@ require_docker() {
         || die "Cannot talk to the Docker daemon. Is it running, and is your user in the 'docker' group (or use sudo)?"
 }
 
+require_env() {
+    [ -f .env ] || die "No .env yet — run ./deploy.sh first."
+}
+
+interactive() { [ -t 0 ]; }
+
 # Replace KEY=... (or a commented "# KEY=...") in .env with KEY=value.
-# Values reaching here are validated digits, so no sed escaping is needed.
+# Values reaching here are validated digits or fixed words, so no escaping.
 set_env() {
     key=$1
     value=$2
@@ -43,56 +53,103 @@ set_env() {
     fi
 }
 
-# Ask for a phone number with country code; empty answer allowed if $2 = optional.
+# Current value of KEY in .env (empty when unset or commented out).
+get_env() {
+    [ -f .env ] || return 0
+    grep "^${1}=" .env | tail -n 1 | cut -d= -f2- | tr -d '\r' || true
+}
+
+# +62 812-3456-7890 style, for reading a number back to the user.
+pretty_number() {
+    printf '%s' "$1" | sed -E 's/^([0-9]{2})([0-9]{3})([0-9]{4})([0-9]*)$/+\1 \2-\3-\4/'
+}
+
+# Validate a number with country code. Prints it, or an error to stderr.
+valid_number() {
+    case $1 in
+        0*) warn "Use the country code instead of the leading 0 (62812..., not 0812...)."; return 1 ;;
+        *[!0-9]*|'') warn "Digits only, please."; return 1 ;;
+    esac
+    if [ ${#1} -lt 8 ] || [ ${#1} -gt 15 ]; then
+        warn "That should be 8-15 digits including the country code."
+        return 1
+    fi
+    printf '%s' "$1"
+}
+
+confirm() {
+    printf '%s [y/N] ' "$1" >&2
+    read -r reply || reply=""
+    case $reply in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# Ask for a phone number, read it back, and ask to confirm — a misclick is
+# caught here instead of locking the owner out.
+#   $1 prompt  $2 current value (Enter keeps it)  $3 "optional" allows empty
+#   With $3 set, typing "-" clears the value.
 ask_number() {
     prompt=$1
-    optional=${2:-}
+    current=${2:-}
+    optional=${3:-}
     while :; do
-        printf '%s' "$prompt" >&2
-        read -r answer || answer=""
-        answer=$(printf '%s' "$answer" | tr -d ' +-')
-        if [ -z "$answer" ] && [ -n "$optional" ]; then
-            printf ''
-            return 0
+        if [ -n "$current" ]; then
+            printf '%s [%s, Enter = keep]: ' "$prompt" "$(pretty_number "$current")" >&2
+        else
+            printf '%s: ' "$prompt" >&2
         fi
-        case $answer in
-            0*) warn "Use the country code instead of the leading 0 (62812..., not 0812...)." ;;
-            *[!0-9]*|'') warn "Digits only, please." ;;
-            *)
-                if [ ${#answer} -ge 8 ] && [ ${#answer} -le 15 ]; then
-                    printf '%s' "$answer"
-                    return 0
-                fi
-                warn "That should be 8-15 digits including the country code."
-                ;;
-        esac
+        read -r raw || raw=""
+        raw=$(printf '%s' "$raw" | tr -d ' ')
+
+        # "-" clears an optional value; checked before separators are stripped.
+        if [ "$raw" = "-" ] && [ -n "$optional" ]; then printf ''; return 0; fi
+
+        answer=$(printf '%s' "$raw" | tr -d '+-.()')
+        if [ -z "$answer" ]; then
+            if [ -n "$current" ]; then printf '%s' "$current"; return 0; fi
+            if [ -n "$optional" ]; then printf ''; return 0; fi
+            warn "This one is required."
+            continue
+        fi
+
+        number=$(valid_number "$answer") || continue
+        printf '    -> %s — correct? [Y/n] ' "$(pretty_number "$number")" >&2
+        read -r ok || ok=""
+        case $ok in n|N|no|NO) continue ;; esac
+        printf '%s' "$number"
+        return 0
     done
 }
 
+# Owner and pairing number questions, shared by setup and `config`.
+ask_numbers() {
+    say ""
+    say "Your WhatsApp number becomes the bot owner (can use owner-only commands)."
+    owner=$(ask_number "  Owner number, with country code (e.g. 6281234567890)" "$(get_env BOT_OWNER_ID)")
+    set_env BOT_OWNER_ID "$owner"
+
+    say ""
+    say "The bot's own number can be linked with a pairing code (type 8 characters"
+    say "on the phone) instead of scanning a QR code. Leave empty for the QR code."
+    current=$(get_env PAIRING_NUMBER)
+    [ -n "$current" ] && say "  (type - to remove it and use the QR code)"
+    pairing=$(ask_number "  Bot's number for a pairing code" "$current" optional)
+    set_env PAIRING_NUMBER "$pairing"
+}
+
 create_env() {
-    [ -f .env ] && { info ".env already exists, keeping it"; return 0; }
+    [ -f .env ] && { info ".env already exists, keeping it (change numbers with ./deploy.sh config)"; return 0; }
     [ -f .env.example ] || die ".env.example is missing — run this from the repository folder."
 
     cp .env.example .env
     chmod 600 .env
     info "Created .env from .env.example"
 
-    if [ ! -t 0 ]; then
+    if ! interactive; then
         warn "Not running interactively: edit .env yourself (BOT_OWNER_ID, PAIRING_NUMBER), then run ./deploy.sh again."
         exit 0
     fi
 
-    say ""
-    say "Your WhatsApp number becomes the bot owner (can use owner-only commands)."
-    owner=$(ask_number "  Owner number, with country code (e.g. 6281234567890): ")
-    set_env BOT_OWNER_ID "$owner"
-
-    say ""
-    say "The bot's own number can be linked with a pairing code (type 8 characters"
-    say "on the phone) instead of scanning a QR code. Leave empty to use the QR code."
-    pairing=$(ask_number "  Bot's number for a pairing code (empty = QR): " optional)
-    [ -n "$pairing" ] && set_env PAIRING_NUMBER "$pairing"
-
+    ask_numbers
     say ""
     info "Saved. API keys and other settings can be added to .env later."
 }
@@ -100,11 +157,21 @@ create_env() {
 start() {
     info "Pulling the prebuilt image"
     if docker compose pull "$SERVICE"; then
-        docker compose up -d --no-build "$SERVICE"
+        docker compose up -d --no-build "$@" "$SERVICE"
     else
         warn "Could not pull the image (offline, or the package is private) — building it here instead. This takes a few minutes."
-        docker compose up -d --build "$SERVICE"
+        docker compose up -d --build "$@" "$SERVICE"
     fi
+}
+
+# Recreate the container so .env changes take effect, without pulling.
+restart_with_env() {
+    docker compose up -d --no-build --force-recreate "$SERVICE"
+}
+
+# Run a one-off Node snippet against the session volume, with the bot stopped.
+session_tool() {
+    docker compose run --rm --no-deps --entrypoint node "$SERVICE" -e "$1"
 }
 
 # Wait for the bot to print a pairing code, a QR code, or "connected".
@@ -122,9 +189,10 @@ show_login() {
         fi
         if printf '%s' "$logs" | grep -q "PAIRING CODE"; then
             say ""
-            printf '%s\n' "$logs" | grep -B 1 -A 7 "PAIRING CODE" | tail -n 9
+            printf '%s\n' "$logs" | grep -B 1 -A 8 "PAIRING CODE" | tail -n 10
             say ""
             info "Type that code on the bot's phone. Then check: ./deploy.sh logs"
+            info "Code not working? ./deploy.sh relink --qr"
             return 0
         fi
         if printf '%s' "$logs" | grep -q "Scan QR"; then
@@ -158,18 +226,108 @@ cmd_update() {
     info "Running HamBot v${version}"
 }
 
+cmd_config() {
+    require_docker
+    require_env
+    interactive || die "./deploy.sh config asks questions — run it in a terminal."
+    ask_numbers
+    say ""
+    info "Saved. Restarting the bot with the new settings."
+    restart_with_env
+    info "Done. The WhatsApp session was kept; no need to link again."
+}
+
+cmd_relink() {
+    require_docker
+    require_env
+    mode=auto
+    number=""
+    assume_yes=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --qr) mode=qr ;;
+            --code)
+                mode=code
+                shift
+                [ $# -gt 0 ] || die "--code needs the bot's number, e.g. --code 6281234567890"
+                # Accept a number typed with spaces and no quotes
+                # (--code +62 812-3456-7890): gather the pieces.
+                raw=$1
+                while [ $# -gt 1 ]; do
+                    case $2 in -*) break ;; esac
+                    printf '%s' "$2" | grep -Eq '^[0-9+().-]+$' || break
+                    raw="$raw$2"
+                    shift
+                done
+                number=$(valid_number "$(printf '%s' "$raw" | tr -d ' +-.()')") || exit 1
+                ;;
+            -y|--yes) assume_yes=1 ;;
+            *) die "Unknown option '$1'. Usage: ./deploy.sh relink [--qr | --code <number>] [-y]" ;;
+        esac
+        shift
+    done
+
+    say "This unlinks the bot's WhatsApp session and links it again from scratch."
+    say "The current session is archived, not deleted (undo: ./deploy.sh restore-session)."
+    if [ -z "$assume_yes" ]; then
+        interactive || die "Add -y to relink without a terminal."
+        confirm "Continue?" || { info "Nothing changed."; exit 0; }
+    fi
+
+    docker compose stop "$SERVICE" >/dev/null 2>&1 || true
+    info "Archiving the current session"
+    session_tool "const p = require('./utils/session').archiveSession('auth_info_baileys'); console.log(p ? 'archived to ' + p : 'no session to archive')"
+
+    case $mode in
+        qr) set_env LOGIN_METHOD qr ;;
+        code) set_env PAIRING_NUMBER "$number"; set_env LOGIN_METHOD code ;;
+        *) set_env LOGIN_METHOD auto ;;
+    esac
+
+    restart_with_env
+    show_login
+}
+
+cmd_restore() {
+    require_docker
+    require_env
+    say "This puts back the most recently archived session (the one before the last relink)."
+    interactive && { confirm "Continue?" || { info "Nothing changed."; exit 0; }; }
+
+    docker compose stop "$SERVICE" >/dev/null 2>&1 || true
+    session_tool "const r = require('./utils/session').restoreSession('auth_info_baileys'); if (!r) { console.log('no archived session found'); process.exit(3); } console.log('restored ' + r)" \
+        || warn "Nothing restored."
+    restart_with_env
+    show_login
+}
+
 cmd_status() {
     require_docker
+    if [ -f .env ]; then
+        owner=$(get_env BOT_OWNER_ID)
+        pairing=$(get_env PAIRING_NUMBER)
+        method=$(get_env LOGIN_METHOD)
+        say "Owner number:    ${owner:-(not set!)}"
+        say "Pairing number:  ${pairing:-(none — QR code)}"
+        say "Login method:    ${method:-auto}"
+        say "Wrong number? ./deploy.sh config"
+        say ""
+    fi
     docker compose ps "$SERVICE"
     docker compose exec -T "$SERVICE" node scripts/healthcheck.js 2>/dev/null || true
 }
 
-case ${1:-setup} in
+cmd="${1:-setup}"
+[ $# -gt 0 ] && shift
+case $cmd in
     setup|install) cmd_setup ;;
     update|upgrade) cmd_update ;;
+    config|configure) cmd_config ;;
+    relink) cmd_relink "$@" ;;
+    restore-session) cmd_restore ;;
     logs) require_docker; docker compose logs -f --tail 100 "$SERVICE" ;;
     status) cmd_status ;;
     stop) require_docker; docker compose down; info "Stopped. The WhatsApp session is kept; ./deploy.sh starts it again." ;;
-    -h|--help|help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
-    *) die "Unknown command '$1'. Try: ./deploy.sh help" ;;
+    -h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "Unknown command '$cmd'. Try: ./deploy.sh help" ;;
 esac

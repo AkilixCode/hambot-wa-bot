@@ -18,10 +18,11 @@
     "test": "node test-system.js",
     "test:integration": "node test-integration.cjs",
     "test:security": "node test-security.cjs",
-    "test:all": "npm run test && npm run test:integration && npm run test:security && npm run test:media && npm run test:commands",
+    "test:all": "npm run test && npm run test:integration && npm run test:security && npm run test:media && npm run test:commands && npm run test:deploy",
     "test:verbose": "LOG_LEVEL=debug node test-system.js",
     "test:media": "node test-media.cjs",
-    "test:commands": "node test-commands.cjs"
+    "test:commands": "node test-commands.cjs",
+    "test:deploy": "node test-deploy.cjs"
   },
   "keywords": [
     "whatsapp",
