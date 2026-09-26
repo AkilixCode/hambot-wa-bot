@@ -24,6 +24,12 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      # Stay on the Node LTS line; moving to the next LTS is a deliberate
+      # upgrade (engines, CI matrix, tests), not a weekly bump. Patch and
+      # minor updates of the same major still come through.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
