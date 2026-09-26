@@ -322,7 +322,7 @@ class SecurityCommand extends CommandBase {
         if (sensitive && context.isGroup) {
             const dm = this._ownerDmJid();
             if (dm) {
-                await sock.sendMessage(dm, { text: safeText });
+                await sock.sendMessage(dm, { text: ui.restyle(safeText) });
                 await this.react(sock, msg, '✅');
                 return;
             }
@@ -954,10 +954,15 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
             // Redaction happens on the joined text so multi-line secrets are caught too
             const logText = redact.redact(logContent.lines.join('\n'));
 
-            const header =
-                `📋 *Log Bot* (${logContent.lines.length} baris terakhir)\n` +
-                `📂 Sumber: ${logContent.source}\n` +
-                `🧼 Rahasia otomatis disensor\n`;
+            const header = ui.card({
+                icon: '📋',
+                title: 'Log Bot',
+                lines: [
+                    ui.kv('Baris', `${logContent.lines.length} terakhir`, '🧾'),
+                    ui.kv('Sumber', logContent.source, '📂'),
+                    `🧼 ${ui.italic('Rahasia otomatis disensor')}`
+                ]
+            });
 
             this._audit('owner.logs.viewed', context, { detail: `${logContent.source} (${logContent.lines.length} baris)` });
 
@@ -966,11 +971,14 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
                 return await this.replyError(sock, from, msg, 'Tidak ada tujuan pribadi untuk mengirim log.');
             }
 
-            if (header.length + logText.length <= MAX_MESSAGE_LENGTH) {
+            // The log itself goes in a monospace block: log lines are full of
+            // `*` and `_`, which would otherwise turn into WhatsApp formatting.
+            const body = `${header}\n${ui.block(logText.replace(/```/g, "'''"))}`;
+            if (body.length <= MAX_MESSAGE_LENGTH) {
                 if (context.isGroup) {
-                    await sock.sendMessage(target, { text: `${header}\n${logText}` });
+                    await sock.sendMessage(target, { text: body });
                 } else {
-                    await this.reply(sock, from, msg, `${header}\n${logText}`);
+                    await this.reply(sock, from, msg, body);
                 }
             } else {
                 const logBuffer = Buffer.from(
@@ -988,7 +996,12 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
                     document: logBuffer,
                     mimetype: 'text/plain',
                     fileName: `hambot-logs-${Date.now()}.txt`,
-                    caption: `📋 Log Bot — ${logContent.lines.length} baris dari ${logContent.source} (disensor)`
+                    caption: ui.card({
+                        icon: '📋',
+                        title: 'Log Bot',
+                        lines: [`${logContent.lines.length} baris ${ui.SYM.dot} ${logContent.source}`],
+                        footer: 'Rahasia otomatis disensor'
+                    })
                 }, context.isGroup ? {} : { quoted: msg });
             }
 

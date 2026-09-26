@@ -275,6 +275,40 @@ async function main() {
         assert.ok(ui.card({ title: '.menu', rawTitle: true }).startsWith('┏━━ *.menu*'));
     });
 
+    await test('restyle() turns a hand-written titled message into a card', () => {
+        const out = ui.restyle('🩺 *HEALTH CHECK*\n\n📌 *Detail:*\n• satu\n\n\n• dua\n\n_catatan kaki_').split('\n');
+        assert.deepStrictEqual(out, [
+            `┏━━ 🩺 *${ui.smallCaps('HEALTH CHECK')}*`,
+            `┃ ❖ 📌 *${ui.smallCaps('Detail')}*`,
+            '┃ ▸ satu',
+            '┃',
+            '┃ ▸ dua',
+            '┗━━ ✧ _catatan kaki_'
+        ]);
+    });
+
+    await test('restyle() gives a bare status notice a title', () => {
+        const out = ui.plain(ui.restyle('❌ Prefix tidak valid.\n\nContoh: .security prefix !'));
+        assert.ok(out.startsWith('┏━━ ❌ *gagal*'), out);
+        assert.ok(out.includes('┃ Prefix tidak valid.'));
+    });
+
+    await test('restyle() leaves prose, cards and code blocks alone', () => {
+        for (const text of ['halo semua', '😂 lucu banget', ui.card({ title: 'x' }), '```a\nb```', '']) {
+            assert.strictEqual(ui.restyle(text), text);
+        }
+    });
+
+    await test('Every netinfo topic comes out as a card under the message limit', () => {
+        const NetInfo = require('./commands/netinfo');
+        const netinfo = new NetInfo();
+        for (const [topic, render] of Object.entries(netinfo.topics)) {
+            const out = ui.restyle(render());
+            assert.ok(out.startsWith('┏━━'), `${topic} was not converted`);
+            assert.ok(out.length <= ui.MAX_MESSAGE_LENGTH, `${topic} is ${out.length} chars`);
+        }
+    });
+
     await test('plain() maps every decorative alphabet back to ASCII', () => {
         const fancy = [ui.smallCaps('Hello'), ui.fancy('World 42'), ui.fancyItalic('ok'), ui.fancyMono('v1.0')].join(' ');
         assert.strictEqual(ui.plain(fancy), 'hello World 42 ok v1.0');

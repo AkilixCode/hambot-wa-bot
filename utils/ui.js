@@ -284,6 +284,96 @@ function frame(text, { tag = '~*' } = {}) {
     ].join('\n'));
 }
 
+// Titles for one-line notices that start with a status emoji but carry no
+// title of their own ("❌ Prefix tidak valid.").
+const NOTICE_TITLES = {
+    '❌': 'Gagal',
+    '⚠️': 'Perhatian',
+    '✅': 'Berhasil',
+    '⌛': 'Kedaluwarsa',
+    '🔒': 'Terkunci',
+    '📩': 'Terkirim',
+    '⛔': 'Diblokir',
+    'ℹ️': 'Info'
+};
+
+/** @private Does this token look like an emoji (incl. keycaps like 7️⃣)? */
+function _isEmoji(token) {
+    return /\p{Extended_Pictographic}|⃣/u.test(token);
+}
+
+/**
+ * Restyle a hand-written message into the card theme.
+ *
+ * Older replies were typed out by hand in two shapes:
+ *
+ *   🩺 *HEALTH CHECK*          ❌ Prefix tidak valid.
+ *
+ *   body…                      Contoh: …
+ *
+ * The first becomes a card titled "HEALTH CHECK"; the second a card titled
+ * after its status emoji ("Gagal"). Inside the body, a bold heading that
+ * ends in a colon ("📌 *Fungsi Setiap Layer:*") becomes a section heading,
+ * a final italic line set apart by a blank line becomes the footer, and
+ * "•" bullets become the theme's "▸".
+ *
+ * Anything else is returned untouched — including text that is already a
+ * card, a monospace block, or plain prose — so this is safe to apply to
+ * every outgoing reply.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function restyle(text) {
+    const str = String(text ?? '');
+    if (!str || str.startsWith(SYM.railTop) || str.startsWith('```')) return str;
+
+    const lines = str.split('\n');
+    const first = lines[0].trim();
+    let icon;
+    let title;
+    let body;
+
+    const titled = first.match(/^(\S+)\s+\*([^*]+?)\*$/u);
+    const notice = first.match(/^(\S+)\s+(.+)$/u);
+    if (titled && _isEmoji(titled[1])) {
+        icon = titled[1];
+        title = titled[2].replace(/[:：]\s*$/, '');
+        body = lines.slice(1);
+    } else if (notice && NOTICE_TITLES[notice[1]]) {
+        icon = notice[1];
+        title = NOTICE_TITLES[notice[1]];
+        body = [notice[2], ...lines.slice(1)];
+    } else {
+        return str;
+    }
+
+    body = body.map(line => line.replace(/\s+$/, ''));
+    while (body.length && body[0] === '') body.shift();
+    while (body.length && body[body.length - 1] === '') body.pop();
+
+    let footer;
+    const last = body[body.length - 1];
+    if (body.length >= 2 && /^_[^_]+_$/.test(last.trim()) && body[body.length - 2] === '') {
+        footer = last.trim().slice(1, -1);
+        body = body.slice(0, -2);
+    }
+
+    const out = [];
+    for (const line of body) {
+        if (line === '' && out[out.length - 1] === '') continue; // collapse blank runs
+        const heading = line.match(/^(\S+)\s+\*([^*]+?):\*$/u);
+        if (heading && _isEmoji(heading[1])) {
+            out.push(section(heading[2], heading[1]));
+        } else {
+            // Hand-written lists used "•"; the theme's bullet is "▸".
+            out.push(line.replace(/^(\s*)[•●]\s+/, `$1${SYM.bullet} `));
+        }
+    }
+
+    return card({ icon, title, lines: out, footer });
+}
+
 /**
  * A section heading inside a long message: `❖ 🎧 *ᴍᴇᴅɪᴀ*`
  * @param {string} title
@@ -645,6 +735,7 @@ module.exports = {
     card,
     banner,
     frame,
+    restyle,
     section,
     rule,
     kv,
