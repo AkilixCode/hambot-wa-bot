@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Quality pass, a new look and menu, typo-tolerant commands, Node 24 and a
-much easier Docker deploy.
+Quality pass, a new look and menu, typo-tolerant commands, Node 24, a
+much easier Docker deploy, and a faster, lighter bot.
 
 ### Security
 
 - `sharp` upgraded to 0.35.4 (libheif advisories, reachable via `.sticker`).
+- `sharp` 0.35.5 (librsvg CVE-2026-96889), and through their parents
+  `ip-address` 10.7.4 (SSRF classifier fixes on the proxy path) and
+  `music-metadata` 11.16.1 (crash on crafted media). `pino` 10.4.0,
+  `dotenv` 18.0.8 and `protobufjs` 7.6.6 alongside. `npm audit`: 0.
 - OMDB lookups use https; the API key was sent over plain http.
 - Reminders capped at 5 per user and 500 in total.
 
@@ -57,6 +61,21 @@ much easier Docker deploy.
 
 ### Changed
 
+- **Faster replies in groups.** Baileys fetched the whole group roster
+  before every message it sent to a group, and the admin check, `.tagall`
+  and `.info` fetched it again. Rosters are now cached for 5 minutes and
+  dropped the moment someone joins, leaves or is promoted.
+- **One slow command no longer delays others.** Messages that arrive
+  together were handled one after another, so a `.video` held up everyone
+  else's commands. Each now runs on its own.
+- **`.video` and `.music` start yt-dlp once, not twice.** Metadata and the
+  download come from the same run, and over-long media is skipped by
+  yt-dlp itself before any download starts.
+- **Less disk work per message.** Signal keys stay in memory between
+  messages (Baileys' cacheable key store); writes still go straight to disk.
+- **~19 MB less memory when idle.** `sharp` and `canvas` load on first use
+  instead of at startup.
+
 - **Node 24 LTS.** Node 20 reached end-of-life in April 2026; `engines` is
   now `>=22.12`, `.nvmrc` 24, CI tests 22 and 24, and the Docker image runs
   `node:24-bookworm-slim`.
@@ -79,6 +98,15 @@ much easier Docker deploy.
   process output is capped at 16 MB.
 
 ### Added
+
+- **Heavy commands wait in line instead of "busy, try again".** With all
+  `MAX_PROCESSES` slots in use, up to `HEAVY_QUEUE_MAX` (default 5) requests
+  wait (one per user), are told their place, and start by themselves. A full line or a
+  2-minute wait still answers "Sedang Sibuk"; `HEAVY_QUEUE_MAX=0` keeps the
+  old behaviour.
+- `.ping` shows processing and delivery time, heavy slots in use and
+  waiting, and the group cache hit rate. "Latensi" used to read ~0 ms
+  whatever happened.
 
 - **Recovery commands:** `./deploy.sh config` (fix a mistyped owner or
   pairing number), `./deploy.sh relink [--qr | --code <number>]`,
