@@ -284,7 +284,6 @@ class MusicCommand extends CommandBase {
                 extraArgs: track.extraArgs || []
             }
         );
-        if (tooLong) return { tooLong: true };
 
         // A direct URL arrives with placeholders; the same run supplied the
         // real title and length for the info card.
@@ -294,8 +293,10 @@ class MusicCommand extends CommandBase {
             track.duration = track.duration || info.duration || 0;
         }
 
+        // A file on disk wins over the "no metadata, so filtered" inference.
         const file = await media.findDownload(filePrefix, ['mp3', 'm4a', 'opus', 'ogg']);
         if (!file) {
+            if (tooLong) return { tooLong: true };
             throw new Error('Downloaded file not found — it may have exceeded max-filesize');
         }
         return { file, tooLong: false };

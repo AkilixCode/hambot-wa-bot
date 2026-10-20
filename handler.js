@@ -22,6 +22,9 @@ const rateLimiter = new RateLimiter(
     config.performance.rateLimitMax
 );
 
+// Senders with a heavy command waiting for a slot: one each, so a single
+// user cannot fill the whole line.
+const queuedSenders = new Set();
 // sender JID -> { warned: boolean, expiresAt: number }
 const userCooldowns = new Map();
 
@@ -375,6 +378,15 @@ module.exports = async (sock, m) => {
         // wait) turns the user away.
         if (command.isHeavy) {
             let gotSlot = heavySlots.tryAcquire();
+            if (!gotSlot && queuedSenders.has(sender)) {
+                logger.commandEnd(tracker, 'blocked', 'Already queued');
+                return sock.sendMessage(from, {
+                    text: ui.warn('Perintah beratmu yang sebelumnya masih antre. Tunggu itu selesai dulu ya.', {
+                        title: 'Masih Antre',
+                        icon: ui.EMOJI.wait
+                    })
+                }, { quoted: msg });
+            }
             if (!gotSlot && !heavySlots.queueFull) {
                 const position = heavySlots.waiting + 1;
                 await sock.sendMessage(from, {
@@ -383,7 +395,12 @@ module.exports = async (sock, m) => {
                         'Perintahmu jalan otomatis begitu ada slot kosong.'
                     ], { icon: ui.EMOJI.wait })
                 }, { quoted: msg });
-                gotSlot = await heavySlots.wait(config.performance.heavyQueueWaitMs);
+                queuedSenders.add(sender);
+                try {
+                    gotSlot = await heavySlots.wait(config.performance.heavyQueueWaitMs);
+                } finally {
+                    queuedSenders.delete(sender);
+                }
             }
             if (!gotSlot) {
                 const max = config.performance.maxProcesses;

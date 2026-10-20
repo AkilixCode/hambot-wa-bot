@@ -527,6 +527,8 @@ const template = args[args.indexOf('-o') + 1];
 const ext = args.includes('-x') ? 'mp3' : 'mp4';
 // 'nofile': yt-dlp printed the metadata, then skipped the file (max-filesize).
 if (process.env.FAKE_YTDLP !== 'nofile') fs.writeFileSync(template.replace('%(ext)s', ext), 'media');
+// 'nojson': a file but no metadata, as some odd extractors might.
+if (process.env.FAKE_YTDLP === 'nojson') process.exit(0);
 console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', duration: 42 }));
 `, { mode: 0o755 });
     const savedPath = process.env.PATH;
@@ -584,6 +586,21 @@ console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', dura
                 assert.strictEqual(track.duration, 42);
                 assert.strictEqual(runs().length, 1);
             } finally {
+                await tempdirMod.cleanupTemp(prefix);
+            }
+        });
+
+        await test('A downloaded file is sent even when yt-dlp printed no metadata', async () => {
+            process.env.FAKE_YTDLP = 'nojson';
+            const prefix = `video_nojson_${process.pid}`;
+            try {
+                const Video = require('./commands/video');
+                const result = await new Video().downloadVideo('https://example.com/v', prefix, []);
+                assert.strictEqual(result.tooLong, false);
+                assert.ok(result.file, 'the file on disk wins');
+                assert.deepStrictEqual(result.info, {});
+            } finally {
+                delete process.env.FAKE_YTDLP;
                 await tempdirMod.cleanupTemp(prefix);
             }
         });

@@ -167,10 +167,10 @@ class VideoCommand extends CommandBase {
             ['-f', VIDEO_FORMAT_SELECTOR, '--merge-output-format', 'mp4'],
             { maxFilesize: config.media.maxFileSize, maxDuration: config.media.maxDuration, extraArgs }
         );
-        if (tooLong) return { info: {}, tooLong: true };
-
+        // A file on disk wins over the "no metadata, so filtered" inference.
         const file = await media.findDownload(filePrefix, ['mp4', 'mkv', 'webm']);
         if (!file) {
+            if (tooLong) return { info: {}, tooLong: true };
             throw new Error('Downloaded file not found — it may have exceeded max-filesize');
         }
         return { file, info: info || {}, tooLong: false };

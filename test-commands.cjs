@@ -897,6 +897,16 @@ async function main() {
             await sleep(50);
             assert.ok(texts(sock).some(t => t.includes('antrean ke-1')), texts(sock).join(' | '));
             assert.strictEqual(handler.heavySlots.waiting, 1);
+            const security = require('./utils/security');
+            security.toggleFeature('rateLimit', false); // this file allows 1 request per window
+            const again = fakeSock();
+            try {
+                await handler(again, { messages: [textMsg('6281200000011@s.whatsapp.net', '6281200000011@s.whatsapp.net', '.video')], type: 'notify' });
+            } finally {
+                security.toggleFeature('rateLimit', true);
+            }
+            assert.ok(texts(again).some(t => t.includes('masih antre')), 'one place in line per sender: ' + texts(again).join(' | '));
+            assert.strictEqual(handler.heavySlots.waiting, 1);
             handler.heavySlots.release(); // the "download" finishes
             await done;
             assert.ok(texts(sock).length >= 2, 'the queued command ran by itself');
