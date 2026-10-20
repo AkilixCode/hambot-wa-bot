@@ -10,6 +10,8 @@ const { formatSize } = require('../utils/helpers');
 const cache = require('../utils/cache');
 const config = require('../config');
 const ui = require('../utils/ui');
+const groupCache = require('../utils/group-cache');
+const { heavy: heavySlots } = require('../utils/work-slots');
 
 class PingCommand extends CommandBase {
     constructor() {
@@ -25,7 +27,9 @@ class PingCommand extends CommandBase {
 
     async execute(sock, msg, args, context) {
         const { from } = context;
-        const startTime = Date.now();
+        // From the handler's first look at the message, so the number covers
+        // the checks and lookups before this command, not just this line.
+        const startTime = context.startTime || Date.now();
 
         await this.react(sock, msg, '💻');
 
@@ -41,8 +45,14 @@ class PingCommand extends CommandBase {
             // Calculate latency
             const latency = Date.now() - startTime;
 
+            // How long WhatsApp took to deliver the message. Its timestamp
+            // has one-second resolution, so this is a rough figure.
+            const sentAt = Number(msg.messageTimestamp) * 1000;
+            const delivery = sentAt ? Math.max(0, Date.now() - sentAt) : null;
+
             // Get cache stats
             const cacheStats = cache.getStats();
+            const groups = groupCache.stats();
 
             const usedMem = totalMem - freeMem;
             const memPercent = (usedMem / totalMem) * 100;
@@ -52,7 +62,9 @@ class PingCommand extends CommandBase {
                 title: ui.smallCaps('Status Sistem'),
                 lines: [
                     `⚡ ${ui.bold('Performa')}`,
-                    ui.kv('Latensi', `${latency} ms`),
+                    ui.kv('Proses', `${latency} ms`),
+                    ...(delivery !== null ? [ui.kv('Pengiriman', `±${(delivery / 1000).toFixed(1)} s`)] : []),
+                    ui.kv('Tugas berat', `${heavySlots.active}/${config.performance.maxProcesses} jalan, ${heavySlots.waiting} antre`),
                     ui.kv('Uptime', ui.uptime(uptime)),
                     ui.kv('Versi', `v${config.bot.version}`),
                     '',
@@ -67,7 +79,8 @@ class PingCommand extends CommandBase {
                     '',
                     `💾 ${ui.bold('Cache')}`,
                     ui.kv('Entri', `${cacheStats.size}`),
-                    ui.kv('Hit rate', `${cacheStats.hitRate} (${cacheStats.hits}/${cacheStats.hits + cacheStats.misses})`)
+                    ui.kv('Hit rate', `${cacheStats.hitRate} (${cacheStats.hits}/${cacheStats.hits + cacheStats.misses})`),
+                    ui.kv('Grup', `${groups.groups} grup, hit ${(groups.hitRate * 100).toFixed(0)}% (${groups.hits}/${groups.hits + groups.misses})`)
                 ],
                 footer: `${config.bot.name} ${ui.SYM.dot} ${ui.clock()}`
             }));

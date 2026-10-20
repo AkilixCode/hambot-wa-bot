@@ -167,8 +167,8 @@ headers or the `data` payload to match. Adding a new tier is ~40 lines.
 ### A command hangs
 
 It cannot any more — every spawn has a timeout. If heavy commands stop
-responding, check `activeProcesses` via `.security status`; slots are released
-in a `finally` block.
+responding, `.ping` shows the heavy slots in use and waiting; slots are
+released in a `finally` block, and a request waits at most 2 minutes for one.
 
 ---
 

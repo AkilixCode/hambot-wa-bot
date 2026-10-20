@@ -81,6 +81,7 @@ async function main() {
         const baileys = await import('@whiskeysockets/baileys');
         assert.strictEqual(typeof baileys.default, 'function', 'makeWASocket (default export)');
         assert.strictEqual(typeof baileys.useMultiFileAuthState, 'function');
+        assert.strictEqual(typeof baileys.makeCacheableSignalKeyStore, 'function');
         assert.strictEqual(typeof baileys.downloadContentFromMessage, 'function');
         assert.strictEqual(typeof baileys.DisconnectReason?.loggedOut, 'number');
     });
@@ -94,9 +95,13 @@ async function main() {
 
         // Pointed at a closed local port: the socket is built but never
         // reaches WhatsApp.
+        // Built the way index.js builds it: cached signal keys and the
+        // group roster hook.
+        const logger = require('pino')({ level: 'silent' });
         const sock = baileys.default({
-            auth: state,
-            logger: require('pino')({ level: 'silent' }),
+            auth: { creds: state.creds, keys: baileys.makeCacheableSignalKeyStore(state.keys, logger) },
+            logger,
+            cachedGroupMetadata: async () => undefined,
             waWebSocketUrl: 'ws://127.0.0.1:9/ws'
         });
         try {
@@ -754,6 +759,177 @@ async function main() {
         } finally {
             config.bot.ownerIds = savedOwners;
             config.bot.onlyGroupMode = savedMode;
+        }
+    });
+
+    // ── Efficiency ───────────────────────────────────────────────────
+    console.log('\n⚡ Efficiency...\n');
+
+    const groupCache = require('./utils/group-cache');
+    const { EventEmitter } = require('events');
+
+    /** A socket whose groupMetadata counts calls and can be slowed down. */
+    function rosterSock(participants, delayMs = 0) {
+        const sock = fakeSock();
+        sock.metadataCalls = 0;
+        sock.groupMetadata = async (jid) => {
+            sock.metadataCalls++;
+            if (delayMs) await sleep(delayMs);
+            return { id: jid, subject: 'Test', participants: participants() };
+        };
+        return sock;
+    }
+
+    await test('Group cache: one roster fetch serves repeats and concurrent misses', async () => {
+        groupCache.clear();
+        const sock = rosterSock(() => [{ id: '1@s.whatsapp.net', admin: null }], 30);
+        const [a, b] = await Promise.all([groupCache.get(sock, 'g1@g.us'), groupCache.get(sock, 'g1@g.us')]);
+        await groupCache.get(sock, 'g1@g.us');
+        assert.strictEqual(sock.metadataCalls, 1, `fetched ${sock.metadataCalls}x`);
+        assert.strictEqual(a, b);
+        assert.strictEqual(groupCache.peek('g2@g.us'), undefined, 'peek never fetches');
+        assert.strictEqual(sock.metadataCalls, 1);
+    });
+
+    await test('Group cache: joins, leaves and promotions refetch; subject changes patch', async () => {
+        groupCache.clear();
+        const ev = new EventEmitter();
+        groupCache.attach(ev);
+        let admin = null;
+        const sock = rosterSock(() => [{ id: '1@s.whatsapp.net', admin }]);
+        await groupCache.get(sock, 'g1@g.us');
+
+        ev.emit('groups.update', [{ id: 'g1@g.us', subject: 'Renamed' }]);
+        assert.strictEqual(groupCache.peek('g1@g.us').subject, 'Renamed');
+        assert.strictEqual(sock.metadataCalls, 1, 'a rename needs no refetch');
+
+        admin = 'admin';
+        ev.emit('group-participants.update', { id: 'g1@g.us', participants: ['1@s.whatsapp.net'], action: 'promote' });
+        const fresh = await groupCache.get(sock, 'g1@g.us');
+        assert.strictEqual(sock.metadataCalls, 2);
+        assert.strictEqual(fresh.participants[0].admin, 'admin');
+    });
+
+    await test('Group cache: a failed fetch is not cached', async () => {
+        groupCache.clear();
+        let fail = true;
+        const sock = fakeSock();
+        sock.groupMetadata = async (jid) => {
+            if (fail) throw new Error('timed out');
+            return { id: jid, participants: [] };
+        };
+        await assert.rejects(groupCache.get(sock, 'g1@g.us'), /timed out/);
+        fail = false;
+        assert.deepStrictEqual((await groupCache.get(sock, 'g1@g.us')).participants, []);
+    });
+
+    await test('.tagall: the admin check and the command share one roster fetch', async () => {
+        groupCache.clear();
+        const admin = '6281200000009@s.whatsapp.net';
+        const sock = rosterSock(() => [{ id: admin, admin: 'admin' }, { id: '6281200000010@s.whatsapp.net', admin: null }]);
+        await handler(sock, { messages: [textMsg('g9@g.us', admin, '.tagall hi')], type: 'notify' });
+        assert.strictEqual(sock.metadataCalls, 1, `fetched ${sock.metadataCalls}x`);
+        assert.ok(texts(sock).some(t => t.includes('total anggota')), texts(sock).join(' | '));
+    });
+
+    await test('Startup leaves sharp and canvas unloaded until a command needs them', () => {
+        const { spawnSync } = require('child_process');
+        const probe = "require('./handler'); const k = Object.keys(require.cache);" +
+            "console.log(JSON.stringify(['sharp', 'canvas'].filter(m => k.some(f => f.includes('/node_modules/' + m + '/')))))";
+        const result = spawnSync(process.execPath, ['-e', probe], { cwd: __dirname, encoding: 'utf8' });
+        const loaded = JSON.parse(result.stdout.trim().split('\n').pop());
+        assert.deepStrictEqual(loaded, [], `loaded at startup: ${loaded}`);
+    });
+
+    await test('.ping reports processing time, delivery, heavy slots and the group cache', async () => {
+        const sock = fakeSock();
+        const msg = textMsg('6281200000013@s.whatsapp.net', '6281200000013@s.whatsapp.net', '.ping');
+        msg.messageTimestamp = Math.floor(Date.now() / 1000) - 2;
+        await handler(sock, { messages: [msg], type: 'notify' });
+        const card = texts(sock).join('\n');
+        for (const label of ['proses', 'pengiriman', 'tugas berat', 'grup']) {
+            assert.ok(card.includes(label), `missing "${label}" in:\n${card}`);
+        }
+        assert.match(card, /pengiriman:\*? ±[23]\.\d s/, card);
+    });
+
+    const WorkSlots = require('./utils/work-slots');
+
+    await test('Heavy slots: waiters run in order as slots free; a full line is refused', async () => {
+        const slots = new WorkSlots(1, 2);
+        assert.ok(slots.tryAcquire());
+        const order = [];
+        const a = slots.wait(1000).then(ok => order.push(['a', ok]));
+        const b = slots.wait(1000).then(ok => order.push(['b', ok]));
+        assert.ok(slots.queueFull);
+        assert.strictEqual(await slots.wait(1000), false, 'third waiter is turned away');
+        slots.release();
+        await a;
+        assert.deepStrictEqual(order, [['a', true]]);
+        slots.release();
+        await b;
+        assert.deepStrictEqual(order, [['a', true], ['b', true]]);
+        slots.release();
+        assert.strictEqual(slots.active, 0);
+    });
+
+    await test('Heavy slots: a wait times out, and a raised limit lets waiters in', async () => {
+        let limit = 1;
+        const slots = new WorkSlots(() => limit, 5);
+        slots.tryAcquire();
+        assert.strictEqual(await slots.wait(20), false, 'timed out');
+        assert.strictEqual(slots.waiting, 0, 'a timed-out waiter leaves the line');
+        const waiting = [slots.wait(1000), slots.wait(1000)];
+        limit = 3;
+        slots.release();
+        assert.deepStrictEqual(await Promise.all(waiting), [true, true]);
+        assert.strictEqual(slots.active, 2);
+    });
+
+    await test('A heavy command waits for a busy slot instead of being refused', async () => {
+        const config = require('./config');
+        const saved = config.performance.maxProcesses;
+        config.performance.maxProcesses = 1;
+        assert.ok(handler.heavySlots.tryAcquire(), 'simulate a running download');
+        try {
+            const sock = fakeSock();
+            const done = handler(sock, { messages: [textMsg('6281200000011@s.whatsapp.net', '6281200000011@s.whatsapp.net', '.video')], type: 'notify' });
+            await sleep(50);
+            assert.ok(texts(sock).some(t => t.includes('antrean ke-1')), texts(sock).join(' | '));
+            assert.strictEqual(handler.heavySlots.waiting, 1);
+            const security = require('./utils/security');
+            security.toggleFeature('rateLimit', false); // this file allows 1 request per window
+            const again = fakeSock();
+            try {
+                await handler(again, { messages: [textMsg('6281200000011@s.whatsapp.net', '6281200000011@s.whatsapp.net', '.video')], type: 'notify' });
+            } finally {
+                security.toggleFeature('rateLimit', true);
+            }
+            assert.ok(texts(again).some(t => t.includes('masih antre')), 'one place in line per sender: ' + texts(again).join(' | '));
+            assert.strictEqual(handler.heavySlots.waiting, 1);
+            handler.heavySlots.release(); // the "download" finishes
+            await done;
+            assert.ok(texts(sock).length >= 2, 'the queued command ran by itself');
+            assert.ok(!texts(sock).some(t => t.includes('sedang sibuk')));
+            assert.strictEqual(handler.heavySlots.active, 0, 'its slot was given back');
+        } finally {
+            config.performance.maxProcesses = saved;
+        }
+    });
+
+    await test('With the line full (HEAVY_QUEUE_MAX=0) it says busy, as before', async () => {
+        const config = require('./config');
+        const saved = [config.performance.maxProcesses, config.performance.heavyQueueMax];
+        config.performance.maxProcesses = 1;
+        config.performance.heavyQueueMax = 0;
+        handler.heavySlots.tryAcquire();
+        try {
+            const sock = fakeSock();
+            await handler(sock, { messages: [textMsg('6281200000012@s.whatsapp.net', '6281200000012@s.whatsapp.net', '.video')], type: 'notify' });
+            assert.ok(texts(sock).some(t => t.includes('sedang sibuk')), texts(sock).join(' | '));
+        } finally {
+            handler.heavySlots.release();
+            [config.performance.maxProcesses, config.performance.heavyQueueMax] = saved;
         }
     });
 

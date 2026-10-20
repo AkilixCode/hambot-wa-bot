@@ -6,8 +6,11 @@
 require('dotenv').config({ quiet: true });
 const config = require('./config');
 const RateLimiter = require('./utils/rate-limiter');
+// Heavy commands share MAX_PROCESSES slots; a few more may wait in line.
+const { heavy: heavySlots } = require('./utils/work-slots');
 const logger = require('./utils/logger');
 const security = require('./utils/security');
+const groupCache = require('./utils/group-cache');
 const ui = require('./utils/ui');
 const commandRegistry = require('./commands/registry');
 const { withCorrectionNote, correctionNote } = require('./utils/correction');
@@ -19,16 +22,18 @@ const rateLimiter = new RateLimiter(
     config.performance.rateLimitMax
 );
 
-// Queue management
-let activeProcesses = 0;
+// Senders with a heavy command waiting for a slot: one each, so a single
+// user cannot fill the whole line.
+const queuedSenders = new Set();
 // sender JID -> { warned: boolean, expiresAt: number }
 const userCooldowns = new Map();
 
 /**
  * Is this sender an admin of this group?
  *
- * Reading group metadata costs an API round trip, so callers should only ask
- * when a command actually gates on it — not on every incoming message.
+ * Reading group metadata can cost an API round trip (utils/group-cache serves
+ * repeats), so callers should only ask when a command actually gates on it —
+ * not on every incoming message.
  *
  * @param {Object} sock
  * @param {string} groupJid
@@ -37,7 +42,7 @@ const userCooldowns = new Map();
  */
 async function isGroupAdmin(sock, groupJid, senderJid) {
     try {
-        const metadata = await sock.groupMetadata(groupJid);
+        const metadata = await groupCache.get(sock, groupJid);
         // Participant IDs may be reported as @lid or @s.whatsapp.net depending
         // on the group, so fall back to comparing the bare number.
         const senderNumber = senderJid.split('@')[0].split(':')[0];
@@ -368,13 +373,41 @@ module.exports = async (sock, m) => {
         }
 
         // --- Queue Management for Heavy Commands ---
-        isHeavyCommand = command.isHeavy;
-        if (isHeavyCommand) {
-            if (activeProcesses >= config.performance.maxProcesses) {
-                logger.commandEnd(tracker, 'busy', `Server busy (${activeProcesses}/${config.performance.maxProcesses})`);
+        // A full house used to mean "busy, try again". Now a few requests wait
+        // in line and start by themselves; only a full line (or a 2-minute
+        // wait) turns the user away.
+        if (command.isHeavy) {
+            let gotSlot = heavySlots.tryAcquire();
+            if (!gotSlot && queuedSenders.has(sender)) {
+                logger.commandEnd(tracker, 'blocked', 'Already queued');
+                return sock.sendMessage(from, {
+                    text: ui.warn('Perintah beratmu yang sebelumnya masih antre. Tunggu itu selesai dulu ya.', {
+                        title: 'Masih Antre',
+                        icon: ui.EMOJI.wait
+                    })
+                }, { quoted: msg });
+            }
+            if (!gotSlot && !heavySlots.queueFull) {
+                const position = heavySlots.waiting + 1;
+                await sock.sendMessage(from, {
+                    text: ui.info('Antre', [
+                        `Semua slot sedang dipakai. Kamu antrean ke-${position}.`,
+                        'Perintahmu jalan otomatis begitu ada slot kosong.'
+                    ], { icon: ui.EMOJI.wait })
+                }, { quoted: msg });
+                queuedSenders.add(sender);
+                try {
+                    gotSlot = await heavySlots.wait(config.performance.heavyQueueWaitMs);
+                } finally {
+                    queuedSenders.delete(sender);
+                }
+            }
+            if (!gotSlot) {
+                const max = config.performance.maxProcesses;
+                logger.commandEnd(tracker, 'busy', `Server busy (${heavySlots.active}/${max}, ${heavySlots.waiting} waiting)`);
                 return sock.sendMessage(from, {
                     text: ui.warn(
-                        `Bot sedang memproses ${activeProcesses} dari ${config.performance.maxProcesses} tugas berat.`,
+                        `Bot sedang memproses ${heavySlots.active} dari ${max} tugas berat, dan antreannya penuh.`,
                         {
                             title: 'Sedang Sibuk',
                             icon: ui.EMOJI.wait,
@@ -383,7 +416,7 @@ module.exports = async (sock, m) => {
                     )
                 }, { quoted: msg });
             }
-            activeProcesses++;
+            isHeavyCommand = true;
         }
 
         // Start the cooldown only once the command is actually going to run.
@@ -443,9 +476,7 @@ module.exports = async (sock, m) => {
         }
 
     } finally {
-        if (isHeavyCommand && activeProcesses > 0) {
-            activeProcesses--;
-        }
+        if (isHeavyCommand) heavySlots.release();
     }
 };
 
@@ -463,3 +494,4 @@ try {
 // before index.js could close the WhatsApp socket gracefully.
 
 module.exports.parseCommand = parseCommand;
+module.exports.heavySlots = heavySlots;

@@ -12,12 +12,13 @@ const socketRef = require('./utils/socket-ref');
 const login = require('./utils/login');
 const health = require('./utils/health');
 const session = require('./utils/session');
+const groupCache = require('./utils/group-cache');
 
 // Use the modular handler directly
 const handler = require('./handler');
 
 // Baileys is ESM-only since v7 — must use dynamic import()
-let makeWASocket, useMultiFileAuthState;
+let makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore;
 
 let sock = null;
 
@@ -44,10 +45,26 @@ let connectWatchdog = null;
  */
 function retireSocket() {
     if (!sock) return;
-    for (const event of ['creds.update', 'connection.update', 'messages.upsert']) {
+    for (const event of ['creds.update', 'connection.update', 'messages.upsert', ...groupCache.EVENTS]) {
         try { sock.ev.removeAllListeners(event); } catch { /* already gone */ }
     }
     try { sock.end(undefined); } catch { /* already closed */ }
+    // Rosters learned on the old connection may have missed events since.
+    groupCache.clear();
+}
+
+/**
+ * Baileys' `cachedGroupMetadata` hook: serve group sends from utils/group-cache
+ * instead of a roster query per message. On a failed fetch, return undefined
+ * so Baileys falls back to its own lookup.
+ * @param {string} jid
+ */
+async function cachedGroupMetadata(jid) {
+    try {
+        return await groupCache.get(sock, jid);
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -108,6 +125,7 @@ async function startBot() {
             const baileys = await import('@whiskeysockets/baileys');
             makeWASocket = baileys.default;
             useMultiFileAuthState = baileys.useMultiFileAuthState;
+            makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
         }
 
         // Validate configuration
@@ -145,11 +163,16 @@ async function startBot() {
         // reconnect, and without this each dead socket kept its listeners.
         retireSocket();
 
+        const baileysLogger = pino({ level: config.logging.silent ? 'silent' : 'fatal' });
         sock = makeWASocket({
-            auth: state,
+            // Signal keys are read on every message; keep recent ones in
+            // memory instead of re-reading a file each time. Writes still go
+            // straight to disk.
+            auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, baileysLogger) },
             printQRInTerminal: false,
-            logger: pino({ level: config.logging.silent ? 'silent' : 'fatal' }),
+            logger: baileysLogger,
             browser: config.bot.browser,
+            cachedGroupMetadata,
             // Test hook: point the socket at a local stub instead of WhatsApp.
             ...(process.env.HAMBOT_WA_URL ? { waWebSocketUrl: process.env.HAMBOT_WA_URL } : {})
         });
@@ -157,6 +180,7 @@ async function startBot() {
         health.report('connecting');
 
         sock.ev.on('creds.update', saveCreds);
+        groupCache.attach(sock.ev);
 
         // How to link this device if there are no saved credentials yet.
         // An invalid PAIRING_NUMBER is reported and falls back to the QR code
@@ -225,14 +249,15 @@ async function startBot() {
             }
         });
 
-        sock.ev.on('messages.upsert', async ({ type, messages }) => {
-            if (type === 'notify') {
-                // Process ALL messages in the batch, not just the first
-                for (const msg of messages) {
-                    await handler(sock, { messages: [msg], type }).catch(error => {
-                        logger.error(error, { context: 'message-handler' });
-                    });
-                }
+        sock.ev.on('messages.upsert', ({ type, messages }) => {
+            if (type !== 'notify') return;
+            // Every message in the batch, not just the first, each on its own:
+            // awaiting them in turn let one slow `.video` hold up everyone
+            // else's commands. Separate batches already ran side by side;
+            // the per-user cooldown still stops one sender from piling up.
+            for (const msg of messages) {
+                handler(sock, { messages: [msg], type })
+                    .catch(error => logger.error(error, { context: 'message-handler' }));
             }
         });
 

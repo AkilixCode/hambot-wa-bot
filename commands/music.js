@@ -96,7 +96,7 @@ class MusicCommand extends CommandBase {
             await this.react(sock, msg, '🎵');
 
             const track = isUrl
-                ? await this.resolveUrl(query)
+                ? this.resolveUrl(query)
                 : await this.resolveSearch(query);
 
             if (track.duration && track.duration > config.media.maxDuration) {
@@ -107,7 +107,14 @@ class MusicCommand extends CommandBase {
                     });
             }
 
-            const file = await this.downloadAudio(track, filePrefix);
+            const { file, tooLong } = await this.downloadAudio(track, filePrefix);
+            if (tooLong) {
+                return await this.replyError(sock, from, msg,
+                    'Lagunya kepanjangan. Coba yang lebih pendek ya!', {
+                        title: 'Terlalu Panjang',
+                        hint: [`Maksimal ${Math.floor(config.media.maxDuration / 60)} menit`]
+                    });
+            }
 
             if (!media.isWithinSizeLimit(file.size)) {
                 return await this.replyError(sock, from, msg,
@@ -144,35 +151,19 @@ class MusicCommand extends CommandBase {
     }
 
     /**
-     * Resolve metadata for a URL the user supplied directly.
+     * Describe a URL the user supplied directly.
      *
-     * Metadata failure is not fatal here — some extractors are flaky on
-     * --dump-json but download fine, and refusing to try would be a regression.
+     * No metadata lookup here: the download reads it in the same yt-dlp run
+     * (see downloadAudio), which also enforces the duration limit.
      *
      * @param {string} url
-     * @returns {Promise<Object>} Track descriptor
+     * @returns {Object} Track descriptor, filled in after the download
      */
-    async resolveUrl(url) {
+    resolveUrl(url) {
         const platformArgs = getPlatformArgs(url);
         const platform = identifyPlatform(url);
         const isYouTube = /youtu\.?be/i.test(url);
         const extraArgs = isYouTube ? [...platformArgs, ...ytdlp.getYouTubeArgs()] : platformArgs;
-
-        try {
-            const [info] = await ytdlp.getInfo(url, { extraArgs });
-            if (info) {
-                return {
-                    url,
-                    title: info.title || 'Audio',
-                    uploader: info.uploader || info.channel || null,
-                    duration: info.duration || 0,
-                    source: platform ? platform.platform : 'URL',
-                    extraArgs
-                };
-            }
-        } catch (error) {
-            logger.debug(`Music: metadata lookup failed, continuing - ${error.message}`);
-        }
 
         return { url, title: 'Audio', uploader: null, duration: 0, source: platform ? platform.platform : 'URL', extraArgs };
     }
@@ -276,28 +267,39 @@ class MusicCommand extends CommandBase {
      * convert afterwards. Pinning a format is a common cause of "requested
      * format not available" when a site changes its ladder.
      *
-     * @param {Object} track - Track descriptor
+     * @param {Object} track - Track descriptor; filled in from the run's metadata
      * @param {string} filePrefix - Temp filename prefix
-     * @returns {Promise<{path: string, name: string, size: number}>}
+     * @returns {Promise<{file?: {path: string, name: string, size: number}, tooLong: boolean}>}
      */
     async downloadAudio(track, filePrefix) {
         const outputTemplate = tempdir.tempPath(`${filePrefix}.%(ext)s`);
 
-        await ytdlp.download(
+        const { info, tooLong } = await ytdlp.downloadWithInfo(
             track.url,
             outputTemplate,
             ['-x', '--audio-format', 'mp3', '--audio-quality', '0'],
             {
                 maxFilesize: config.media.maxFileSize,
+                maxDuration: config.media.maxDuration,
                 extraArgs: track.extraArgs || []
             }
         );
 
+        // A direct URL arrives with placeholders; the same run supplied the
+        // real title and length for the info card.
+        if (info) {
+            if (track.title === 'Audio' && info.title) track.title = info.title;
+            track.uploader = track.uploader || info.uploader || info.channel || null;
+            track.duration = track.duration || info.duration || 0;
+        }
+
+        // A file on disk wins over the "no metadata, so filtered" inference.
         const file = await media.findDownload(filePrefix, ['mp3', 'm4a', 'opus', 'ogg']);
         if (!file) {
+            if (tooLong) return { tooLong: true };
             throw new Error('Downloaded file not found — it may have exceeded max-filesize');
         }
-        return file;
+        return { file, tooLong: false };
     }
 
     /**

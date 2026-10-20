@@ -5,6 +5,7 @@
 
 const CommandBase = require('./base');
 const ui = require('../utils/ui');
+const groupCache = require('../utils/group-cache');
 
 class TagAllCommand extends CommandBase {
     constructor() {
@@ -25,7 +26,7 @@ class TagAllCommand extends CommandBase {
         await this.react(sock, msg, '🔊');
 
         try {
-            const metadata = await sock.groupMetadata(from);
+            const metadata = await groupCache.get(sock, from);
 
             // User-supplied, and it is echoed back to the whole group — strip
             // markdown so nobody can smuggle formatting into everyone's chat.

@@ -37,6 +37,10 @@ class Config {
 
         this.performance = {
             maxProcesses: parseInt(process.env.MAX_PROCESSES) || 3,
+            // Heavy commands that may wait for a free slot instead of being
+            // refused; 0 restores the old "busy, try again" behaviour.
+            heavyQueueMax: Number.isNaN(parseInt(process.env.HEAVY_QUEUE_MAX)) ? 5 : Math.max(0, parseInt(process.env.HEAVY_QUEUE_MAX)),
+            heavyQueueWaitMs: 2 * 60 * 1000,
             cooldownMs: parseInt(process.env.COOLDOWN_MS) || 3000, // Friendlier 3 second cooldown
             rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW) || 60000, // 1 minute
             rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX) || 15, // Allow more for friends

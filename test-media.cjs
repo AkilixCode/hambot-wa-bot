@@ -510,6 +510,118 @@ async function main() {
         assert.ok(!src.includes("require('playwright')"), 'pinterest must not load a browser');
     });
 
+    // ── One yt-dlp run per download ──────────────────────────────────
+    // A fake `python3` on PATH stands in for yt-dlp: it logs each run and
+    // either "downloads" (prints JSON, writes the -o file) or, like yt-dlp's
+    // --match-filter, prints nothing and writes nothing.
+    console.log('\n🎬 Single-pass downloads...\n');
+
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-fake-ytdlp-'));
+    const runLog = path.join(fakeBin, 'runs.log');
+    fs.writeFileSync(path.join(fakeBin, 'python3'), `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(runLog)}, JSON.stringify(args) + '\\n');
+if (process.env.FAKE_YTDLP === 'filtered') process.exit(0);
+const template = args[args.indexOf('-o') + 1];
+const ext = args.includes('-x') ? 'mp3' : 'mp4';
+// 'nofile': yt-dlp printed the metadata, then skipped the file (max-filesize).
+if (process.env.FAKE_YTDLP !== 'nofile') fs.writeFileSync(template.replace('%(ext)s', ext), 'media');
+// 'nojson': a file but no metadata, as some odd extractors might.
+if (process.env.FAKE_YTDLP === 'nojson') process.exit(0);
+console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', duration: 42 }));
+`, { mode: 0o755 });
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${fakeBin}${path.delimiter}${savedPath}`;
+    const runs = () => fs.existsSync(runLog)
+        ? fs.readFileSync(runLog, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
+        : [];
+    const tempdirMod = require('./utils/tempdir');
+
+    try {
+        await test('.video downloads and reads metadata in one yt-dlp run', async () => {
+            fs.rmSync(runLog, { force: true });
+            const Video = require('./commands/video');
+            const prefix = `video_fake_${process.pid}`;
+            try {
+                const { file, info, tooLong } = await new Video().downloadVideo('https://example.com/v', prefix, []);
+                assert.strictEqual(tooLong, false);
+                assert.ok(file && file.path.endsWith('.mp4'), JSON.stringify(file));
+                assert.strictEqual(info.title, 'Fake Title');
+                const all = runs();
+                assert.strictEqual(all.length, 1, `yt-dlp ran ${all.length}x`);
+                assert.ok(all[0].includes('--no-simulate') && all[0].includes('--dump-json'));
+                const filter = all[0][all[0].indexOf('--match-filter') + 1];
+                assert.match(filter, /^duration <=\? \d+$/, 'unknown durations still pass');
+            } finally {
+                await tempdirMod.cleanupTemp(prefix);
+            }
+        });
+
+        await test('.video reports over-long media from the filter, without a download', async () => {
+            fs.rmSync(runLog, { force: true });
+            process.env.FAKE_YTDLP = 'filtered';
+            try {
+                const Video = require('./commands/video');
+                const result = await new Video().downloadVideo('https://example.com/v', `video_long_${process.pid}`, []);
+                assert.strictEqual(result.tooLong, true);
+                assert.strictEqual(runs().length, 1);
+            } finally {
+                delete process.env.FAKE_YTDLP;
+            }
+        });
+
+        await test('.music with a URL: one run, and the info card gets the real title', async () => {
+            fs.rmSync(runLog, { force: true });
+            const Music = require('./commands/music');
+            const music = new Music();
+            const prefix = `music_fake_${process.pid}`;
+            try {
+                const track = music.resolveUrl('https://soundcloud.com/a/b');
+                assert.strictEqual(runs().length, 0, 'no metadata lookup before the download');
+                const { file, tooLong } = await music.downloadAudio(track, prefix);
+                assert.strictEqual(tooLong, false);
+                assert.ok(file.path.endsWith('.mp3'));
+                assert.strictEqual(track.title, 'Fake Title');
+                assert.strictEqual(track.duration, 42);
+                assert.strictEqual(runs().length, 1);
+            } finally {
+                await tempdirMod.cleanupTemp(prefix);
+            }
+        });
+
+        await test('A downloaded file is sent even when yt-dlp printed no metadata', async () => {
+            process.env.FAKE_YTDLP = 'nojson';
+            const prefix = `video_nojson_${process.pid}`;
+            try {
+                const Video = require('./commands/video');
+                const result = await new Video().downloadVideo('https://example.com/v', prefix, []);
+                assert.strictEqual(result.tooLong, false);
+                assert.ok(result.file, 'the file on disk wins');
+                assert.deepStrictEqual(result.info, {});
+            } finally {
+                delete process.env.FAKE_YTDLP;
+                await tempdirMod.cleanupTemp(prefix);
+            }
+        });
+
+        await test('Metadata but no file means max-filesize, not "too long"', async () => {
+            process.env.FAKE_YTDLP = 'nofile';
+            try {
+                const Video = require('./commands/video');
+                await assert.rejects(
+                    new Video().downloadVideo('https://example.com/v', `video_big_${process.pid}`, []),
+                    /max-filesize/
+                );
+            } finally {
+                delete process.env.FAKE_YTDLP;
+            }
+        });
+    } finally {
+        process.env.PATH = savedPath;
+        fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+
     // ── Summary ───────────────────────────────────────────────────────
     console.log('\n' + '='.repeat(60));
     console.log('📊 MEDIA TEST SUMMARY');

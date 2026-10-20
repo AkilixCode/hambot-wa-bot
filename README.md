@@ -156,6 +156,7 @@ closed rather than granting access.
 | `ADMIN_ONLY_COMMANDS` | `tagall` | Commands only group admins may run |
 | `SECURITY_CHAT_FILTER` | `true` | Reject messages matching malicious patterns |
 | `MAX_PROCESSES` | `3` | Concurrent heavy commands |
+| `HEAVY_QUEUE_MAX` | `5` | Heavy commands that wait for a free slot instead of being told "busy". `0` refuses straight away. |
 | `COOLDOWN_MS` | `3000` | Minimum gap between commands per user |
 | `RATE_LIMIT_WINDOW` | `60000` | Rate limit window, ms |
 | `RATE_LIMIT_MAX` | `15` | Commands allowed per window |

@@ -5,7 +5,6 @@
 
 const CommandBase = require('./base');
 const logger = require('../utils/logger');
-const sharp = require('sharp');
 const { downloadMedia } = require('../utils/helpers');
 
 class StickerCommand extends CommandBase {
@@ -45,6 +44,8 @@ class StickerCommand extends CommandBase {
 
             // Convert to sticker format
             logger.info('Sticker: processing image...');
+            // Required here, not at load: sharp is ~22 MB an idle bot need not hold.
+            const sharp = require('sharp');
             const stickerBuffer = await sharp(buffer)
                 .resize(512, 512, {
                     fit: 'contain',

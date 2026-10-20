@@ -239,8 +239,15 @@ async function getInfo(target, options = {}) {
     if (options.extraArgs) args.push(...options.extraArgs);
 
     const stdout = await runWithFallback(args, { timeout: INFO_TIMEOUT_MS });
+    return parseJsonLines(stdout);
+}
 
-    return stdout
+/**
+ * @param {string} stdout - yt-dlp --dump-json output, one object per line
+ * @returns {Object[]}
+ */
+function parseJsonLines(stdout) {
+    return String(stdout || '')
         .trim()
         .split('\n')
         .map(line => {
@@ -276,6 +283,36 @@ async function download(target, outputTemplate, formatArgs, options = {}) {
 }
 
 /**
+ * Download and read the metadata in one yt-dlp run.
+ *
+ * Asking for metadata first (getInfo) and then downloading started Python and
+ * extracted the page twice — seconds per request. `--dump-json --no-simulate`
+ * prints the metadata and still downloads, and `--match-filter` lets yt-dlp
+ * itself refuse over-long media before fetching a byte. A filtered entry
+ * exits 0 with no output and no file, which is reported as `tooLong`.
+ * Media without a known duration is let through (`<=?`), as before.
+ *
+ * @param {string} target - URL to download
+ * @param {string} outputTemplate - yt-dlp -o template (absolute path)
+ * @param {string[]} formatArgs - Format/extraction flags
+ * @param {Object} [options] - As download(), plus:
+ * @param {number} [options.maxDuration] - Seconds; longer media is skipped
+ * @returns {Promise<{info: Object|null, tooLong: boolean}>} info is null when
+ *   yt-dlp printed none (the caption just gets thinner)
+ */
+async function downloadWithInfo(target, outputTemplate, formatArgs, options = {}) {
+    const extra = ['--dump-json', '--no-simulate'];
+    if (options.maxDuration) extra.push('--match-filter', `duration <=? ${options.maxDuration}`);
+
+    const started = Date.now();
+    const stdout = await download(target, outputTemplate, [...formatArgs, ...extra], options);
+    logger.debug(`yt-dlp: download finished in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+
+    const info = parseJsonLines(stdout)[0] || null;
+    return { info, tooLong: Boolean(options.maxDuration) && !info };
+}
+
+/**
  * Installed yt-dlp version.
  *
  * yt-dlp versions are date-stamped (YYYY.MM.DD). A stale install is one of the
@@ -307,6 +344,7 @@ module.exports = {
     runWithFallback,
     getInfo,
     download,
+    downloadWithInfo,
     getVersion,
     getYouTubeArgs,
     getPlayerClientArgs,
