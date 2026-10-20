@@ -827,6 +827,76 @@ async function main() {
         assert.ok(texts(sock).some(t => t.includes('total anggota')), texts(sock).join(' | '));
     });
 
+    const WorkSlots = require('./utils/work-slots');
+
+    await test('Heavy slots: waiters run in order as slots free; a full line is refused', async () => {
+        const slots = new WorkSlots(1, 2);
+        assert.ok(slots.tryAcquire());
+        const order = [];
+        const a = slots.wait(1000).then(ok => order.push(['a', ok]));
+        const b = slots.wait(1000).then(ok => order.push(['b', ok]));
+        assert.ok(slots.queueFull);
+        assert.strictEqual(await slots.wait(1000), false, 'third waiter is turned away');
+        slots.release();
+        await a;
+        assert.deepStrictEqual(order, [['a', true]]);
+        slots.release();
+        await b;
+        assert.deepStrictEqual(order, [['a', true], ['b', true]]);
+        slots.release();
+        assert.strictEqual(slots.active, 0);
+    });
+
+    await test('Heavy slots: a wait times out, and a raised limit lets waiters in', async () => {
+        let limit = 1;
+        const slots = new WorkSlots(() => limit, 5);
+        slots.tryAcquire();
+        assert.strictEqual(await slots.wait(20), false, 'timed out');
+        assert.strictEqual(slots.waiting, 0, 'a timed-out waiter leaves the line');
+        const waiting = [slots.wait(1000), slots.wait(1000)];
+        limit = 3;
+        slots.release();
+        assert.deepStrictEqual(await Promise.all(waiting), [true, true]);
+        assert.strictEqual(slots.active, 2);
+    });
+
+    await test('A heavy command waits for a busy slot instead of being refused', async () => {
+        const config = require('./config');
+        const saved = config.performance.maxProcesses;
+        config.performance.maxProcesses = 1;
+        assert.ok(handler.heavySlots.tryAcquire(), 'simulate a running download');
+        try {
+            const sock = fakeSock();
+            const done = handler(sock, { messages: [textMsg('6281200000011@s.whatsapp.net', '6281200000011@s.whatsapp.net', '.video')], type: 'notify' });
+            await sleep(50);
+            assert.ok(texts(sock).some(t => t.includes('antrean ke-1')), texts(sock).join(' | '));
+            assert.strictEqual(handler.heavySlots.waiting, 1);
+            handler.heavySlots.release(); // the "download" finishes
+            await done;
+            assert.ok(texts(sock).length >= 2, 'the queued command ran by itself');
+            assert.ok(!texts(sock).some(t => t.includes('sedang sibuk')));
+            assert.strictEqual(handler.heavySlots.active, 0, 'its slot was given back');
+        } finally {
+            config.performance.maxProcesses = saved;
+        }
+    });
+
+    await test('With the line full (HEAVY_QUEUE_MAX=0) it says busy, as before', async () => {
+        const config = require('./config');
+        const saved = [config.performance.maxProcesses, config.performance.heavyQueueMax];
+        config.performance.maxProcesses = 1;
+        config.performance.heavyQueueMax = 0;
+        handler.heavySlots.tryAcquire();
+        try {
+            const sock = fakeSock();
+            await handler(sock, { messages: [textMsg('6281200000012@s.whatsapp.net', '6281200000012@s.whatsapp.net', '.video')], type: 'notify' });
+            assert.ok(texts(sock).some(t => t.includes('sedang sibuk')), texts(sock).join(' | '));
+        } finally {
+            handler.heavySlots.release();
+            [config.performance.maxProcesses, config.performance.heavyQueueMax] = saved;
+        }
+    });
+
     // ── Session recovery ─────────────────────────────────────────────
     // Last: index.js registers process signal handlers when required.
     console.log('\n🛟 Session recovery...\n');
