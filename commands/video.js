@@ -107,19 +107,17 @@ class VideoCommand extends CommandBase {
         const extraArgs = isYouTube ? [...platformArgs, ...ytdlp.getYouTubeArgs()] : platformArgs;
 
         try {
-            const info = await this.fetchInfo(url, extraArgs);
+            await this.react(sock, msg, '⏳');
 
-            if (info.duration && info.duration > config.media.maxDuration) {
+            const { file, info, tooLong } = await this.downloadVideo(url, filePrefix, extraArgs);
+
+            if (tooLong) {
                 return await this.replyError(sock, from, msg,
                     'Videonya kepanjangan. Coba yang lebih pendek ya!', {
                         title: 'Terlalu Panjang',
                         hint: [`Maksimal ${Math.floor(config.media.maxDuration / 60)} menit`]
                     });
             }
-
-            await this.react(sock, msg, '⏳');
-
-            const file = await this.downloadVideo(url, filePrefix, extraArgs);
 
             if (!media.isWithinSizeLimit(file.size)) {
                 return await this.replyError(sock, from, msg,
@@ -153,48 +151,29 @@ class VideoCommand extends CommandBase {
     }
 
     /**
-     * Fetch video metadata.
-     *
-     * Failure is tolerated: several extractors are unreliable on --dump-json
-     * but download perfectly well, so a metadata error must not block the
-     * download. The caption simply gets thinner.
-     *
-     * @param {string} url
-     * @param {string[]} extraArgs - Platform-specific yt-dlp args
-     * @returns {Promise<Object>} Metadata, possibly mostly empty
-     */
-    async fetchInfo(url, extraArgs) {
-        try {
-            const [info] = await ytdlp.getInfo(url, { extraArgs });
-            return info || {};
-        } catch (error) {
-            logger.debug(`Video: metadata lookup failed, continuing - ${error.message}`);
-            return {};
-        }
-    }
-
-    /**
-     * Download the video.
+     * Download the video and read its metadata in the same yt-dlp run.
      * @param {string} url
      * @param {string} filePrefix - Temp filename prefix
      * @param {string[]} extraArgs - Platform-specific yt-dlp args
-     * @returns {Promise<{path: string, name: string, size: number}>}
+     * @returns {Promise<{file?: {path: string, name: string, size: number}, info: Object, tooLong: boolean}>}
+     *   info may be mostly empty: several extractors download fine without it
      */
     async downloadVideo(url, filePrefix, extraArgs) {
         const outputTemplate = tempdir.tempPath(`${filePrefix}.%(ext)s`);
 
-        await ytdlp.download(
+        const { info, tooLong } = await ytdlp.downloadWithInfo(
             url,
             outputTemplate,
             ['-f', VIDEO_FORMAT_SELECTOR, '--merge-output-format', 'mp4'],
-            { maxFilesize: config.media.maxFileSize, extraArgs }
+            { maxFilesize: config.media.maxFileSize, maxDuration: config.media.maxDuration, extraArgs }
         );
+        if (tooLong) return { info: {}, tooLong: true };
 
         const file = await media.findDownload(filePrefix, ['mp4', 'mkv', 'webm']);
         if (!file) {
             throw new Error('Downloaded file not found — it may have exceeded max-filesize');
         }
-        return file;
+        return { file, info: info || {}, tooLong: false };
     }
 
     /**
