@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest a new command or an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: The command or behaviour, and an example of how you would use it in a chat.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it useful?
+      description: The problem it solves, or who would use it.

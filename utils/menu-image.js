@@ -118,9 +118,12 @@ function sparkle(g, x, y, s) {
 
 /**
  * Draw the default banner.
+ * @param {Object} [opts] Overrides, e.g. for the README image (docs/images)
+ * @param {string} [opts.badge] Pill text (default: "v<version>  ·  MENU")
+ * @param {string} [opts.tagline] Line under the name (default: BOT_TAGLINE)
  * @returns {Buffer} JPEG
  */
-function renderBanner() {
+function renderBanner(opts = {}) {
     const { createCanvas } = require('canvas');
     const family = resolveFont();
     const c = createCanvas(WIDTH, HEIGHT);
@@ -190,13 +193,13 @@ function renderBanner() {
     g.shadowBlur = 0;
 
     // Tagline.
-    const tagline = config.bot.tagline;
+    const tagline = opts.tagline || config.bot.tagline;
     fitFont(g, tagline, family, 46, textWidth, 24);
     g.fillStyle = 'rgba(255,255,255,0.85)';
     g.fillText(tagline, textLeft, cy + 250);
 
     // Pill badge on the card's top edge, sized to its text.
-    const badge = `v${config.bot.version}  ·  MENU`;
+    const badge = opts.badge || `v${config.bot.version}  ·  MENU`;
     g.font = `32px ${family}`;
     const padX = 26;
     const pillW = g.measureText(badge).width + padX * 2;

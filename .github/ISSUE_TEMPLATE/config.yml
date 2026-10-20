@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup help and troubleshooting
+    url: https://github.com/AkilixCode/hambot-wa-bot/blob/main/docs/deployment.md#troubleshooting
+    about: Most install and linking problems are answered here (and by ./deploy.sh doctor).
+  - name: Report a vulnerability
+    url: https://github.com/AkilixCode/hambot-wa-bot/blob/main/SECURITY.md
+    about: Please report security issues privately, not as a public issue.
