@@ -554,7 +554,7 @@ async function main() {
             put(d, 'docker-info-fails');
             let r = run(d, [], null);
             assert.notStrictEqual(r.status, 0);
-            assert.match(r.output, /daemon is not running|may not use Docker/);
+            assert.match(r.output, /daemon is not running|may not use Docker|Docker Desktop is not running/);
             assert.match(r.output, /--local/);
             r = run(d, [], ['n']);
             assert.match(r.output, /Install HamBot locally instead/);
@@ -984,18 +984,17 @@ async function main() {
         } finally { fs.rmSync(d, { recursive: true, force: true }); }
     });
 
+    // A real pseudo-terminal needs util-linux `script` (Linux); macOS's BSD
+    // `script` cannot be driven reliably without a terminal of its own.
     const scriptCmd = which('script');
-    const ptyArgs = (cmd) => process.platform === 'darwin'
-        ? ['-q', '/dev/null', 'sh', '-c', cmd]
-        : ['-qec', cmd, '/dev/null'];
-    if (scriptCmd && (process.platform === 'darwin' || spawnSync(scriptCmd, ['--version']).status === 0)) {
+    if (scriptCmd && process.platform === 'linux' && spawnSync(scriptCmd, ['--version']).status === 0) {
         await test('curl | sh in a real terminal: questions are read from the terminal, not the pipe', () => {
             const d = sandbox();
             try {
                 const work = path.join(d, 'work');
                 fs.mkdirSync(work);
                 const env = baseEnv(d);
-                const r = spawnSync(scriptCmd, ptyArgs(`cat ${JSON.stringify(INSTALLER)} | sh -s -- --docker`), {
+                const r = spawnSync(scriptCmd, ['-qec', `cat ${JSON.stringify(INSTALLER)} | sh -s -- --docker`, '/dev/null'], {
                     cwd: work, env, encoding: 'utf8', timeout: 60000,
                     input: ['6281200000028', 'y', ''].map(l => l + '\n').join('')
                 });
