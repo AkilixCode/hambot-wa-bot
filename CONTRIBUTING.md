@@ -3,12 +3,16 @@
 ## Setup
 
 ```bash
+git clone https://github.com/AkilixCode/hambot-wa-bot.git && cd hambot-wa-bot
 npm install
-npx playwright install chromium
-pip install yt-dlp
-cp .env.example .env
+python3 -m venv .venv && .venv/bin/pip install yt-dlp   # for .video / .music
+cp .env.example .env    # set BOT_OWNER_ID, and YTDLP_PYTHON=.venv/bin/python
 npm run dev
 ```
+
+`./deploy.sh --local` does all of this (plus pm2 and Deno) if you would rather
+run the bot the way users do; `pm2 stop hambot` then frees the session for
+`npm run dev`. Never run two copies against one session.
 
 You need a spare WhatsApp account to link. Do not develop against an account you
 rely on — a bad reconnection loop can get a number rate-limited.
@@ -19,8 +23,15 @@ rely on — a bad reconnection loop can get a number rate-limited.
 npm run test:all
 ```
 
-All suites must pass (CI runs them on every push). If you change behaviour that a test asserts, update
-the test in the same commit and say why in the message.
+All suites must pass (CI runs them on every push, on Node 22 and 24). They
+live in `tests/` and need no network, WhatsApp session, Docker or yt-dlp. If
+you change behaviour that a test asserts, update the test in the same commit
+and say why in the message.
+
+Changing `deploy.sh` or `scripts/install.sh`? `npm run test:deploy` runs them
+against recording fakes on a sealed `PATH` (see `tests/deploy.test.cjs`); add
+a test for any new failure path, and keep both scripts POSIX `sh` (they are
+checked with `sh -n`, and run on macOS in CI).
 
 ## Conventions
 
@@ -80,11 +91,13 @@ is queued against `MAX_PROCESSES`.
 
 ## Notes on yt-dlp
 
-`.video` and `.music` invoke `python3 -m yt_dlp` rather than a `yt-dlp` binary,
-so locally installed plugins such as `yt-dlp-get-pot` are picked up. Arguments
-worth preserving:
+`.video` and `.music` invoke `python3 -m yt_dlp` (or `$YTDLP_PYTHON -m yt_dlp`
+in a local install) rather than a `yt-dlp` binary, so pip-installed plugins
+such as the PO token provider are picked up. All runs go through
+`utils/ytdlp.js`. Arguments worth preserving:
 
-- The `android` extractor client is more reliable than the default web client.
+- YouTube player clients come from `YTDLP_PLAYER_CLIENTS`; never hardcode one
+  (the old `android` client is deprecated).
 - Do not pass a format selector (`-f`) for audio; download the best available
   and let `-x --audio-format mp3` convert it.
 - Proxy and network flags come from `config.getYtDlpProxyArgs()` and
@@ -92,8 +105,10 @@ worth preserving:
 
 ## Reporting bugs
 
-Include the command, the exact input, what happened, what you expected, and the
-log output with `LOG_LEVEL=full`. Redact your own phone number and any keys.
+Use the bug report form. Include the command, the exact input, what happened,
+what you expected, whether you run Docker or Local, the output of
+`./deploy.sh doctor`, and the log output with `LOG_LEVEL=full`. Redact your
+own phone number and any keys.
 
 For vulnerabilities, follow [SECURITY.md](SECURITY.md) instead — do not open a
 public issue.

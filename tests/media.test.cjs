@@ -13,6 +13,8 @@
 
 const assert = require('assert');
 const path = require('path');
+// Tests live in tests/; paths are resolved from the repository root.
+const ROOT = path.join(__dirname, '..');
 const fs = require('fs');
 const os = require('os');
 
@@ -47,7 +49,7 @@ async function main() {
     // ── Provider cascade ──────────────────────────────────────────────
     console.log('\n📡 Provider Cascade...\n');
 
-    const providers = require('./utils/providers');
+    const providers = require('../utils/providers');
 
     await test('Cascade returns the first successful provider', async () => {
         providers.resetHealth();
@@ -152,7 +154,24 @@ async function main() {
     // ── yt-dlp runner ─────────────────────────────────────────────────
     console.log('\n🎬 yt-dlp Runner...\n');
 
-    const ytdlp = require('./utils/ytdlp');
+    const ytdlp = require('../utils/ytdlp');
+
+    await test('YTDLP_PYTHON picks the venv, falls back to python3 when it is gone', () => {
+        const prev = process.env.YTDLP_PYTHON;
+        try {
+            delete process.env.YTDLP_PYTHON;
+            assert.strictEqual(ytdlp.pythonBin(), 'python3', 'Docker: unset');
+            process.env.YTDLP_PYTHON = '.venv/does-not-exist/python';
+            assert.strictEqual(ytdlp.pythonBin(), 'python3', 'a local .env read inside Docker must not break media');
+            process.env.YTDLP_PYTHON = 'package.json'; // any file that exists, relative to the repo root
+            assert.strictEqual(ytdlp.pythonBin(), 'package.json');
+            process.env.YTDLP_PYTHON = './package.json';
+            assert.strictEqual(ytdlp.pythonBin(), path.join(ROOT, 'package.json'));
+        } finally {
+            if (prev === undefined) delete process.env.YTDLP_PYTHON;
+            else process.env.YTDLP_PYTHON = prev;
+        }
+    });
 
     await test('Player clients come from YTDLP_PLAYER_CLIENTS', () => {
         const prev = process.env.YTDLP_PLAYER_CLIENTS;
@@ -175,7 +194,7 @@ async function main() {
         // player_client=android was pinned in music.js and video.js and is now
         // deprecated upstream; regressing to it would silently break YouTube.
         for (const f of ['commands/music.js', 'commands/video.js']) {
-            const src = fs.readFileSync(path.join(__dirname, f), 'utf8');
+            const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
             assert.ok(
                 !src.includes('player_client=android'),
                 `${f} still pins player_client=android`
@@ -212,7 +231,7 @@ async function main() {
     });
 
     await test('A hung process is killed at the timeout', async () => {
-        const { spawnPromise } = require('./utils/helpers');
+        const { spawnPromise } = require('../utils/helpers');
         const started = Date.now();
         await assert.rejects(
             // node rather than ping: it is on the allowlist and is always
@@ -227,7 +246,7 @@ async function main() {
     });
 
     await test('spawnPromise still rejects commands off the allowlist', () => {
-        const { spawnPromise } = require('./utils/helpers');
+        const { spawnPromise } = require('../utils/helpers');
         return assert.rejects(
             () => spawnPromise('rm', ['-rf', '/']),
             /Command not allowed/
@@ -237,7 +256,7 @@ async function main() {
     // ── Config size parsing ───────────────────────────────────────────
     console.log('\n📦 Size Limits...\n');
 
-    const config = require('./config');
+    const config = require('../config');
 
     await test('Size suffixes parse to bytes', () => {
         assert.strictEqual(config._parseSize('64M'), 64 * 1024 * 1024);
@@ -258,7 +277,7 @@ async function main() {
     // ── Temp directory ────────────────────────────────────────────────
     console.log('\n🗂️  Temp Directory...\n');
 
-    const tempdir = require('./utils/tempdir');
+    const tempdir = require('../utils/tempdir');
 
     await test('Temp files resolve inside tmp/, not the repo root', () => {
         const p = tempdir.tempPath('test_file.mp3');
@@ -299,7 +318,7 @@ async function main() {
     // ── Egress toggle ─────────────────────────────────────────────────
     console.log('\n🛰️  Egress Toggle...\n');
 
-    const egress = require('./utils/egress');
+    const egress = require('../utils/egress');
 
     await test('Egress state is written to HAMBOT_DATA_DIR, not the repo', () => {
         assert.strictEqual(
@@ -355,7 +374,7 @@ async function main() {
     // ── Cached fetch ──────────────────────────────────────────────────
     console.log('\n💾 Cached Fetch...\n');
 
-    const { cachedFetch, invalidate } = require('./utils/cached-fetch');
+    const { cachedFetch, invalidate } = require('../utils/cached-fetch');
 
     await test('A miss then a hit reports provenance correctly', async () => {
         invalidate('t:prov');
@@ -410,7 +429,7 @@ async function main() {
     // ── Media helpers ─────────────────────────────────────────────────
     console.log('\n🎵 Media Helpers...\n');
 
-    const media = require('./utils/media');
+    const media = require('../utils/media');
 
     await test('yt-dlp errors map to distinct user-facing messages', () => {
         const bot = media.describeError(new Error("Sign in to confirm you're not a bot"), 'musik');
@@ -439,7 +458,7 @@ async function main() {
     // ── Pinterest parsing (offline) ───────────────────────────────────
     console.log('\n📌 Pinterest Parsing...\n');
 
-    const PinterestCommand = require('./commands/pinterest');
+    const PinterestCommand = require('../commands/pinterest');
     const pin = new PinterestCommand();
 
     await test('Avatars and UI sprites are rejected', () => {
@@ -482,7 +501,7 @@ async function main() {
         // Both CDNs run hotlink protection. Sending Pinterest's referer to
         // Wallhaven returns a hard 403 — this silently cost 3 of every 5
         // fallback images until it was caught.
-        const httpClient = require('./utils/http-client');
+        const httpClient = require('../utils/http-client');
         const original = httpClient.get;
         const seen = [];
 
@@ -504,9 +523,9 @@ async function main() {
     });
 
     await test('Playwright is no longer a dependency', () => {
-        const pkg = require('./package.json');
+        const pkg = require('../package.json');
         assert.ok(!pkg.dependencies.playwright, 'playwright must be removed');
-        const src = fs.readFileSync(path.join(__dirname, 'commands/pinterest.js'), 'utf8');
+        const src = fs.readFileSync(path.join(ROOT, 'commands/pinterest.js'), 'utf8');
         assert.ok(!src.includes("require('playwright')"), 'pinterest must not load a browser');
     });
 
@@ -536,12 +555,12 @@ console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', dura
     const runs = () => fs.existsSync(runLog)
         ? fs.readFileSync(runLog, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
         : [];
-    const tempdirMod = require('./utils/tempdir');
+    const tempdirMod = require('../utils/tempdir');
 
     try {
         await test('.video downloads and reads metadata in one yt-dlp run', async () => {
             fs.rmSync(runLog, { force: true });
-            const Video = require('./commands/video');
+            const Video = require('../commands/video');
             const prefix = `video_fake_${process.pid}`;
             try {
                 const { file, info, tooLong } = await new Video().downloadVideo('https://example.com/v', prefix, []);
@@ -562,7 +581,7 @@ console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', dura
             fs.rmSync(runLog, { force: true });
             process.env.FAKE_YTDLP = 'filtered';
             try {
-                const Video = require('./commands/video');
+                const Video = require('../commands/video');
                 const result = await new Video().downloadVideo('https://example.com/v', `video_long_${process.pid}`, []);
                 assert.strictEqual(result.tooLong, true);
                 assert.strictEqual(runs().length, 1);
@@ -573,7 +592,7 @@ console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', dura
 
         await test('.music with a URL: one run, and the info card gets the real title', async () => {
             fs.rmSync(runLog, { force: true });
-            const Music = require('./commands/music');
+            const Music = require('../commands/music');
             const music = new Music();
             const prefix = `music_fake_${process.pid}`;
             try {
@@ -594,7 +613,7 @@ console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', dura
             process.env.FAKE_YTDLP = 'nojson';
             const prefix = `video_nojson_${process.pid}`;
             try {
-                const Video = require('./commands/video');
+                const Video = require('../commands/video');
                 const result = await new Video().downloadVideo('https://example.com/v', prefix, []);
                 assert.strictEqual(result.tooLong, false);
                 assert.ok(result.file, 'the file on disk wins');
@@ -608,7 +627,7 @@ console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', dura
         await test('Metadata but no file means max-filesize, not "too long"', async () => {
             process.env.FAKE_YTDLP = 'nofile';
             try {
-                const Video = require('./commands/video');
+                const Video = require('../commands/video');
                 await assert.rejects(
                     new Video().downloadVideo('https://example.com/v', `video_big_${process.pid}`, []),
                     /max-filesize/

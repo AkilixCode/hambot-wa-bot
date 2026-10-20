@@ -30,6 +30,8 @@
  */
 
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 const logger = require('./logger');
 
@@ -78,6 +80,24 @@ function getYouTubeArgs() {
 }
 
 /**
+ * The Python that has yt-dlp installed.
+ *
+ * A local install (deploy.sh --local) keeps yt-dlp in a private .venv and
+ * sets YTDLP_PYTHON to it; a relative path is taken from the repository root.
+ * If that interpreter is gone (the .venv was deleted, or a .env from a local
+ * install is used by the Docker container), fall back to python3 rather than
+ * failing every download.
+ * @returns {string}
+ */
+function pythonBin() {
+    const configured = (process.env.YTDLP_PYTHON || '').trim();
+    if (!configured) return 'python3';
+    if (!configured.includes('/')) return configured;
+    const resolved = path.resolve(__dirname, '..', configured);
+    return fs.existsSync(resolved) ? resolved : 'python3';
+}
+
+/**
  * Spawn yt-dlp with a hard timeout.
  *
  * @param {string[]} args - Arguments after `-m yt_dlp`
@@ -91,7 +111,7 @@ function run(args, options = {}) {
     const timeout = options.timeout || INFO_TIMEOUT_MS;
 
     return new Promise((resolve, reject) => {
-        const proc = spawn('python3', ['-m', 'yt_dlp', ...args], {
+        const proc = spawn(pythonBin(), ['-m', 'yt_dlp', ...args], {
             cwd: options.cwd || process.cwd(),
             shell: false
         });
@@ -340,6 +360,7 @@ async function getVersion() {
 }
 
 module.exports = {
+    pythonBin,
     run,
     runWithFallback,
     getInfo,

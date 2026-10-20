@@ -3,12 +3,14 @@
  * Tests core utilities and systems
  */
 
-const cache = require('./utils/cache');
-const RateLimiter = require('./utils/rate-limiter');
-const logger = require('./utils/logger');
-const config = require('./config');
-const commandRegistry = require('./commands/registry');
+const cache = require('../utils/cache');
+const RateLimiter = require('../utils/rate-limiter');
+const logger = require('../utils/logger');
+const config = require('../config');
+const commandRegistry = require('../commands/registry');
 const path = require('path');
+// Tests live in tests/; paths are resolved from the repository root.
+const ROOT = path.join(__dirname, '..');
 
 console.log('🧪 Running System Component Tests...\n');
 
@@ -42,7 +44,7 @@ try {
     
     // Test @s.whatsapp.net format
     process.env.BOT_OWNER_ID = '6281234567890@s.whatsapp.net';
-    const Config = require('./config');
+    const Config = require('../config');
     const testConfig1 = new Config.constructor();
     assert(testConfig1.bot.ownerId === '6281234567890@s.whatsapp.net', 
            'Config: Owner ID accepts @s.whatsapp.net format');
@@ -100,7 +102,7 @@ try {
 
 // Test 1.2: Network configuration
 try {
-    const Config = require('./config');
+    const Config = require('../config');
     
     // Save original env vars
     const origForceIPv4 = process.env.FORCE_IPV4;
@@ -163,7 +165,7 @@ try {
 
 // Test 1.3: HTTP Client proxy connection error detection
 try {
-    const { isProxyConnectionError } = require('./utils/http-client');
+    const { isProxyConnectionError } = require('../utils/http-client');
     
     // Connection errors should be detected
     assert(isProxyConnectionError({ code: 'ECONNREFUSED' }) === true,
@@ -264,7 +266,7 @@ try {
 
 // Test 5: Command Registry
 try {
-    const commandsPath = path.join(__dirname, 'commands');
+    const commandsPath = path.join(ROOT, 'commands');
     const loaded = commandRegistry.loadFromDirectory(commandsPath);
     
     assert(loaded > 0, `Command Registry: Loaded ${loaded} commands`);
@@ -290,7 +292,7 @@ try {
 
 // Test 6: Helper Functions
 try {
-    const { formatSize, sanitizeInput, generateFilename } = require('./utils/helpers');
+    const { formatSize, sanitizeInput, generateFilename } = require('../utils/helpers');
     
     assert(formatSize(1024) === '1.00 KB', 'Helpers: Format size KB');
     assert(formatSize(1048576) === '1.00 MB', 'Helpers: Format size MB');

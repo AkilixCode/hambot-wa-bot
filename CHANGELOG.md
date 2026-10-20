@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 Quality pass, a new look and menu, typo-tolerant commands, Node 24, a
-much easier Docker deploy, and a faster, lighter bot.
+faster, lighter bot, and a one-command install that runs it with Docker or
+without.
 
 ### Security
 
@@ -21,6 +22,11 @@ much easier Docker deploy, and a faster, lighter bot.
 - Reminders capped at 5 per user and 500 in total.
 
 ### Fixed
+
+- **The installer could ask forever.** If input ended mid-question (an SSH
+  connection dropped, a closed terminal), `./deploy.sh` repeated "This one is
+  required." endlessly. Every question now allows 5 tries and stops at once
+  when input ends.
 
 - **Stuck on "Waiting for the bot to start".** When the server could not
   reach WhatsApp, the bot sat in "connecting" forever without a word, and
@@ -61,6 +67,11 @@ much easier Docker deploy, and a faster, lighter bot.
 
 ### Changed
 
+- **Cleaner repository.** The test suites moved to `tests/`, and the README
+  became a short front page; the long sections are now guides in `docs/`
+  (deployment, configuration, commands, development). Issue forms and a pull
+  request template were added.
+
 - **Faster replies in groups.** Baileys fetched the whole group roster
   before every message it sent to a group, and the admin check, `.tagall`
   and `.info` fetched it again. Rosters are now cached for 5 minutes and
@@ -98,6 +109,25 @@ much easier Docker deploy, and a faster, lighter bot.
   process output is capped at 16 MB.
 
 ### Added
+
+- **Local mode: run HamBot without Docker.** `./deploy.sh` asks Docker or
+  Local (`--docker` / `--local` skip the question) and every command works the
+  same in both. Local installs the Node packages, pm2 (keeps the bot running),
+  yt-dlp in a private `.venv` at the same pinned version as the image — which
+  works where `pip install` is refused — and Deno; it shows the one `sudo`
+  line needed to start after a reboot. Existing Docker installs are unchanged.
+- **One-line install:** `curl -fsSL
+  https://raw.githubusercontent.com/AkilixCode/hambot-wa-bot/main/scripts/install.sh | sh`.
+- `./deploy.sh switch docker|local` moves the bot and its WhatsApp session
+  (no relinking; the session it replaces is archived, never deleted).
+- `./deploy.sh doctor` checks the whole setup and prints one fix per problem;
+  setup points at it whenever a step fails.
+- The installer expects mistakes: downloads are retried 3 times and then
+  explained, a full disk is said plainly, a second copy of the bot is never
+  started (and Docker + Local running together is flagged), only one
+  `./deploy.sh` runs at a time, Ctrl+C leaves nothing half-done, and running
+  it again continues where it stopped. Unattended installs take `--owner`,
+  `--pairing` and `-y`.
 
 - **Heavy commands wait in line instead of "busy, try again".** With all
   `MAX_PROCESSES` slots in use, up to `HEAVY_QUEUE_MAX` (default 5) requests

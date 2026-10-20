@@ -3,10 +3,12 @@
  * Tests all commands for proper integration and functionality
  */
 
-const commandRegistry = require('./commands/registry');
-const config = require('./config');
-const cache = require('./utils/cache');
+const commandRegistry = require('../commands/registry');
+const config = require('../config');
+const cache = require('../utils/cache');
 const path = require('path');
+// Tests live in tests/; paths are resolved from the repository root.
+const ROOT = path.join(__dirname, '..');
 
 console.log('🧪 Running Comprehensive Command Integration Tests...\n');
 
@@ -36,7 +38,7 @@ function warn(message) {
 console.log('📦 Testing Command Loading...\n');
 try {
     cache.clear(); // Clear any existing cache
-    const commandsPath = path.join(__dirname, 'commands');
+    const commandsPath = path.join(ROOT, 'commands');
     const loaded = commandRegistry.loadFromDirectory(commandsPath);
     
     assert(loaded >= 26, `All commands loaded (found ${loaded})`);

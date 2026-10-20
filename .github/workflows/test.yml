@@ -24,3 +24,15 @@ jobs:
       # Every suite is offline: no WhatsApp session, yt-dlp or ffmpeg needed.
       - run: npm run test:all
       - run: npm audit --omit=dev --audit-level=high
+
+  deploy-macos:
+    # deploy.sh and the installer must also work with macOS's BSD tools.
+    # The suite uses fakes on a sealed PATH, so no Docker or pm2 is needed.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: sh -n deploy.sh && sh -n scripts/install.sh
+      - run: npm run test:deploy

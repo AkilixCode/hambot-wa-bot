@@ -49,8 +49,7 @@ coverage/
 .nyc_output/
 
 # Tests (not needed in production image)
-test-*.js
-test-*.cjs
+tests/
 
 # Documentation (not needed in production image)
 SECURITY.md
@@ -72,3 +71,8 @@ README.md
 assets/README.md
 deploy.sh
 data/
+.venv/
+ecosystem.config.cjs
+.deploy.lock
+.deploy-tmp.*
+qr.png

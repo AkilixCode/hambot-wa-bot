@@ -59,3 +59,9 @@ coverage/
 *.pid
 *.seed
 *.pid.lock
+
+# Local mode (deploy.sh --local)
+.venv/
+qr.png
+.deploy.lock/
+.deploy-tmp.*
