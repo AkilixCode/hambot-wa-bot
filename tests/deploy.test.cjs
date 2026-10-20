@@ -98,7 +98,7 @@ function sandbox({ without = [] } = {}) {
         '  "compose pull hambot") if [ -f "$here/pull-fails" ]; then echo "pull failed" >&2; exit 1; fi ;;',
         '  "compose up -d --build hambot") if [ -f "$here/build-fails" ]; then exit 1; fi ;;',
         '  *"--entrypoint tar hambot"*) if [ -f "$here/tar-out-fails" ]; then exit 1; fi; if [ -f "$here/session.tar" ]; then cat "$here/session.tar"; else tar -C "$here/fakes" -cf - --exclude="*" .; fi ;;',
-        '  *"--entrypoint sh hambot"*) cat > "$here/received.tar" ;;',
+        '  *"--entrypoint sh hambot"*) if [ -f "$here/tar-in-fails" ]; then exit 1; fi; cat > "$here/received.tar" ;;',
         'esac',
         'exit 0'
     ]);
@@ -919,6 +919,23 @@ async function main() {
             assert.strictEqual(envValue(d, 'DEPLOY_MODE'), 'docker');
             assert.ok(calls(d).includes('compose up -d --no-build --force-recreate hambot'), 'the Docker bot runs again');
             assert.ok(!has(d, 'auth_info_baileys'));
+            assert.deepStrictEqual(leftovers(d), []);
+        } finally { fs.rmSync(d, { recursive: true, force: true }); }
+    });
+
+    await test('A switch into Docker that fails keeps the local session and the local bot', () => {
+        const d = localSandbox();
+        try {
+            fs.mkdirSync(path.join(d, 'auth_info_baileys'), { recursive: true });
+            put(d, 'auth_info_baileys/creds.json', '{"me":"local"}');
+            put(d, 'tar-in-fails');
+            resetCalls(d);
+            const r = run(d, ['switch', 'docker', '-y'], null);
+            assert.notStrictEqual(r.status, 0);
+            assert.match(r.output, /nothing changed/i);
+            assert.ok(has(d, 'auth_info_baileys/creds.json'), 'the session is still here, not archived');
+            assert.strictEqual(envValue(d, 'DEPLOY_MODE'), 'local');
+            assert.ok(calls(d, 'pm2').some(c => c.startsWith('start')), 'the local bot runs again');
             assert.deepStrictEqual(leftovers(d), []);
         } finally { fs.rmSync(d, { recursive: true, force: true }); }
     });

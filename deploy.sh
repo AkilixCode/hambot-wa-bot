@@ -1114,10 +1114,15 @@ cmd_switch() {
     mkdir -p "$staging"
     moved=""
 
+    # Through a file, not a pipe: a pipe reports only its last command, and
+    # some tar versions happily "extract" the empty output of a failed copy.
+    new_tmp session.tar
+    archive=$TMP
+
     if [ "$from" = docker ]; then
         info "Copying the session out of Docker"
-        if docker compose run --rm --no-deps -T --entrypoint tar "$SERVICE" -C /app/auth_info_baileys --exclude=./.archive -cf - . \
-            | tar -C "$staging" -xf -; then
+        if docker compose run --rm --no-deps -T --entrypoint tar "$SERVICE" -C /app/auth_info_baileys --exclude=./.archive -cf - . > "$archive" \
+            && tar -C "$staging" -xf "$archive"; then
             if [ -f "$staging/creds.json" ]; then
                 mkdir -p auth_info_baileys
                 node -e "require('./utils/session').archiveSession('auth_info_baileys')" >/dev/null 2>&1 || true
@@ -1132,9 +1137,9 @@ cmd_switch() {
         fi
     elif [ -f auth_info_baileys/creds.json ]; then
         info "Copying the session into Docker"
-        if tar -C auth_info_baileys --exclude=./.archive -cf - . \
-            | docker compose run --rm --no-deps -T --entrypoint sh "$SERVICE" -c \
-                "node -e \"require('./utils/session').archiveSession('auth_info_baileys')\" >/dev/null 2>&1; tar -C /app/auth_info_baileys -xf -"; then
+        if tar -C auth_info_baileys --exclude=./.archive -cf "$archive" . \
+            && docker compose run --rm --no-deps -T --entrypoint sh "$SERVICE" -c \
+                "node -e \"require('./utils/session').archiveSession('auth_info_baileys')\" >/dev/null 2>&1; tar -C /app/auth_info_baileys -xf -" < "$archive"; then
             # Archived here too, so the session is active in one place only.
             node -e "require('./utils/session').archiveSession('auth_info_baileys')" >/dev/null 2>&1 || true
             moved=1
