@@ -13,7 +13,6 @@ const login = require('./utils/login');
 const health = require('./utils/health');
 const session = require('./utils/session');
 const groupCache = require('./utils/group-cache');
-const senderQueue = require('./utils/sender-queue');
 
 // Use the modular handler directly
 const handler = require('./handler');
@@ -247,11 +246,12 @@ async function startBot() {
 
         sock.ev.on('messages.upsert', ({ type, messages }) => {
             if (type !== 'notify') return;
-            // Every message in the batch, not just the first. Different
-            // senders run in parallel; one sender's messages stay in order.
+            // Every message in the batch, not just the first, each on its own:
+            // awaiting them in turn let one slow `.video` hold up everyone
+            // else's commands. Separate batches already ran side by side;
+            // the per-user cooldown still stops one sender from piling up.
             for (const msg of messages) {
-                const sender = msg.key?.participant || msg.key?.remoteJid || 'unknown';
-                senderQueue.run(sender, () => handler(sock, { messages: [msg], type }))
+                handler(sock, { messages: [msg], type })
                     .catch(error => logger.error(error, { context: 'message-handler' }));
             }
         });
