@@ -71,3 +71,8 @@ README.md
 assets/README.md
 deploy.sh
 data/
+.venv/
+ecosystem.config.cjs
+.deploy.lock
+.deploy-tmp.*
+qr.png

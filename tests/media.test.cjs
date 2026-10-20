@@ -156,6 +156,23 @@ async function main() {
 
     const ytdlp = require('../utils/ytdlp');
 
+    await test('YTDLP_PYTHON picks the venv, falls back to python3 when it is gone', () => {
+        const prev = process.env.YTDLP_PYTHON;
+        try {
+            delete process.env.YTDLP_PYTHON;
+            assert.strictEqual(ytdlp.pythonBin(), 'python3', 'Docker: unset');
+            process.env.YTDLP_PYTHON = '.venv/does-not-exist/python';
+            assert.strictEqual(ytdlp.pythonBin(), 'python3', 'a local .env read inside Docker must not break media');
+            process.env.YTDLP_PYTHON = 'package.json'; // any file that exists, relative to the repo root
+            assert.strictEqual(ytdlp.pythonBin(), 'package.json');
+            process.env.YTDLP_PYTHON = './package.json';
+            assert.strictEqual(ytdlp.pythonBin(), path.join(ROOT, 'package.json'));
+        } finally {
+            if (prev === undefined) delete process.env.YTDLP_PYTHON;
+            else process.env.YTDLP_PYTHON = prev;
+        }
+    });
+
     await test('Player clients come from YTDLP_PLAYER_CLIENTS', () => {
         const prev = process.env.YTDLP_PLAYER_CLIENTS;
         process.env.YTDLP_PLAYER_CLIENTS = 'tv,mweb';
