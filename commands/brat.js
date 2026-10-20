@@ -6,8 +6,8 @@
 
 const CommandBase = require('./base');
 const logger = require('../utils/logger');
-const { createCanvas, registerFont } = require('canvas');
-const sharp = require('sharp');
+// canvas and sharp are required where they are used: together they add
+// ~37 MB to the process, which an idle bot need not carry.
 const path = require('path');
 const fs = require('fs');
 
@@ -27,9 +27,7 @@ class BratCommand extends CommandBase {
         this.padding = 30;
         this.fontFamily = 'Arial Narrow';
         this.fontRegistered = false;
-
-        // Register custom font if available
-        this._registerFont();
+        this.fontChecked = false; // looked up on the first sticker
     }
 
     /**
@@ -37,6 +35,8 @@ class BratCommand extends CommandBase {
      * Falls back to system fonts if not found
      */
     _registerFont() {
+        this.fontChecked = true;
+        const { registerFont } = require('canvas');
         const fontPaths = [
             path.join(process.cwd(), 'fonts', 'arialnarrow.ttf'),
             path.join(process.cwd(), 'fonts', 'ArialNarrow.ttf'),
@@ -105,7 +105,7 @@ class BratCommand extends CommandBase {
 
             // Step 2: Apply Gyurmatag-style post-processing filter
             // CSS equivalent: filter: blur(1px) contrast(1.25)
-            const finalBuffer = await sharp(rawBuffer)
+            const finalBuffer = await require('sharp')(rawBuffer)
                 .blur(0.5) // Slight blur for "low-res" aesthetic
                 .linear(1.25, -(128 * 1.25) + 128) // Contrast 1.25 formula
                 .toFormat('webp', { quality: 90 })
@@ -138,6 +138,8 @@ class BratCommand extends CommandBase {
         const verticalStretch = 1.15; // 115% vertical stretch
         const lineHeightRatio = 1.05; // Tight line spacing like album cover
 
+        if (!this.fontChecked) this._registerFont();
+        const { createCanvas } = require('canvas');
         const canvas = createCanvas(size, size);
         const ctx = canvas.getContext('2d');
 

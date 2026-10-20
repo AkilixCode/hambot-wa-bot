@@ -18,7 +18,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const sharp = require('sharp');
 const config = require('../config');
 const logger = require('./logger');
 
@@ -47,6 +46,8 @@ let fontFamily = null;     // resolved once
  * @returns {Promise<Buffer>}
  */
 async function normalise(input) {
+    // Required on first use, like canvas below: no menu, no ~22 MB.
+    const sharp = require('sharp');
     return sharp(input)
         .rotate() // honour EXIF orientation from phone photos
         .resize({ width: WIDTH, withoutEnlargement: true })

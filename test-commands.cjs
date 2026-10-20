@@ -832,6 +832,15 @@ async function main() {
         assert.ok(texts(sock).some(t => t.includes('total anggota')), texts(sock).join(' | '));
     });
 
+    await test('Startup leaves sharp and canvas unloaded until a command needs them', () => {
+        const { spawnSync } = require('child_process');
+        const probe = "require('./handler'); const k = Object.keys(require.cache);" +
+            "console.log(JSON.stringify(['sharp', 'canvas'].filter(m => k.some(f => f.includes('/node_modules/' + m + '/')))))";
+        const result = spawnSync(process.execPath, ['-e', probe], { cwd: __dirname, encoding: 'utf8' });
+        const loaded = JSON.parse(result.stdout.trim().split('\n').pop());
+        assert.deepStrictEqual(loaded, [], `loaded at startup: ${loaded}`);
+    });
+
     const WorkSlots = require('./utils/work-slots');
 
     await test('Heavy slots: waiters run in order as slots free; a full line is refused', async () => {
