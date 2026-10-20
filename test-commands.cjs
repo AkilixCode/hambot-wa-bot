@@ -827,6 +827,26 @@ async function main() {
         assert.ok(texts(sock).some(t => t.includes('total anggota')), texts(sock).join(' | '));
     });
 
+    await test('Sender queue: one slow sender does not delay another; order is kept per sender', async () => {
+        const senderQueue = require('./utils/sender-queue');
+        const log = [];
+        const job = (name, ms) => () => sleep(ms).then(() => log.push(name));
+        const slow = senderQueue.run('a', job('a1', 120));
+        senderQueue.run('a', job('a2', 0));
+        await senderQueue.run('b', job('b1', 10));
+        assert.deepStrictEqual(log, ['b1'], 'b finished while a was still busy');
+        await slow;
+        await sleep(5);
+        assert.deepStrictEqual(log, ['b1', 'a1', 'a2']);
+        assert.strictEqual(senderQueue.size(), 0, 'drained chains are dropped');
+    });
+
+    await test('Sender queue: a failing message does not block the next one', async () => {
+        const senderQueue = require('./utils/sender-queue');
+        await assert.rejects(senderQueue.run('c', async () => { throw new Error('boom'); }), /boom/);
+        assert.strictEqual(await senderQueue.run('c', async () => 'next'), 'next');
+    });
+
     // ── Session recovery ─────────────────────────────────────────────
     // Last: index.js registers process signal handlers when required.
     console.log('\n🛟 Session recovery...\n');
