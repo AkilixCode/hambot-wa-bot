@@ -75,4 +75,14 @@ class WorkSlots {
     }
 }
 
+// The bot's one set of heavy-command slots, shared by the handler (which
+// takes them) and `.ping` (which reports them). Limits are read live, so
+// `.security` changes to MAX_PROCESSES apply at once.
+const config = require('../config');
+const heavy = new WorkSlots(
+    () => config.performance.maxProcesses,
+    () => config.performance.heavyQueueMax
+);
+
 module.exports = WorkSlots;
+module.exports.heavy = heavy;

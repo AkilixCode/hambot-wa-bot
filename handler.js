@@ -6,7 +6,8 @@
 require('dotenv').config({ quiet: true });
 const config = require('./config');
 const RateLimiter = require('./utils/rate-limiter');
-const WorkSlots = require('./utils/work-slots');
+// Heavy commands share MAX_PROCESSES slots; a few more may wait in line.
+const { heavy: heavySlots } = require('./utils/work-slots');
 const logger = require('./utils/logger');
 const security = require('./utils/security');
 const groupCache = require('./utils/group-cache');
@@ -21,12 +22,6 @@ const rateLimiter = new RateLimiter(
     config.performance.rateLimitMax
 );
 
-// Heavy commands share MAX_PROCESSES slots, read live so `.security` can
-// change the limit; a few more may wait in line (utils/work-slots).
-const heavySlots = new WorkSlots(
-    () => config.performance.maxProcesses,
-    () => config.performance.heavyQueueMax
-);
 // sender JID -> { warned: boolean, expiresAt: number }
 const userCooldowns = new Map();
 

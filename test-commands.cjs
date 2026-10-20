@@ -841,6 +841,18 @@ async function main() {
         assert.deepStrictEqual(loaded, [], `loaded at startup: ${loaded}`);
     });
 
+    await test('.ping reports processing time, delivery, heavy slots and the group cache', async () => {
+        const sock = fakeSock();
+        const msg = textMsg('6281200000013@s.whatsapp.net', '6281200000013@s.whatsapp.net', '.ping');
+        msg.messageTimestamp = Math.floor(Date.now() / 1000) - 2;
+        await handler(sock, { messages: [msg], type: 'notify' });
+        const card = texts(sock).join('\n');
+        for (const label of ['proses', 'pengiriman', 'tugas berat', 'grup']) {
+            assert.ok(card.includes(label), `missing "${label}" in:\n${card}`);
+        }
+        assert.match(card, /pengiriman:\*? ±[23]\.\d s/, card);
+    });
+
     const WorkSlots = require('./utils/work-slots');
 
     await test('Heavy slots: waiters run in order as slots free; a full line is refused', async () => {
