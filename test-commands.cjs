@@ -81,6 +81,7 @@ async function main() {
         const baileys = await import('@whiskeysockets/baileys');
         assert.strictEqual(typeof baileys.default, 'function', 'makeWASocket (default export)');
         assert.strictEqual(typeof baileys.useMultiFileAuthState, 'function');
+        assert.strictEqual(typeof baileys.makeCacheableSignalKeyStore, 'function');
         assert.strictEqual(typeof baileys.downloadContentFromMessage, 'function');
         assert.strictEqual(typeof baileys.DisconnectReason?.loggedOut, 'number');
     });
@@ -94,9 +95,13 @@ async function main() {
 
         // Pointed at a closed local port: the socket is built but never
         // reaches WhatsApp.
+        // Built the way index.js builds it: cached signal keys and the
+        // group roster hook.
+        const logger = require('pino')({ level: 'silent' });
         const sock = baileys.default({
-            auth: state,
-            logger: require('pino')({ level: 'silent' }),
+            auth: { creds: state.creds, keys: baileys.makeCacheableSignalKeyStore(state.keys, logger) },
+            logger,
+            cachedGroupMetadata: async () => undefined,
             waWebSocketUrl: 'ws://127.0.0.1:9/ws'
         });
         try {

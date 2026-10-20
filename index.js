@@ -18,7 +18,7 @@ const groupCache = require('./utils/group-cache');
 const handler = require('./handler');
 
 // Baileys is ESM-only since v7 — must use dynamic import()
-let makeWASocket, useMultiFileAuthState;
+let makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore;
 
 let sock = null;
 
@@ -125,6 +125,7 @@ async function startBot() {
             const baileys = await import('@whiskeysockets/baileys');
             makeWASocket = baileys.default;
             useMultiFileAuthState = baileys.useMultiFileAuthState;
+            makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
         }
 
         // Validate configuration
@@ -162,10 +163,14 @@ async function startBot() {
         // reconnect, and without this each dead socket kept its listeners.
         retireSocket();
 
+        const baileysLogger = pino({ level: config.logging.silent ? 'silent' : 'fatal' });
         sock = makeWASocket({
-            auth: state,
+            // Signal keys are read on every message; keep recent ones in
+            // memory instead of re-reading a file each time. Writes still go
+            // straight to disk.
+            auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, baileysLogger) },
             printQRInTerminal: false,
-            logger: pino({ level: config.logging.silent ? 'silent' : 'fatal' }),
+            logger: baileysLogger,
             browser: config.bot.browser,
             cachedGroupMetadata,
             // Test hook: point the socket at a local stub instead of WhatsApp.
