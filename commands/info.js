@@ -5,6 +5,7 @@
 
 const CommandBase = require('./base');
 const ui = require('../utils/ui');
+const groupCache = require('../utils/group-cache');
 
 class InfoCommand extends CommandBase {
     constructor() {
@@ -25,7 +26,7 @@ class InfoCommand extends CommandBase {
         await this.react(sock, msg, '📋');
 
         try {
-            const metadata = await sock.groupMetadata(from);
+            const metadata = await groupCache.get(sock, from);
 
             const admins = metadata.participants.filter(p => 
                 p.admin === 'admin' || p.admin === 'superadmin'

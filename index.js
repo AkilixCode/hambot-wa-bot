@@ -12,6 +12,7 @@ const socketRef = require('./utils/socket-ref');
 const login = require('./utils/login');
 const health = require('./utils/health');
 const session = require('./utils/session');
+const groupCache = require('./utils/group-cache');
 
 // Use the modular handler directly
 const handler = require('./handler');
@@ -44,10 +45,26 @@ let connectWatchdog = null;
  */
 function retireSocket() {
     if (!sock) return;
-    for (const event of ['creds.update', 'connection.update', 'messages.upsert']) {
+    for (const event of ['creds.update', 'connection.update', 'messages.upsert', ...groupCache.EVENTS]) {
         try { sock.ev.removeAllListeners(event); } catch { /* already gone */ }
     }
     try { sock.end(undefined); } catch { /* already closed */ }
+    // Rosters learned on the old connection may have missed events since.
+    groupCache.clear();
+}
+
+/**
+ * Baileys' `cachedGroupMetadata` hook: serve group sends from utils/group-cache
+ * instead of a roster query per message. On a failed fetch, return undefined
+ * so Baileys falls back to its own lookup.
+ * @param {string} jid
+ */
+async function cachedGroupMetadata(jid) {
+    try {
+        return await groupCache.get(sock, jid);
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -150,6 +167,7 @@ async function startBot() {
             printQRInTerminal: false,
             logger: pino({ level: config.logging.silent ? 'silent' : 'fatal' }),
             browser: config.bot.browser,
+            cachedGroupMetadata,
             // Test hook: point the socket at a local stub instead of WhatsApp.
             ...(process.env.HAMBOT_WA_URL ? { waWebSocketUrl: process.env.HAMBOT_WA_URL } : {})
         });
@@ -157,6 +175,7 @@ async function startBot() {
         health.report('connecting');
 
         sock.ev.on('creds.update', saveCreds);
+        groupCache.attach(sock.ev);
 
         // How to link this device if there are no saved credentials yet.
         // An invalid PAIRING_NUMBER is reported and falls back to the QR code

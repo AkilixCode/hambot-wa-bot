@@ -8,6 +8,7 @@ const config = require('./config');
 const RateLimiter = require('./utils/rate-limiter');
 const logger = require('./utils/logger');
 const security = require('./utils/security');
+const groupCache = require('./utils/group-cache');
 const ui = require('./utils/ui');
 const commandRegistry = require('./commands/registry');
 const { withCorrectionNote, correctionNote } = require('./utils/correction');
@@ -27,8 +28,9 @@ const userCooldowns = new Map();
 /**
  * Is this sender an admin of this group?
  *
- * Reading group metadata costs an API round trip, so callers should only ask
- * when a command actually gates on it — not on every incoming message.
+ * Reading group metadata can cost an API round trip (utils/group-cache serves
+ * repeats), so callers should only ask when a command actually gates on it —
+ * not on every incoming message.
  *
  * @param {Object} sock
  * @param {string} groupJid
@@ -37,7 +39,7 @@ const userCooldowns = new Map();
  */
 async function isGroupAdmin(sock, groupJid, senderJid) {
     try {
-        const metadata = await sock.groupMetadata(groupJid);
+        const metadata = await groupCache.get(sock, groupJid);
         // Participant IDs may be reported as @lid or @s.whatsapp.net depending
         // on the group, so fall back to comparing the bare number.
         const senderNumber = senderJid.split('@')[0].split(':')[0];

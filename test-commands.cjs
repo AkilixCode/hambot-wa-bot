@@ -757,6 +757,76 @@ async function main() {
         }
     });
 
+    // ── Efficiency ───────────────────────────────────────────────────
+    console.log('\n⚡ Efficiency...\n');
+
+    const groupCache = require('./utils/group-cache');
+    const { EventEmitter } = require('events');
+
+    /** A socket whose groupMetadata counts calls and can be slowed down. */
+    function rosterSock(participants, delayMs = 0) {
+        const sock = fakeSock();
+        sock.metadataCalls = 0;
+        sock.groupMetadata = async (jid) => {
+            sock.metadataCalls++;
+            if (delayMs) await sleep(delayMs);
+            return { id: jid, subject: 'Test', participants: participants() };
+        };
+        return sock;
+    }
+
+    await test('Group cache: one roster fetch serves repeats and concurrent misses', async () => {
+        groupCache.clear();
+        const sock = rosterSock(() => [{ id: '1@s.whatsapp.net', admin: null }], 30);
+        const [a, b] = await Promise.all([groupCache.get(sock, 'g1@g.us'), groupCache.get(sock, 'g1@g.us')]);
+        await groupCache.get(sock, 'g1@g.us');
+        assert.strictEqual(sock.metadataCalls, 1, `fetched ${sock.metadataCalls}x`);
+        assert.strictEqual(a, b);
+        assert.strictEqual(groupCache.peek('g2@g.us'), undefined, 'peek never fetches');
+        assert.strictEqual(sock.metadataCalls, 1);
+    });
+
+    await test('Group cache: joins, leaves and promotions refetch; subject changes patch', async () => {
+        groupCache.clear();
+        const ev = new EventEmitter();
+        groupCache.attach(ev);
+        let admin = null;
+        const sock = rosterSock(() => [{ id: '1@s.whatsapp.net', admin }]);
+        await groupCache.get(sock, 'g1@g.us');
+
+        ev.emit('groups.update', [{ id: 'g1@g.us', subject: 'Renamed' }]);
+        assert.strictEqual(groupCache.peek('g1@g.us').subject, 'Renamed');
+        assert.strictEqual(sock.metadataCalls, 1, 'a rename needs no refetch');
+
+        admin = 'admin';
+        ev.emit('group-participants.update', { id: 'g1@g.us', participants: ['1@s.whatsapp.net'], action: 'promote' });
+        const fresh = await groupCache.get(sock, 'g1@g.us');
+        assert.strictEqual(sock.metadataCalls, 2);
+        assert.strictEqual(fresh.participants[0].admin, 'admin');
+    });
+
+    await test('Group cache: a failed fetch is not cached', async () => {
+        groupCache.clear();
+        let fail = true;
+        const sock = fakeSock();
+        sock.groupMetadata = async (jid) => {
+            if (fail) throw new Error('timed out');
+            return { id: jid, participants: [] };
+        };
+        await assert.rejects(groupCache.get(sock, 'g1@g.us'), /timed out/);
+        fail = false;
+        assert.deepStrictEqual((await groupCache.get(sock, 'g1@g.us')).participants, []);
+    });
+
+    await test('.tagall: the admin check and the command share one roster fetch', async () => {
+        groupCache.clear();
+        const admin = '6281200000009@s.whatsapp.net';
+        const sock = rosterSock(() => [{ id: admin, admin: 'admin' }, { id: '6281200000010@s.whatsapp.net', admin: null }]);
+        await handler(sock, { messages: [textMsg('g9@g.us', admin, '.tagall hi')], type: 'notify' });
+        assert.strictEqual(sock.metadataCalls, 1, `fetched ${sock.metadataCalls}x`);
+        assert.ok(texts(sock).some(t => t.includes('total anggota')), texts(sock).join(' | '));
+    });
+
     // ── Session recovery ─────────────────────────────────────────────
     // Last: index.js registers process signal handlers when required.
     console.log('\n🛟 Session recovery...\n');
