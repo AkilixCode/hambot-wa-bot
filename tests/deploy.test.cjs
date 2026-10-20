@@ -13,6 +13,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+// Tests live in tests/; paths are resolved from the repository root.
+const ROOT = path.join(__dirname, '..');
 const { spawnSync } = require('child_process');
 
 let passed = 0;
@@ -30,7 +32,7 @@ function test(name, fn) {
     }
 }
 
-const REPO = __dirname;
+const REPO = ROOT;
 const hasScript = spawnSync('script', ['--version']).status === 0;
 
 /** Fresh sandbox with deploy.sh, .env.example and a recording fake docker. */

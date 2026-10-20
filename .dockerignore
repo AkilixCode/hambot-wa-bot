@@ -49,8 +49,7 @@ coverage/
 .nyc_output/
 
 # Tests (not needed in production image)
-test-*.js
-test-*.cjs
+tests/
 
 # Documentation (not needed in production image)
 SECURITY.md

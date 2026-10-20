@@ -3,7 +3,7 @@
  * Test security features and protections
  */
 
-const security = require('./utils/security');
+const security = require('../utils/security');
 
 console.log('🔒 Running Security Tests...\n');
 

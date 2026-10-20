@@ -14,7 +14,9 @@ process.env.RATE_LIMIT_MAX = '1';
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const ui = require('./utils/ui');
+// Tests live in tests/; paths are resolved from the repository root.
+const ROOT = path.join(__dirname, '..');
+const ui = require('../utils/ui');
 
 let passed = 0;
 let failed = 0;
@@ -141,7 +143,7 @@ async function main() {
         });
         await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
         const base = `http://127.0.0.1:${server.address().port}`;
-        const httpClient = require('./utils/http-client');
+        const httpClient = require('../utils/http-client');
         try {
             const json = await httpClient.get(`${base}/json`);
             assert.deepStrictEqual(json.data, { ok: true });
@@ -159,7 +161,7 @@ async function main() {
     });
 
     await test('canvas: the calls the menu banner makes still work', () => {
-        const { renderBanner } = require('./utils/menu-image');
+        const { renderBanner } = require('../utils/menu-image');
         const jpeg = renderBanner();
         assert.ok(jpeg.length > 1000 && jpeg[0] === 0xff && jpeg[1] === 0xd8, 'banner must be a JPEG');
     });
@@ -185,7 +187,7 @@ async function main() {
     // ── Linking the number ───────────────────────────────────────────
     console.log('\n🔗 Login...\n');
 
-    const login = require('./utils/login');
+    const login = require('../utils/login');
 
     await test('PAIRING_NUMBER is validated into international digits', () => {
         assert.deepStrictEqual(login.parsePairingNumber('+62 812-3456-7890'), { number: '6281234567890', error: null });
@@ -228,7 +230,7 @@ async function main() {
     console.log('\n🩺 Health check...\n');
 
     await test('Health rules: connected/linking healthy, long outages and stale files not', () => {
-        const health = require('./utils/health');
+        const health = require('../utils/health');
         const now = Date.now();
         const judge = record => health.evaluate(record, now).healthy;
         assert.strictEqual(judge(null), false);
@@ -245,7 +247,7 @@ async function main() {
         const saved = process.env.HAMBOT_DATA_DIR;
         process.env.HAMBOT_DATA_DIR = dir;
         try {
-            require('./utils/health').report('open');
+            require('../utils/health').report('open');
             const out = execFileSync(process.execPath, ['scripts/healthcheck.js'], { env: { ...process.env } }).toString();
             assert.match(out, /healthy: connected/);
             execFileSync(process.execPath, ['scripts/healthcheck.js', '--self-test']);
@@ -260,7 +262,7 @@ async function main() {
 
     await test('OMDB is only ever called over https', () => {
         for (const file of ['commands/movie.js', 'utils/helpers.js']) {
-            const src = fs.readFileSync(path.join(__dirname, file), 'utf8');
+            const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
             assert.ok(!src.includes('http://www.omdbapi.com'), `${file} must not use plain http for OMDB`);
         }
     });
@@ -268,7 +270,7 @@ async function main() {
     // ── Reminders ─────────────────────────────────────────────────────
     console.log('\n⏰ Reminders...\n');
 
-    const ReminderCommand = require('./commands/reminder');
+    const ReminderCommand = require('../commands/reminder');
     const { activeReminders, MAX_PER_USER } = ReminderCommand;
     const reminder = new ReminderCommand();
 
@@ -303,7 +305,7 @@ async function main() {
 
     await test('A reminder is delivered through the socket that is live when it fires', async () => {
         clearReminders();
-        const socketRef = require('./utils/socket-ref');
+        const socketRef = require('../utils/socket-ref');
         const oldSock = fakeSock();
         const newSock = fakeSock();
         const from = '123@g.us';
@@ -334,7 +336,7 @@ async function main() {
     // ── Process control ──────────────────────────────────────────────
     console.log('\n🔄 Process control...\n');
 
-    const SecurityCommand = require('./commands/security');
+    const SecurityCommand = require('../commands/security');
     const securityCmd = new SecurityCommand();
 
     const waitForFallback = (bin) => new Promise((resolve, reject) => {
@@ -351,7 +353,7 @@ async function main() {
     // ── Command parsing ──────────────────────────────────────────────
     console.log('\n🔤 Command parsing...\n');
 
-    const { parseCommand } = require('./handler');
+    const { parseCommand } = require('../handler');
 
     await test('Parses a plain command with arguments', () => {
         assert.deepStrictEqual(parseCommand('.remind 10m masak mie', '.'),
@@ -387,7 +389,7 @@ async function main() {
     console.log('\n🧹 Hygiene...\n');
 
     await test('A title with no poster yields null, not a dead placeholder URL', async () => {
-        const { getValidPosterUrl } = require('./utils/helpers');
+        const { getValidPosterUrl } = require('../utils/helpers');
         assert.strictEqual(await getValidPosterUrl('N/A'), null);
         assert.strictEqual(await getValidPosterUrl(''), null);
     });
@@ -400,7 +402,7 @@ async function main() {
                 PROXY_USER: 'me@home', PROXY_PASS: 'p@ss:w/rd'
             });
             delete process.env.HB_PROXY_URL;
-            const Config = require('./config').constructor;
+            const Config = require('../config').constructor;
             const url = new Config().proxy.url;
             const parsed = new URL(url);
             assert.strictEqual(parsed.hostname, '100.64.0.1');
@@ -414,7 +416,7 @@ async function main() {
     });
 
     await test('Stale security event counters are pruned', () => {
-        const security = require('./utils/security');
+        const security = require('../utils/security');
         security.logSecurityEvent('test_event', { userId: '628666@s.whatsapp.net' });
         const [key] = [...security.securityEvents.keys()].filter(k => k.startsWith('test_event_'));
         assert.ok(key, 'event must be counted');
@@ -425,7 +427,7 @@ async function main() {
     });
 
     await test('Spam waits at least its advertised 1.5 s between messages', async () => {
-        const SpamCommand = require('./commands/spam');
+        const SpamCommand = require('../commands/spam');
         const spam = new SpamCommand();
         spam.THINKING_PAUSE_CHANCE = 0; // keep the test's runtime bounded
         const sock = { sendPresenceUpdate: async () => {} };
@@ -485,7 +487,7 @@ async function main() {
     });
 
     await test('Every netinfo topic comes out as a card under the message limit', () => {
-        const NetInfo = require('./commands/netinfo');
+        const NetInfo = require('../commands/netinfo');
         const netinfo = new NetInfo();
         for (const [topic, render] of Object.entries(netinfo.topics)) {
             const out = ui.restyle(render());
@@ -502,8 +504,8 @@ async function main() {
     // ── Menu ─────────────────────────────────────────────────────────
     console.log('\n📋 Menu...\n');
 
-    const MenuCommand = require('./commands/menu');
-    const menuImage = require('./utils/menu-image');
+    const MenuCommand = require('../commands/menu');
+    const menuImage = require('../utils/menu-image');
     const menu = new MenuCommand();
     const sharp = require('sharp');
 
@@ -576,9 +578,9 @@ async function main() {
     // ── Typo tolerance ───────────────────────────────────────────────
     console.log('\n✏️ Typo tolerance...\n');
 
-    const handler = require('./handler');
-    const registry = require('./commands/registry');
-    const config = require('./config');
+    const handler = require('../handler');
+    const registry = require('../commands/registry');
+    const config = require('../config');
     let typoSender = 0;
     // A fresh sender per call: this file runs with RATE_LIMIT_MAX=1.
     const say = async (text) => {
@@ -645,7 +647,7 @@ async function main() {
     console.log('\n💬 Chat output...\n');
 
     await test('.port echoes a search query without WhatsApp markdown', async () => {
-        const PortCommand = require('./commands/port');
+        const PortCommand = require('../commands/port');
         const sock = fakeSock();
         await new PortCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['*zzz_nothing*'], { from: '1@g.us' });
         const [reply] = texts(sock);
@@ -654,7 +656,7 @@ async function main() {
     });
 
     await test('.port renders a known port as a card', async () => {
-        const PortCommand = require('./commands/port');
+        const PortCommand = require('../commands/port');
         const sock = fakeSock();
         await new PortCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['22'], { from: '1@g.us' });
         const [reply] = texts(sock);
@@ -663,7 +665,7 @@ async function main() {
     });
 
     await test('.dns rejects an invalid domain with the standard error card', async () => {
-        const DnsCommand = require('./commands/dns');
+        const DnsCommand = require('../commands/dns');
         const sock = fakeSock();
         await new DnsCommand().execute(sock, fakeMsg('1@g.us', 'x'), ['not a domain!'], { from: '1@g.us' });
         const [reply] = texts(sock);
@@ -671,7 +673,7 @@ async function main() {
     });
 
     await test('Trivia decodes numeric and accented HTML entities', () => {
-        const TriviaCommand = require('./commands/trivia');
+        const TriviaCommand = require('../commands/trivia');
         const t = new TriviaCommand();
         assert.strictEqual(t.decodeHTML('Pok&eacute;mon &amp; &#039;Z&#x27; &quot;x&quot;'), 'Pokémon & \'Z\' "x"');
         assert.strictEqual(t.decodeHTML('&unknown;'), '&unknown;');
@@ -680,7 +682,7 @@ async function main() {
     // ── Runtime security toggles ─────────────────────────────────────
     console.log('\n🎛️ Runtime toggles...\n');
 
-    const security = require('./utils/security');
+    const security = require('../utils/security');
 
     await test('`.security disable rateLimit` actually disables the rate limiter', async () => {
         const sock = fakeSock();
@@ -726,7 +728,7 @@ async function main() {
     console.log('\n🔑 Owner lock-out guards...\n');
 
     await test('BOT_OWNER_ID typos are rejected and explained, not silently kept', () => {
-        const Config = require('./config').constructor;
+        const Config = require('../config').constructor;
         const saved = process.env.BOT_OWNER_ID;
         try {
             const check = (value) => { process.env.BOT_OWNER_ID = value; const c = new Config(); return { ids: c.bot.ownerIds, problems: c.ownerIdProblems() }; };
@@ -743,7 +745,7 @@ async function main() {
     });
 
     await test('ONLY_GROUP_MODE ignores private chats, but never the owner', async () => {
-        const config = require('./config');
+        const config = require('../config');
         const savedOwners = config.bot.ownerIds;
         const savedMode = config.bot.onlyGroupMode;
         config.bot.ownerIds = ['6281200000001@s.whatsapp.net'];
@@ -765,7 +767,7 @@ async function main() {
     // ── Efficiency ───────────────────────────────────────────────────
     console.log('\n⚡ Efficiency...\n');
 
-    const groupCache = require('./utils/group-cache');
+    const groupCache = require('../utils/group-cache');
     const { EventEmitter } = require('events');
 
     /** A socket whose groupMetadata counts calls and can be slowed down. */
@@ -836,7 +838,7 @@ async function main() {
         const { spawnSync } = require('child_process');
         const probe = "require('./handler'); const k = Object.keys(require.cache);" +
             "console.log(JSON.stringify(['sharp', 'canvas'].filter(m => k.some(f => f.includes('/node_modules/' + m + '/')))))";
-        const result = spawnSync(process.execPath, ['-e', probe], { cwd: __dirname, encoding: 'utf8' });
+        const result = spawnSync(process.execPath, ['-e', probe], { cwd: ROOT, encoding: 'utf8' });
         const loaded = JSON.parse(result.stdout.trim().split('\n').pop());
         assert.deepStrictEqual(loaded, [], `loaded at startup: ${loaded}`);
     });
@@ -853,7 +855,7 @@ async function main() {
         assert.match(card, /pengiriman:\*? ±[23]\.\d s/, card);
     });
 
-    const WorkSlots = require('./utils/work-slots');
+    const WorkSlots = require('../utils/work-slots');
 
     await test('Heavy slots: waiters run in order as slots free; a full line is refused', async () => {
         const slots = new WorkSlots(1, 2);
@@ -887,7 +889,7 @@ async function main() {
     });
 
     await test('A heavy command waits for a busy slot instead of being refused', async () => {
-        const config = require('./config');
+        const config = require('../config');
         const saved = config.performance.maxProcesses;
         config.performance.maxProcesses = 1;
         assert.ok(handler.heavySlots.tryAcquire(), 'simulate a running download');
@@ -897,7 +899,7 @@ async function main() {
             await sleep(50);
             assert.ok(texts(sock).some(t => t.includes('antrean ke-1')), texts(sock).join(' | '));
             assert.strictEqual(handler.heavySlots.waiting, 1);
-            const security = require('./utils/security');
+            const security = require('../utils/security');
             security.toggleFeature('rateLimit', false); // this file allows 1 request per window
             const again = fakeSock();
             try {
@@ -918,7 +920,7 @@ async function main() {
     });
 
     await test('With the line full (HEAVY_QUEUE_MAX=0) it says busy, as before', async () => {
-        const config = require('./config');
+        const config = require('../config');
         const saved = [config.performance.maxProcesses, config.performance.heavyQueueMax];
         config.performance.maxProcesses = 1;
         config.performance.heavyQueueMax = 0;
@@ -937,7 +939,7 @@ async function main() {
     // Last: index.js registers process signal handlers when required.
     console.log('\n🛟 Session recovery...\n');
 
-    const session = require('./utils/session');
+    const session = require('../utils/session');
 
     await test('Close reasons: logout relinks, corruption relinks on the 3rd, ban stops', () => {
         assert.strictEqual(session.decideOnClose(401).action, 'relink');
@@ -1015,7 +1017,7 @@ async function main() {
     });
 
     await test('Health: stuck linking for 30+ min is unhealthy', () => {
-        const health = require('./utils/health');
+        const health = require('../utils/health');
         const now = Date.now();
         assert.strictEqual(health.evaluate({ state: 'linking', since: now, linkingSince: now - 10 * 60e3, updatedAt: now }, now).healthy, true);
         assert.strictEqual(health.evaluate({ state: 'close', since: now, linkingSince: now - 31 * 60e3, updatedAt: now }, now).healthy, false);
@@ -1033,7 +1035,7 @@ async function main() {
         const realLog = console.log;
         console.log = () => {};
         try {
-            const bot = require('./index');
+            const bot = require('../index');
             bot.handleClose({ error: { output: { statusCode: 401 }, message: 'logged out' } });
             bot.cancelScheduledStart();
             assert.strictEqual(exited, false, 'must not exit (Docker would restart it into the same dead session)');
@@ -1059,7 +1061,7 @@ async function main() {
         const dir = tempAuth();
         const data = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-data-'));
         const child = require('child_process').spawn(process.execPath, ['index.js'], {
-            cwd: __dirname,
+            cwd: ROOT,
             env: {
                 ...process.env,
                 HAMBOT_WA_URL: `ws://127.0.0.1:${server.address().port}/ws`,
