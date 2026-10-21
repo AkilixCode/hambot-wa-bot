@@ -28,7 +28,7 @@
 
 const CommandBase = require('./base');
 const ui = require('../utils/ui');
-const { getRandomUA, sleep } = require('../utils/helpers');
+const { getRandomUA } = require('../utils/helpers');
 const httpClient = require('../utils/http-client');
 const cache = require('../utils/cache');
 const logger = require('../utils/logger');
@@ -325,9 +325,9 @@ class PinterestCommand extends CommandBase {
      * @returns {Promise<Buffer|null>} Image bytes, or null on any failure
      */
     async downloadImage(url) {
-        // A batch is five downloads fired back to back, and image hosts
-        // rate-limit that. A single retry after a short pause recovers those.
-        const attempts = 2;
+        // Transient failures (resets, 429 from back-to-back downloads, 5xx)
+        // are retried with backoff inside utils/http-client; a 403 or 404 is
+        // not, since asking again gets the same answer.
 
         // The referer must match the host being fetched. Both CDNs run
         // hotlink protection, so sending Pinterest's referer to Wallhaven
@@ -342,33 +342,25 @@ class PinterestCommand extends CommandBase {
             headers.Referer = 'https://wallhaven.cc/';
         }
 
-        for (let attempt = 0; attempt < attempts; attempt++) {
-            try {
-                const response = await httpClient.get(url, {
-                    responseType: 'arraybuffer',
-                    timeout: IMAGE_TIMEOUT_MS,
-                    headers
-                });
+        try {
+            const response = await httpClient.get(url, {
+                responseType: 'arraybuffer',
+                timeout: IMAGE_TIMEOUT_MS,
+                headers
+            });
 
-                const buffer = Buffer.from(response.data);
-                if (this.isValidImageBuffer(buffer)) return buffer;
+            const buffer = Buffer.from(response.data);
+            if (this.isValidImageBuffer(buffer)) return buffer;
 
-                // Not image data — retrying will not change that.
-                logger.debug(`[Pinterest] Not image data: ${url}`);
-                return null;
-            } catch (error) {
-                const isLast = attempt === attempts - 1;
-                if (isLast) {
-                    // Individual failures are expected; the caller falls back to
-                    // a lower resolution or simply sends fewer images.
-                    logger.debug(`[Pinterest] Download failed: ${url} - ${error.message}`);
-                    return null;
-                }
-                await sleep(400);
-            }
+            // Not image data — retrying will not change that.
+            logger.debug(`[Pinterest] Not image data: ${url}`);
+            return null;
+        } catch {
+            // Individual failures are expected (and already logged by
+            // http-client); the caller falls back to a lower resolution or
+            // simply sends fewer images.
+            return null;
         }
-
-        return null;
     }
 
     /**

@@ -279,7 +279,9 @@ async function getValidPosterUrl(originalUrl) {
         const hdUrl = originalUrl.replace(/\._V1_.*\.jpg$/i, `._V1_${resolution}.jpg`);
         
         try {
-            await httpClient.head(hdUrl, { timeout: 2000 });
+            // A probe: a 404 here just means "try the next size", so it is
+            // neither retried nor logged as a network problem.
+            await httpClient.head(hdUrl, { timeout: 2000, retry: false, netLog: false });
             return hdUrl;
         } catch {
             // Try next resolution

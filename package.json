@@ -18,11 +18,12 @@
     "test": "node tests/system.test.cjs",
     "test:integration": "node tests/integration.test.cjs",
     "test:security": "node tests/security.test.cjs",
-    "test:all": "npm run test && npm run test:integration && npm run test:security && npm run test:media && npm run test:commands && npm run test:deploy",
+    "test:all": "npm run test && npm run test:integration && npm run test:security && npm run test:media && npm run test:commands && npm run test:network && npm run test:deploy",
     "test:verbose": "LOG_LEVEL=debug node tests/system.test.cjs",
     "test:media": "node tests/media.test.cjs",
     "test:commands": "node tests/commands.test.cjs",
-    "test:deploy": "node tests/deploy.test.cjs"
+    "test:deploy": "node tests/deploy.test.cjs",
+    "test:network": "node tests/network.test.cjs"
   },
   "keywords": [
     "whatsapp",
@@ -39,6 +40,7 @@
     "axios": "^1.20.0",
     "canvas": "^3.2.3",
     "dotenv": "^18.0.8",
+    "https-proxy-agent": "^9.0.0",
     "pino": "^10.4.0",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.35.5",

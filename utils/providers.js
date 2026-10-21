@@ -23,6 +23,7 @@
  */
 
 const logger = require('./logger');
+const { classify } = require('./net-errors');
 
 // Consecutive failures before a provider is taken out of rotation.
 const FAILURE_THRESHOLD = 3;
@@ -71,6 +72,11 @@ function isOpen(id) {
  */
 function recordSuccess(id) {
     const rec = _record(id);
+    // First success after the breaker tripped: say so, so the log shows the
+    // outage ending as well as starting.
+    if (rec.trips > 0) {
+        logger.net({ type: 'circuit', id, state: 'closed', problem: true });
+    }
     rec.failures = 0;
     rec.trips = 0;
     rec.openUntil = 0;
@@ -87,17 +93,37 @@ function recordFailure(id, error) {
     const rec = _record(id);
     rec.failures++;
     rec.totalFailures++;
-    rec.lastError = error && error.message ? error.message : String(error);
+    rec.lastError = describeFailure(error);
 
     if (rec.failures >= FAILURE_THRESHOLD) {
         rec.trips++;
         const cooldown = Math.min(BASE_COOLDOWN_MS * (2 ** (rec.trips - 1)), MAX_COOLDOWN_MS);
         rec.openUntil = Date.now() + cooldown;
         rec.failures = 0; // Reset so recovery needs a fresh run of failures to re-trip.
-        logger.warn(
-            `Provider "${id}" circuit opened for ${Math.round(cooldown / 1000)}s - ${rec.lastError}`
-        );
+        logger.net({
+            type: 'circuit',
+            id,
+            state: 'open',
+            cooldownMs: cooldown,
+            failures: FAILURE_THRESHOLD,
+            lastError: rec.lastError,
+            problem: true
+        });
     }
+}
+
+/**
+ * Short reason for a failure, for logs and health records: the network
+ * summary when http-client or ytdlp annotated one ("HTTP 403", "bot-check"),
+ * otherwise the classifier's reading of the error.
+ * @param {Error|*} error
+ * @returns {string}
+ */
+function describeFailure(error) {
+    if (!error) return 'unknown error';
+    if (error.net && error.net.summary) return error.net.summary;
+    if (!(error instanceof Error)) return String(error);
+    return classify(error).summary;
 }
 
 /**
@@ -163,7 +189,9 @@ async function runProviders(group, providers, options = {}) {
             // badge the output.
             const degraded = i > 0;
             if (degraded) {
-                logger.info(`[${group}] served by fallback "${id}" (tier ${i + 1})`);
+                // One line that shows the whole path: what failed, why, and
+                // which source finally answered.
+                logger.net({ type: 'cascade', group, attempts, ok: true, problem: true });
             }
 
             return { result, providerId: id, providerLabel: label, degraded, attempts };
@@ -173,16 +201,23 @@ async function runProviders(group, providers, options = {}) {
                 id,
                 status: 'error',
                 error: error.message,
+                summary: describeFailure(error),
                 ms: Date.now() - started
             });
-            logger.debug(`[${group}] "${id}" failed - ${error.message}`);
         }
     }
 
+    logger.net({ type: 'cascade', group, attempts, ok: false, problem: true });
+
+    // The reasons ride along in the message, so the command's Error log line
+    // says "youtube=bot-check, soundcloud=timeout" rather than just "failed".
+    const reasons = attempts
+        .map(a => `${a.id}=${a.status === 'error' ? a.summary : a.status}`)
+        .join(', ');
     const failure = new Error(
         skippedAll
-            ? `All ${group} providers are circuit-open`
-            : `All ${group} providers failed`
+            ? `All ${group} providers are circuit-open (${reasons})`
+            : `All ${group} providers failed (${reasons})`
     );
     failure.attempts = attempts;
     throw failure;

@@ -1631,6 +1631,28 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
             lines.push(`${ui.SYM.bullet} _IP datacenter — YouTube bisa memblokir_`);
         }
 
+        if (eg.configured) {
+            const proxyHealth = providers.getHealth().find(p => p.id === 'egress:proxy');
+            if (proxyHealth && proxyHealth.open) {
+                lines.push(ui.kv('Status proxy', `mati, dijeda ${Math.ceil(proxyHealth.opensInMs / 1000)}s (lewat IP server)`, '🔴'));
+            } else if (proxyHealth && proxyHealth.consecutiveFailures > 0) {
+                lines.push(ui.kv('Status proxy', `${proxyHealth.consecutiveFailures}x gagal berturut-turut`, '🟡'));
+            }
+        }
+
+        // The last few network problems, already redacted by the logger —
+        // usually the answer to "why did that just fail".
+        const problems = logger.recentNetProblems(5);
+        if (problems.length > 0) {
+            lines.push('');
+            lines.push(`🌐 ${ui.bold('Masalah jaringan terakhir')}`);
+            for (const p of problems) {
+                const ago = Math.max(1, Math.round((Date.now() - p.at) / 1000));
+                const when = ago < 120 ? `${ago}d` : `${Math.round(ago / 60)}m`;
+                lines.push(`${ui.SYM.bullet} _${when} lalu_ ${ui.safe(redact.redact(p.line), 140)}`);
+            }
+        }
+
         const health = providers.getHealth();
         if (health.length > 0) {
             lines.push('');

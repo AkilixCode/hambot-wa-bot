@@ -22,9 +22,10 @@
 const fs = require('fs');
 const fsPromises = require('fs').promises;
 const path = require('path');
-const axios = require('axios');
 const config = require('../config');
 const logger = require('./logger');
+const httpClient = require('./http-client');
+const { classify } = require('./net-errors');
 const { dataDir } = require('./paths');
 
 // HAMBOT_DATA_DIR (see utils/paths) exists mainly so the test suite can
@@ -33,8 +34,14 @@ const { dataDir } = require('./paths');
 const STATE_DIR = dataDir();
 const STATE_FILE = path.join(STATE_DIR, 'egress.json');
 
-// Public endpoint that echoes the caller's IP. Plain text, tiny response.
-const IP_ECHO_URL = 'https://api.ipify.org?format=json';
+// Public endpoints that echo the caller's IP, tried in order. All IPv4-only:
+// the direct and proxy answers are compared, and an IPv4 address next to an
+// IPv6 one would always look "different".
+const IP_ECHO_URLS = [
+    'https://api.ipify.org?format=json',
+    'https://ipv4.icanhazip.com',
+    'https://v4.ident.me'
+];
 const PROBE_TIMEOUT = 10000;
 
 // Result of the last test(), surfaced by the media doctor.
@@ -68,7 +75,7 @@ function restore() {
         const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
         if (typeof raw.enabled === 'boolean') {
             config.proxy.enabled = raw.enabled;
-            logger.info(`Egress: restored proxy toggle -> ${raw.enabled ? 'ON' : 'OFF'}`);
+            logger.system(`Egress: restored proxy toggle -> ${raw.enabled ? 'ON' : 'OFF'}`);
         }
     } catch {
         // A corrupt state file must not stop the bot. Fall back to the env flag.
@@ -100,7 +107,7 @@ async function enable() {
     }
     config.proxy.enabled = true;
     await persist();
-    logger.info('Egress: proxy ENABLED');
+    logger.system(`Egress: proxy ENABLED (${httpClient.proxyLabel()})`);
     return { ok: true };
 }
 
@@ -111,64 +118,50 @@ async function enable() {
 async function disable() {
     config.proxy.enabled = false;
     await persist();
-    logger.info('Egress: proxy DISABLED');
+    logger.system('Egress: proxy DISABLED — traffic leaves from the server IP');
     return { ok: true };
 }
 
 /**
- * Build an axios instance that is forced through the proxy, ignoring the
- * toggle. Used by test() so the proxy can be probed while it is switched off.
+ * An axios instance forced through the proxy, ignoring the toggle, so the
+ * proxy can be probed while it is switched off. It uses the same agents as
+ * real traffic (utils/http-client), so a passing probe means real requests
+ * will get through too — the old probe used a different code path and could
+ * pass while every real HTTPS request through an HTTP proxy failed.
  * @returns {Object|null} axios instance, or null if no proxy is configured
  */
 function _forcedProxyClient() {
-    if (!isConfigured()) return null;
-
-    const proxyUrl = config.proxy.url || config.media.proxyUrl;
-    const type = (config.proxy.type || 'http').toLowerCase();
-
-    if (type === 'socks5' || type === 'socks') {
-        try {
-            const { SocksProxyAgent } = require('socks-proxy-agent');
-            const agent = new SocksProxyAgent(proxyUrl);
-            return axios.create({
-                timeout: PROBE_TIMEOUT,
-                httpAgent: agent,
-                httpsAgent: agent,
-                proxy: false
-            });
-        } catch {
-            return null;
-        }
-    }
-
-    // Build the axios proxy object directly rather than calling
-    // config.getAxiosProxyConfig(), which short-circuits when the toggle is off.
-    const proxy = {
-        host: config.proxy.host,
-        port: config.proxy.port,
-        protocol: type === 'https' ? 'https' : 'http'
-    };
-    if (config.proxy.user && config.proxy.pass) {
-        proxy.auth = { username: config.proxy.user, password: config.proxy.pass };
-    }
-
-    return axios.create({ timeout: PROBE_TIMEOUT, proxy });
+    return httpClient.createProxyClient({ timeout: PROBE_TIMEOUT });
 }
 
 /**
  * Fetch the public IP seen by a given client, timing the round trip.
+ * Tries each echo service in turn, so one being down does not read as
+ * "the proxy is broken".
  * @param {Object} client - axios instance
+ * @param {string} route - 'proxy' or 'direct', for error classification
  * @returns {Promise<{ok: boolean, ip?: string, ms?: number, error?: string}>}
  */
-async function _probe(client) {
+async function _probe(client, route) {
     const started = Date.now();
-    try {
-        const res = await client.get(IP_ECHO_URL);
-        const ip = typeof res.data === 'object' ? res.data.ip : String(res.data).trim();
-        return { ok: true, ip, ms: Date.now() - started };
-    } catch (error) {
-        return { ok: false, error: error.message, ms: Date.now() - started };
+    let lastError = null;
+
+    for (const url of IP_ECHO_URLS) {
+        try {
+            const res = await client.get(url);
+            const ip = typeof res.data === 'object' && res.data ? res.data.ip : String(res.data).trim();
+            if (ip && /^[0-9a-f.:]+$/i.test(ip)) {
+                return { ok: true, ip, ms: Date.now() - started };
+            }
+            lastError = `unexpected answer from ${new URL(url).host}`;
+        } catch (error) {
+            lastError = classify(error, { route, timeout: PROBE_TIMEOUT }).summary;
+            // The proxy itself failing will not get better on the next echo
+            // service; stop instead of waiting out the timeout again.
+            if (route === 'proxy' && classify(error, { route }).proxyFault) break;
+        }
     }
+    return { ok: false, error: lastError, ms: Date.now() - started };
 }
 
 /**
@@ -181,11 +174,11 @@ async function _probe(client) {
  * @returns {Promise<Object>} Probe results for both paths
  */
 async function test() {
-    const direct = await _probe(axios.create({ timeout: PROBE_TIMEOUT, proxy: false }));
+    const direct = await _probe(httpClient.createLocalHttpClient({ timeout: PROBE_TIMEOUT }), 'direct');
 
     const proxyClient = _forcedProxyClient();
     const viaProxy = proxyClient
-        ? await _probe(proxyClient)
+        ? await _probe(proxyClient, 'proxy')
         : { ok: false, error: 'Proxy belum dikonfigurasi' };
 
     const result = {
