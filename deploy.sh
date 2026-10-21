@@ -14,6 +14,8 @@
 #   ./deploy.sh switch docker|local
 #                               move to the other way of running; the
 #                               WhatsApp session moves too (no relinking)
+#   ./deploy.sh chat            set up .chat (AI chat): local model, API provider
+#                               or agent; also: chat off | chat test | chat undo
 #   ./deploy.sh status          numbers, login state and health
 #   ./deploy.sh doctor          check everything and say how to fix problems
 #   ./deploy.sh logs            follow the logs
@@ -47,6 +49,8 @@ TMP_PATHS=""
 TMP=""
 
 cleanup() {
+    # A Ctrl+C during hidden key entry must not leave the terminal silent.
+    [ -z "${STTY_HIDDEN:-}" ] || stty echo <"$STTY_HIDDEN" 2>/dev/null || true
     # TMP_PATHS is a space-separated list of paths this script created.
     # shellcheck disable=SC2086
     [ -z "$TMP_PATHS" ] || rm -rf $TMP_PATHS
@@ -161,7 +165,8 @@ set_env() {
 # Current value of KEY in .env (empty when unset or commented out).
 get_env() {
     [ -f .env ] || return 0
-    grep "^${1}=" .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d '\r' || true
+    grep "^${1}=" .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d '\r' \
+        | sed "s/^'\(.*\)'\$/\1/; s/^\"\(.*\)\"\$/\1/" || true
 }
 
 # +62 812-3456-7890 style, for reading a number back to the user.
@@ -938,12 +943,663 @@ cmd_doctor() {
 
     if other_running; then bad "two copies are running (Docker and Local): $(other_stop_cmd)"; fi
 
+    case $(get_env CHAT_ENABLED) in
+        true|yes|on|1)
+            say "AI chat (.chat):"
+            if [ "$MODE" = docker ] && ! docker_ready; then
+                note "skipped: Docker is not usable"
+            else
+                chat_check || true
+            fi
+            ;;
+    esac
+
     if [ "$DOCTOR_FAILS" -eq 0 ]; then
         say "All good."
     else
         say "$DOCTOR_FAILS thing(s) to fix: see FIX above."
         return 1
     fi
+}
+
+# ------------------------------------------------------------
+# AI chat (.chat): wizard, check, off, undo
+# ------------------------------------------------------------
+ENV_BACKUP=.env.bak
+EDIT_ROUNDS=3
+
+# Write KEY VALUE [KEY VALUE ...] into .env in one atomic step. Unlike
+# set_env, values may hold | & \ $ # and spaces (keys, URLs): they are
+# written through awk (never sed) and single-quoted when needed, which
+# dotenv and Docker Compose both take literally. A value with ' or a
+# newline cannot be quoted that way and must be refused before this.
+# The first line for a key (set or "# KEY=" commented out) is replaced;
+# later duplicates are dropped; missing keys are appended.
+set_env_many() {
+    [ -f .env ] || die "Internal error: .env missing while saving settings. Run ./deploy.sh again."
+    n=0
+    while [ $# -ge 2 ]; do
+        n=$((n + 1))
+        export "HBK_$n=$1" "HBV_$n=$2"
+        shift 2
+    done
+    export HB_N=$n
+    new_tmp env
+    (
+        umask 077
+        awk '
+            function q(s) { return (s ~ /^[A-Za-z0-9._:\/@+,=-]*$/) ? s : "\047" s "\047" }
+            BEGIN {
+                n = ENVIRON["HB_N"] + 0
+                for (i = 1; i <= n; i++) { k[i] = ENVIRON["HBK_" i]; v[i] = ENVIRON["HBV_" i]; at[k[i]] = i }
+            }
+            {
+                line = $0
+                sub(/\r$/, "", line)
+                if (match(line, /^#* *[A-Za-z_][A-Za-z0-9_]*=/)) {
+                    key = substr(line, 1, RLENGTH - 1)
+                    sub(/^#* */, "", key)
+                    if (key in at) {
+                        if (!(key in done)) { print key "=" q(v[at[key]]); done[key] = 1 }
+                        next
+                    }
+                }
+                print line
+            }
+            END { for (i = 1; i <= n; i++) if (!(k[i] in done)) print k[i] "=" q(v[i]) }
+        ' .env > "$TMP"
+    ) || die "Could not write the new .env (disk full?). Nothing was changed."
+    mv "$TMP" .env
+}
+
+# Answers are collected here and written only after the summary is
+# confirmed: Ctrl+C, end of input or "no" leave .env exactly as it was.
+PENDING=""
+pend() {
+    case " $PENDING " in *" $1 "*) ;; *) PENDING="$PENDING $1" ;; esac
+    eval "PV_$1=\$2"
+}
+# The pending (or saved) value, or $2 when there is none.
+pending_or() {
+    v=$(pending_value "$1")
+    printf '%s' "${v:-$2}"
+}
+pending_value() {
+    case " $PENDING " in *" $1 "*) eval "printf '%s' \"\$PV_$1\"" ;; *) get_env "$1" ;; esac
+}
+save_pending() {
+    set --
+    for key in $PENDING; do
+        eval "value=\$PV_$key"
+        set -- "$@" "$key" "$value"
+    done
+    if [ ! -f "$ENV_BACKUP.taken" ]; then
+        (umask 077; cp .env "$ENV_BACKUP")
+        : > "$ENV_BACKUP.taken"
+        TMP_PATHS="$TMP_PATHS $ROOT/$ENV_BACKUP.taken"
+    fi
+    set_env_many "$@"
+}
+
+# Pick one of several options by number or name (prefix). Prints the choice.
+#   $1 question  $2 default (Enter)  $3.. "name|description" options
+ask_choice() {
+    question=$1
+    default=$2
+    shift 2
+    say "" >&2
+    say "$question" >&2
+    i=0
+    for opt in "$@"; do
+        i=$((i + 1))
+        name=${opt%%|*}
+        mark=""
+        [ "$name" = "$default" ] && mark=" (Enter)"
+        say "  $i) ${opt#*|}$mark" >&2
+    done
+    attempt=0
+    while [ $attempt -lt $MAX_TRIES ]; do
+        attempt=$((attempt + 1))
+        read_line "Choice [1-$i]: " || input_closed
+        answer=$(printf '%s' "$ANSWER" | tr -d ' ' | tr 'A-Z' 'a-z')
+        if [ -z "$answer" ] && [ -n "$default" ]; then printf '%s' "$default"; return 0; fi
+        j=0
+        for opt in "$@"; do
+            j=$((j + 1))
+            name=${opt%%|*}
+            if [ "$answer" = "$j" ] || [ "$answer" = "$name" ]; then printf '%s' "$name"; return 0; fi
+        done
+        for opt in "$@"; do
+            name=${opt%%|*}
+            case $name in "$answer"*) [ -n "$answer" ] && { printf '%s' "$name"; return 0; } ;; esac
+        done
+        warn "Type a number from 1 to $i."
+    done
+    die "No valid choice after $MAX_TRIES tries. Run ./deploy.sh chat again."
+}
+
+# Free text. $1 prompt  $2 current (Enter keeps it)  $3 "required"
+ask_text() {
+    attempt=0
+    while [ $attempt -lt $MAX_TRIES ]; do
+        attempt=$((attempt + 1))
+        if [ -n "$2" ]; then
+            read_line "$1 [$2, Enter = keep]: " || input_closed
+        else
+            read_line "$1: " || input_closed
+        fi
+        value=$(printf '%s' "$ANSWER" | sed "s/^[[:space:]]*//; s/[[:space:]]*\$//; s/^[\"']//; s/[\"']\$//")
+        if [ -z "$value" ]; then
+            if [ -n "$2" ]; then printf '%s' "$2"; return 0; fi
+            if [ "${3:-}" != required ]; then printf ''; return 0; fi
+            warn "This one is required."
+            continue
+        fi
+        case $value in
+            *"'"*) warn "Quotes (') cannot be saved here — type it without them."; continue ;;
+        esac
+        printf '%s' "$value"
+        return 0
+    done
+    die "No answer after $MAX_TRIES tries. Run ./deploy.sh chat again."
+}
+
+# Hidden input for keys. Enter keeps the current one, "-" removes it.
+STTY_HIDDEN=""
+read_secret() {
+    if [ "$TTY" = /dev/tty ] || { [ "$TTY" = stdin ] && [ -t 0 ]; }; then
+        dev=/dev/tty
+        [ "$TTY" = stdin ] && dev=/dev/stdin
+        if stty -echo <"$dev" 2>/dev/null; then
+            STTY_HIDDEN=$dev
+            read_line "$1" || { stty echo <"$dev" 2>/dev/null; STTY_HIDDEN=""; return 1; }
+            stty echo <"$dev" 2>/dev/null || true
+            STTY_HIDDEN=""
+            printf '\n' >&2
+            return 0
+        fi
+    fi
+    read_line "$1"
+}
+
+# "…abcd (51 chars)": enough to recognise a key, useless to anyone else.
+key_hint() {
+    [ -n "$1" ] || { printf 'none'; return 0; }
+    printf '…%s (%s chars)' "$(printf '%s' "$1" | tail -c 4)" "${#1}"
+}
+
+ask_secret() {
+    prompt=$1
+    current=$2
+    required=${3:-}
+    attempt=0
+    while [ $attempt -lt $MAX_TRIES ]; do
+        attempt=$((attempt + 1))
+        if [ -n "$current" ]; then
+            read_secret "$prompt [saved: $(key_hint "$current"); Enter = keep, - = remove]: " || input_closed
+        else
+            read_secret "$prompt: " || input_closed
+        fi
+        # Pasted keys often carry spaces, quotes or a "Bearer " prefix.
+        value=$(printf '%s' "$ANSWER" | tr -d ' \t' | sed "s/^[\"']//; s/[\"']\$//; s/^[Bb]earer//")
+        if [ "$value" = "-" ]; then printf ''; return 0; fi
+        if [ -z "$value" ]; then
+            if [ -n "$current" ]; then printf '%s' "$current"; return 0; fi
+            if [ "$required" != required ]; then printf ''; return 0; fi
+            warn "This backend needs a key or token."
+            continue
+        fi
+        case $value in
+            *"'"*) warn "A key with ' in it cannot be saved by this wizard. Put it in .env yourself, in double quotes."; continue ;;
+        esac
+        say "    -> key $(key_hint "$value")" >&2
+        printf '%s' "$value"
+        return 0
+    done
+    die "No key after $MAX_TRIES tries. Run ./deploy.sh chat again."
+}
+
+# Hosts where a key may travel over plain http: loopback, private ranges,
+# Tailscale (encrypted by WireGuard), Docker's host alias, single-label names.
+private_host() {
+    case $1 in
+        localhost|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+        100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;
+        *.ts.net|host.docker.internal|*.local|*.internal|*.lan|\[*) return 0 ;;
+        *.*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+url_host() { printf '%s' "$1" | sed 's|^[a-zA-Z]*://||; s|/.*||; s|:[0-9]*$||'; }
+
+# A URL, forgiving the usual paste mistakes. $1 prompt $2 current/default
+ask_url() {
+    attempt=0
+    while [ $attempt -lt $MAX_TRIES ]; do
+        attempt=$((attempt + 1))
+        url=$(ask_text "$1" "$2" required)
+        url=$(printf '%s' "$url" | tr -d ' ')
+        case $url in
+            http://*|https://*) ;;
+            *://*) warn "Only http:// or https:// addresses work."; continue ;;
+            *)
+                if confirm "    No http:// in front. Use http://$url ?" y; then url="http://$url"; else continue; fi
+                ;;
+        esac
+        stripped=$(printf '%s' "$url" | sed -E 's#/+$##; s#/(chat/completions|completions|api/chat|api/generate|api/tags|messages|models)/*$##')
+        if [ "$stripped" != "${url%/}" ]; then
+            say "    -> using $stripped (the endpoint path is added by the bot)" >&2
+        fi
+        url=$stripped
+        host=$(url_host "$url")
+        if [ "$MODE" = docker ]; then
+            case $host in
+                localhost|127.0.0.1|::1|\[::1\])
+                    warn "Inside the Docker container, $host is the container itself, not this machine."
+                    alt=$(printf '%s' "$url" | sed "s#://$host#://host.docker.internal#")
+                    if confirm "    Use $alt instead (this machine, seen from the container)?" y; then url=$alt; fi
+                    ;;
+            esac
+        fi
+        printf '%s' "$url"
+        return 0
+    done
+    die "No usable address after $MAX_TRIES tries. Run ./deploy.sh chat again."
+}
+
+# A key over plain http to the internet would travel in clear text.
+url_safe_for_key() {
+    case $1 in http://*) [ -n "$2" ] || return 0; private_host "$(url_host "$1")" ;; *) return 0 ;; esac
+}
+
+# Bounded number. $1 prompt $2 default $3 min $4 max
+ask_count() {
+    attempt=0
+    while [ $attempt -lt $MAX_TRIES ]; do
+        attempt=$((attempt + 1))
+        read_line "$1 [$2]: " || input_closed
+        value=$(printf '%s' "$ANSWER" | tr -d ' ')
+        [ -z "$value" ] && value=$2
+        case $value in ''|*[!0-9]*) warn "A whole number, please."; continue ;; esac
+        if [ "$value" -lt "$3" ] || [ "$value" -gt "$4" ]; then warn "Between $3 and $4, please."; continue; fi
+        printf '%s' "$value"
+        return 0
+    done
+    die "No valid number after $MAX_TRIES tries. Run ./deploy.sh chat again."
+}
+
+docker_localhost() {
+    if [ "$MODE" = docker ]; then printf 'http://host.docker.internal'; else printf 'http://127.0.0.1'; fi
+}
+
+# The questions for one backend. Everything goes to pend(), nothing to .env.
+configure_backend() {
+    case $1 in
+        local)
+            say ""
+            info "Local model"
+            api=$(ask_choice "Which kind of local server?" "$(pending_or CHAT_LOCAL_API ollama)" \
+                "ollama|Ollama" \
+                "openai|OpenAI-compatible (LM Studio, llama.cpp, vLLM, LocalAI, Jan)")
+            pend CHAT_LOCAL_API "$api"
+            if [ "$api" = ollama ]; then def="$(docker_localhost):11434"; else def="$(docker_localhost):1234/v1"; fi
+            cur=$(pending_value CHAT_LOCAL_URL)
+            pend CHAT_LOCAL_URL "$(ask_url "  Server address" "${cur:-$def}")"
+            pend CHAT_LOCAL_MODEL "$(ask_text "  Model name (e.g. llama3.2 — ollama list shows yours)" "$(pending_value CHAT_LOCAL_MODEL)" required)"
+            if [ "$api" = openai ]; then
+                pend CHAT_LOCAL_API_KEY "$(ask_secret "  API key, only if the server was started with one (Enter = none)" "$(pending_value CHAT_LOCAL_API_KEY)")"
+            fi
+            ;;
+        provider)
+            say ""
+            info "API provider"
+            api=$(ask_choice "Which API does the provider speak?" "$(pending_or CHAT_PROVIDER_API openai)" \
+                "openai|OpenAI-compatible (OpenAI, OpenRouter, Groq, DeepSeek, Mistral, Together, ...)" \
+                "anthropic|Anthropic (Claude)" \
+                "gemini|Google Gemini")
+            pend CHAT_PROVIDER_API "$api"
+            if [ "$api" = openai ]; then
+                say "  Addresses: OpenAI https://api.openai.com/v1 · OpenRouter https://openrouter.ai/api/v1"
+                say "             Groq https://api.groq.com/openai/v1 · DeepSeek https://api.deepseek.com/v1"
+                say "  Type - to use the official OpenAI address."
+            else
+                say "  Type - to use the official $api address."
+            fi
+            cur=$(pending_value CHAT_PROVIDER_URL)
+            attempt_url=0
+            while :; do
+                attempt_url=$((attempt_url + 1))
+                [ $attempt_url -le $MAX_TRIES ] || die "No usable address after $MAX_TRIES tries. Run ./deploy.sh chat again."
+                read_line "  Address [${cur:-official}, Enter = keep]: " || input_closed
+                case $(printf '%s' "$ANSWER" | tr -d ' ') in
+                    '') url=$cur ;;
+                    -) url="" ;;
+                    *) url=$(printf '%s' "$ANSWER" | tr -d ' '); case $url in http://*|https://*) ;; *) url="https://$url"; say "    -> using $url" ;; esac
+                       url=$(printf '%s' "$url" | sed -E 's#/+$##; s#/(chat/completions|completions|messages|models)/*$##') ;;
+                esac
+                break
+            done
+            pend CHAT_PROVIDER_URL "$url"
+            # The official addresses always need a key; a custom one may not.
+            req=required
+            [ -n "$url" ] && req=""
+            pend CHAT_PROVIDER_API_KEY "$(ask_secret "  API key" "$(pending_value CHAT_PROVIDER_API_KEY)" $req)"
+            ex="the name from your provider's model list"
+            [ "$api" = anthropic ] && ex="e.g. claude-opus-5-5"
+            pend CHAT_PROVIDER_MODEL "$(ask_text "  Model ($ex)" "$(pending_value CHAT_PROVIDER_MODEL)" required)"
+            ;;
+        agent)
+            say ""
+            info "Agent platform"
+            say "  The agent can run on this machine or on another one in your Tailscale network,"
+            say "  e.g. your home PC while the bot runs on a VPS. See docs/ai-chat.md."
+            platform=$(ask_choice "Which agent?" "$(pending_or CHAT_AGENT_PLATFORM hermes)" \
+                "hermes|Hermes Agent (hermes gateway, API_SERVER_ENABLED=true)" \
+                "openclaw|OpenClaw (gateway.http.endpoints.chatCompletions.enabled)" \
+                "openai|Another agent with an OpenAI-style API")
+            pend CHAT_AGENT_PLATFORM "$platform"
+            case $platform in
+                hermes) def="$(docker_localhost):8642/v1" ;;
+                openclaw) def="$(docker_localhost):18789/v1" ;;
+                *) def="" ;;
+            esac
+            cur=$(pending_value CHAT_AGENT_URL)
+            say "  On another machine? Use its Tailscale address, e.g. http://100.101.102.103:8642/v1"
+            pend CHAT_AGENT_URL "$(ask_url "  Agent address" "${cur:-$def}")"
+            pend CHAT_AGENT_TOKEN "$(ask_secret "  Token (Hermes: API_SERVER_KEY · OpenClaw: gateway token)" "$(pending_value CHAT_AGENT_TOKEN)")"
+            if [ "$platform" = openclaw ]; then
+                pend CHAT_AGENT_ID "$(ask_text "  OpenClaw agent id (Enter = default agent)" "$(pending_value CHAT_AGENT_ID)")"
+            fi
+            if [ "$platform" = openai ]; then
+                pend CHAT_AGENT_MODEL "$(ask_text "  Model name the agent expects" "$(pending_value CHAT_AGENT_MODEL)" required)"
+            elif confirm "  Let the agent keep the conversation itself (its own memory)? Otherwise HamBot sends it." n; then
+                pend CHAT_AGENT_MEMORY agent
+            else
+                pend CHAT_AGENT_MEMORY bot
+            fi
+            ;;
+    esac
+
+    # A key must never cross the internet in clear text.
+    case $1 in
+        local) u=CHAT_LOCAL_URL; k=CHAT_LOCAL_API_KEY ;;
+        provider) u=CHAT_PROVIDER_URL; k=CHAT_PROVIDER_API_KEY ;;
+        agent) u=CHAT_AGENT_URL; k=CHAT_AGENT_TOKEN ;;
+    esac
+    url=$(pending_value $u)
+    if ! url_safe_for_key "$url" "$(pending_value $k)"; then
+        warn "$url is plain http:// on the internet — the key would travel unencrypted."
+        https=$(printf '%s' "$url" | sed 's#^http://#https://#')
+        if confirm "    Use $https instead?" y; then
+            pend $u "$https"
+        else
+            die "Not saved. Use an https:// address, or reach the server over Tailscale."
+        fi
+    fi
+}
+
+configured_backend() {
+    case $1 in
+        local) [ -n "$(pending_value CHAT_LOCAL_MODEL)" ] ;;
+        provider) [ -n "$(pending_value CHAT_PROVIDER_MODEL)" ] ;;
+        agent) [ -n "$(pending_value CHAT_AGENT_URL)" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+collect_chat_answers() {
+    access=$(ask_choice "Who may use .chat?" "$(pending_or CHAT_ACCESS owner)" \
+        "owner|Only you (the owner)" \
+        "allowlist|You and the numbers you list" \
+        "public|Everyone who can message the bot")
+    if [ "$access" = public ]; then
+        warn "Everyone's questions will use your AI (and your API credit)."
+        confirm "    Open .chat to everyone?" n || access=owner
+    fi
+    pend CHAT_ACCESS "$access"
+    if [ "$access" = allowlist ]; then
+        say "  Numbers allowed to chat, with country code. Empty line when done."
+        list=$(pending_value CHAT_ALLOWED_USERS)
+        [ -n "$list" ] && say "  Current: $list  (Enter = keep, - = start a new list)"
+        read_line "  Number: " || input_closed
+        first=$(printf '%s' "$ANSWER" | tr -d ' ')
+        if [ -n "$first" ]; then
+            [ "$first" = "-" ] && first=""
+            list=""
+            count=0
+            fails=0
+            entry=$first
+            while [ $count -lt 50 ]; do
+                if [ -n "$entry" ]; then
+                    if number=$(valid_number "$(clean_number "$entry")"); then
+                        list="${list:+$list,}$number"
+                        count=$((count + 1))
+                    else
+                        fails=$((fails + 1))
+                        [ $fails -lt $MAX_TRIES ] || die "Too many invalid numbers. Run ./deploy.sh chat again."
+                    fi
+                fi
+                read_line "  Number (Enter = done): " || input_closed
+                entry=$(printf '%s' "$ANSWER" | tr -d ' ')
+                [ -z "$entry" ] && break
+            done
+        fi
+        pend CHAT_ALLOWED_USERS "$list"
+    fi
+
+    backend=$(ask_choice "Where should questions go?" "$(pending_or CHAT_BACKEND local)" \
+        "local|A local model (Ollama, LM Studio, llama.cpp, ...)" \
+        "provider|An API provider (OpenAI-compatible, Anthropic, Gemini)" \
+        "agent|An agent platform (Hermes Agent, OpenClaw), here or over Tailscale")
+    pend CHAT_BACKEND "$backend"
+    configure_backend "$backend"
+
+    say ""
+    say "A fallback answers when the main backend is down (e.g. your PC is off)."
+    others=""
+    for b in local provider agent; do [ "$b" = "$backend" ] || others="$others $b"; done
+    set -- "none|No fallback"
+    for b in $others; do
+        if configured_backend "$b"; then set -- "$@" "$b|$b (already set up)"; else set -- "$@" "$b|$b (set it up now)"; fi
+    done
+    cur=$(pending_value CHAT_FALLBACK)
+    case " $others " in *" $cur "*) ;; *) cur=none ;; esac
+    fallback=$(ask_choice "Fallback?" "$cur" "$@")
+    pend CHAT_FALLBACK "$fallback"
+    if [ "$fallback" != none ] && ! configured_backend "$fallback"; then configure_backend "$fallback"; fi
+
+    if [ "$backend" = agent ] || [ "$fallback" = agent ]; then
+        say ""
+        say "An agent can run tools on the machine it lives on (files, shell, mail...)."
+        agent_access=$(ask_choice "Who may use the agent?" "$(pending_or CHAT_AGENT_ACCESS owner)" \
+            "owner|Only you (recommended)" \
+            "allowlist|You and the allowed numbers" \
+            "public|Everyone allowed to use .chat")
+        if [ "$agent_access" != owner ]; then
+            warn "Others will be able to make your agent act on your machine."
+            confirm "    Are you sure?" n || agent_access=owner
+            if [ "$agent_access" = public ]; then confirm "    Really everyone? This cannot be undone once they act." n || agent_access=owner; fi
+        fi
+        pend CHAT_AGENT_ACCESS "$agent_access"
+    fi
+
+    say ""
+    cur=$(pending_value CHAT_MAX_CONCURRENT)
+    pend CHAT_MAX_CONCURRENT "$(ask_count "AI questions answered at the same time (1-10)" "${cur:-2}" 1 10)"
+    cur=$(pending_value CHAT_DAILY_LIMIT_ENABLED)
+    dflt=n
+    case $cur in true|yes|on|1) dflt=y ;; esac
+    if confirm "Limit how many questions each person may ask per day?" $dflt; then
+        pend CHAT_DAILY_LIMIT_ENABLED true
+        cur=$(pending_value CHAT_DAILY_LIMIT)
+        pend CHAT_DAILY_LIMIT "$(ask_count "  Questions per person per day" "${cur:-20}" 1 100000)"
+    else
+        pend CHAT_DAILY_LIMIT_ENABLED false
+    fi
+    pend CHAT_ENABLED true
+}
+
+show_pending() {
+    say ""
+    info "AI chat settings to save in .env:"
+    for key in $PENDING; do
+        eval "value=\$PV_$key"
+        case $key in
+            *_KEY|*_TOKEN) shown=$(key_hint "$value") ;;
+            *) shown=${value:-(empty)} ;;
+        esac
+        printf '  %-28s %s\n' "$key" "$shown"
+    done
+    say "  Everything else (memory, timeouts, prompt, ...) is in .env — see docs/ai-chat.md"
+}
+
+# Run the bot's own check where the bot runs (inside the container in
+# Docker mode). Returns 0 ok, 1 something to fix, 2 could not run, 3 off.
+chat_check() {
+    snippet='try { require.resolve("./utils/chat/check"); } catch (e) { console.log("MISSING"); process.exit(4); } require("./utils/chat/check").main();'
+    new_tmp check
+    out=$TMP
+    rc=0
+    be_node "$snippet" >"$out" 2>&1 || rc=$?
+    if grep -q '^MISSING' "$out"; then
+        warn "This version of the bot has no AI chat check yet: run ./deploy.sh update first."
+        return 2
+    fi
+    while IFS= read -r line; do
+        case $line in
+            "ok "*) ok "${line#ok }" ;;
+            "FIX "*) bad "${line#FIX }" ;;
+            "note "*) note "${line#note }" ;;
+        esac
+    done < "$out"
+    case $rc in
+        0) return 0 ;;
+        1) grep -q '^FIX ' "$out" && return 1 ;;
+        3) return 3 ;;
+    esac
+    warn "The check could not run (exit $rc). Last lines:"
+    tail -n 5 "$out" >&2
+    return 2
+}
+
+chat_restart() {
+    if be_running; then
+        if [ -n "$OPT_YES" ] || ! interactive || confirm "Restart the bot now so .chat uses the new settings?" y; then
+            info "Restarting the bot..."
+            new_tmp restart
+            # A subshell: the backends may `exit` on failure, and this run
+            # still has to say how to get back.
+            if ! (be_restart) >"$TMP" 2>&1; then
+                tail -n 5 "$TMP" >&2
+                warn "The restart failed. ./deploy.sh logs shows why; ./deploy.sh chat undo puts the old settings back."
+                return 1
+            fi
+            info "Restarted."
+        else
+            say "  The new settings apply at the next restart (./deploy.sh update or .security restart)."
+        fi
+    else
+        say "  The bot is not running; start it with ./deploy.sh"
+    fi
+}
+
+cmd_chat() {
+    sub=${1:-setup}
+    require_env
+    MODE=$(current_mode)
+    case $MODE in invalid:*) die "DEPLOY_MODE=${MODE#invalid:} in .env: use docker or local." ;; esac
+    # Editing .env never needs Docker; checking from inside the container does.
+    case $sub in setup|test|check|'') [ "$MODE" != docker ] || require_docker ;; esac
+    [ "$MODE" != local ] || { node_ok || load_nvm; }
+
+    case $sub in
+        off)
+            take_lock
+            set_env_many CHAT_ENABLED false
+            info "AI chat is off (settings kept; ./deploy.sh chat turns it on again)."
+            chat_restart
+            return 0
+            ;;
+        test|check)
+            say "AI chat check ($MODE mode)"
+            DOCTOR_FAILS=0
+            rc=0
+            chat_check || rc=$?
+            if [ $rc -eq 0 ]; then say "All good."; return 0; fi
+            [ $rc -eq 3 ] && say "Turn it on with ./deploy.sh chat"
+            return 1
+            ;;
+        undo)
+            take_lock
+            [ -f "$ENV_BACKUP" ] || die "No earlier settings to go back to ($ENV_BACKUP is missing)."
+            if [ -z "$OPT_YES" ] && interactive; then
+                confirm "Put back the .env from before the last ./deploy.sh chat?" y || die "Nothing changed."
+            fi
+            new_tmp undo
+            (umask 077; cp "$ENV_BACKUP" "$TMP")
+            mv "$TMP" .env
+            info "Restored the earlier .env."
+            chat_restart
+            return 0
+            ;;
+        setup|'') ;;
+        *) die "Unknown: ./deploy.sh chat $sub. Use: ./deploy.sh chat [off|test|undo]" ;;
+    esac
+
+    take_lock
+    interactive || die "./deploy.sh chat asks questions — run it in a terminal, or set CHAT_* in .env yourself (docs/ai-chat.md)."
+    say "Set up .chat: questions from WhatsApp go to an AI and the answer comes back."
+    rm -f "$ENV_BACKUP.taken"
+
+    round=0
+    while :; do
+        round=$((round + 1))
+        collect_chat_answers
+        show_pending
+        confirm "Save these settings?" y || die "Nothing saved."
+        save_pending
+        info "Saved (the previous .env is in $ENV_BACKUP; ./deploy.sh chat undo goes back)."
+
+        say ""
+        say "Checking from where the bot runs..."
+        DOCTOR_FAILS=0
+        rc=0
+        chat_check || rc=$?
+        if [ $rc -eq 0 ]; then
+            break
+        fi
+        [ $round -lt $EDIT_ROUNDS ] || {
+            warn "Still not working after $EDIT_ROUNDS rounds. The settings are saved: fix them in .env, then ./deploy.sh chat test (or ./deploy.sh chat undo)."
+            return 1
+        }
+        choice=$(ask_choice "What now?" "" \
+            "r|Retry the check (fixed something on the other machine?)" \
+            "e|Edit the answers" \
+            "s|Keep these settings anyway (the bot says 'AI offline' until fixed)" \
+            "u|Undo: back to the earlier .env")
+        case $choice in
+            r)
+                rc=0
+                chat_check || rc=$?
+                [ $rc -eq 0 ] && break
+                warn "Still failing. Edit the answers next."
+                ;;
+            e) ;;
+            s) say "  Kept. ./deploy.sh chat test checks again later."; break ;;
+            u)
+                new_tmp undo
+                (umask 077; cp "$ENV_BACKUP" "$TMP")
+                mv "$TMP" .env
+                info "Back to the earlier .env. Nothing changed."
+                return 0
+                ;;
+        esac
+        PENDING=""
+    done
+    rm -f "$ENV_BACKUP.taken"
+    chat_restart
+    say ""
+    info "Done. Try it in WhatsApp: .chat halo"
 }
 
 # ------------------------------------------------------------
@@ -1221,7 +1877,7 @@ show_help() {
     awk 'NR > 2 && /^# =====/ { exit } NR > 2 { sub(/^# ?/, ""); print }' "$0"
 }
 
-KNOWN="setup update config relink restore-session switch status doctor logs stop help"
+KNOWN="setup update config relink restore-session switch status doctor logs stop help chat"
 # The command a typo most likely meant (same first 3, then 2 letters).
 suggest() {
     for n in 3 2; do
@@ -1282,6 +1938,7 @@ case ${cmd:-setup} in
     logs) cmd_logs ;;
     status) cmd_status ;;
     doctor) cmd_doctor ;;
+    chat|ai) cmd_chat "$@" ;;
     stop) cmd_stop ;;
     help) show_help ;;
     *)

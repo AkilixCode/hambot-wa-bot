@@ -260,7 +260,9 @@ function buildBackend(id, r, env, common, problems) {
     if (id === 'local') {
         const urlRaw = r.raw('CHAT_LOCAL_URL');
         const model = r.raw('CHAT_LOCAL_MODEL');
-        if (!urlRaw && !model) return null;
+        // The URL has a default in .env.example; the model is what says
+        // "this backend is set up".
+        if (!model) return null;
         b.api = r.pick('CHAT_LOCAL_API', 'ollama', ['ollama', 'openai']);
         b.platform = b.api;
         b.urlVar = 'CHAT_LOCAL_URL';
@@ -278,7 +280,6 @@ function buildBackend(id, r, env, common, problems) {
         const parsed = normaliseUrl(urlRaw || 'http://127.0.0.1:11434', b.api, 'CHAT_LOCAL_URL', notes);
         b.url = parsed.url;
         if (parsed.error) unusable.push(parsed.error);
-        if (!model) unusable.push('CHAT_LOCAL_MODEL is empty — set the model name (e.g. llama3.2 for Ollama)');
     }
 
     if (id === 'provider') {
@@ -469,7 +470,8 @@ function load(env = process.env, opts = {}) {
 
     if (s.enabled) {
         if (!s.backends[s.backend]) {
-            problems.push(`CHAT_BACKEND=${s.backend} but that backend has no settings (see the ${s.backend.toUpperCase()} part of .env)`);
+            const needs = { local: 'CHAT_LOCAL_MODEL', provider: 'CHAT_PROVIDER_MODEL and CHAT_PROVIDER_API_KEY', agent: 'CHAT_AGENT_URL' }[s.backend];
+            problems.push(`CHAT_BACKEND=${s.backend} but that backend has no settings — set ${needs} (or run ./deploy.sh chat)`);
         }
         if (s.fallback !== 'none' && !s.backends[s.fallback]) {
             problems.push(`CHAT_FALLBACK=${s.fallback} but that backend has no settings, no fallback is used`);
