@@ -47,6 +47,14 @@ jobs:
       - name: Smoke test
         run: docker run --rm -e SMOKE_EXPECT_UID=999 --entrypoint sh hambot:smoke scripts/smoke-test.sh
 
+      # .chat from the container to an agent on this host, through the real
+      # docker-compose.yml and ./deploy.sh chat test (docs/ai-chat.md).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Agent reachable from the container
+        run: sh scripts/docker-agent-test.sh hambot:smoke
+
       - name: Tags
         id: meta
         uses: docker/metadata-action@v6

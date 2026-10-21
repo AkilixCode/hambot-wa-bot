@@ -111,10 +111,13 @@ function serviceHint(backend) {
     if (RUNNING_IN_DOCKER && loopback) {
         hints.push('inside Docker, localhost is the container itself — use http://host.docker.internal:PORT or the machine\'s Tailscale IP');
     }
+    if (RUNNING_IN_DOCKER && host === 'host.docker.internal') {
+        hints.push('from the container, this machine is its Docker bridge address: the server must listen there (ip -4 addr show docker0, usually 172.17.0.1), not only on 127.0.0.1 — see docs/ai-chat.md');
+    }
     switch (backend.platform) {
         case 'ollama':
             hints.push('is Ollama running (ollama serve)?');
-            if (!loopback) hints.push('on that machine Ollama listens only on 127.0.0.1 unless OLLAMA_HOST=0.0.0.0 is set');
+            if (!loopback) hints.push('on that machine Ollama listens only on 127.0.0.1 unless OLLAMA_HOST is set (the Docker bridge address or the Tailscale IP)');
             break;
         case 'hermes':
             hints.push('is `hermes gateway` running with API_SERVER_ENABLED=true?');
