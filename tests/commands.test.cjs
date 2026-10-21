@@ -166,6 +166,26 @@ async function main() {
         assert.ok(jpeg.length > 1000 && jpeg[0] === 0xff && jpeg[1] === 0xd8, 'banner must be a JPEG');
     });
 
+    await test('logo: the banner carries it, and still renders if drawing it fails', () => {
+        const logo = require('../utils/logo');
+        const { renderBanner } = require('../utils/menu-image');
+        const withLogo = renderBanner();
+        const original = logo.drawLogo;
+        logo.drawLogo = () => { throw new Error('broken logo'); };
+        let without;
+        try {
+            without = renderBanner();
+        } finally {
+            logo.drawLogo = original;
+        }
+        assert.ok(without.length > 1000 && without[0] === 0xff && without[1] === 0xd8, 'still a JPEG');
+        assert.notDeepStrictEqual(withLogo, without, 'the logo is actually drawn');
+        const svg = logo.toSvg();
+        assert.ok(svg.startsWith('<svg') && svg.includes('</svg>') && svg.includes('<title>HamBot</title>'));
+        const committed = fs.readFileSync(path.join(ROOT, 'docs', 'images', 'logo.svg'), 'utf8');
+        assert.strictEqual(committed, svg, 'docs/images/logo.svg is stale: run node scripts/render-art.cjs');
+    });
+
     await test('sharp: rotate + resize + jpeg, as the menu image and .sticker use', async () => {
         const sharp = require('sharp');
         const png = await sharp({ create: { width: 2000, height: 1000, channels: 3, background: '#123456' } }).png().toBuffer();

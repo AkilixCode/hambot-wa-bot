@@ -1,6 +1,6 @@
 # Commands
 
-36 commands. Type `.menu` for the list, `.menu <command>` for usage and
+37 commands. Type `.menu` for the list, `.menu <command>` for usage and
 examples, or `.menu <category>` for one category.
 
 ### General
@@ -8,6 +8,12 @@ examples, or `.menu <category>` for one category.
 | Command | Aliases | Description |
 | --- | --- | --- |
 | `.menu` | `.help`, `.intro`, `.commands`, `.bantuan` | Menampilkan daftar perintah bot |
+
+### AI
+
+| Command | Aliases | Description |
+| --- | --- | --- |
+| `.chat` | `.ai`, `.ask`, `.tanya` | Ngobrol dengan AI langsung dari WhatsApp ([guide](ai-chat.md)) |
 
 ### Media
 

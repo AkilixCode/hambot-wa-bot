@@ -611,6 +611,7 @@ module.exports = {
     isProxyConnectionError,
     proxyLabel,
     destroyAgents,
+    getAgents,
     PROXY_BREAKER_ID,
     DEFAULT_USER_AGENT
 };

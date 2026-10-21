@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="HamBot">
+  <title>HamBot</title>
+  <defs>
+    <linearGradient id="bubble" x1="40" y1="56" x2="472" y2="468" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5b2aa6"/>
+      <stop offset="1" stop-color="#d76d77"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#bubble)" d="M144 56H368A104 104 0 0 1 472 160V280A104 104 0 0 1 368 384H220L84 468L112 384H144A104 104 0 0 1 40 280V160A104 104 0 0 1 144 56Z"/>
+  <line x1="256" y1="162" x2="256" y2="116" stroke="#ffffff" stroke-width="16" stroke-linecap="round"/>
+  <path fill="#ffffff" d="M134 208H136A14 14 0 0 1 150 222V258A14 14 0 0 1 136 272H134A14 14 0 0 1 120 258V222A14 14 0 0 1 134 208Z"/>
+  <path fill="#ffffff" d="M376 208H378A14 14 0 0 1 392 222V258A14 14 0 0 1 378 272H376A14 14 0 0 1 362 258V222A14 14 0 0 1 376 208Z"/>
+  <path fill="#ffffff" d="M198 160H314A52 52 0 0 1 366 212V268A52 52 0 0 1 314 320H198A52 52 0 0 1 146 268V212A52 52 0 0 1 198 160Z"/>
+  <circle cx="256" cy="102" r="22" fill="#ffaf7b"/>
+  <circle cx="212" cy="232" r="24" fill="#2a1458"/>
+  <circle cx="300" cy="232" r="24" fill="#2a1458"/>
+  <path d="M287.11 283.11A44 44 0 0 1 224.89 283.11" fill="none" stroke="#2a1458" stroke-width="14" stroke-linecap="round"/>
+  <path fill="#ffe2c6" d="M424 44Q424 84 464 84Q424 84 424 124Q424 84 384 84Q424 84 424 44Z"/>
+</svg>

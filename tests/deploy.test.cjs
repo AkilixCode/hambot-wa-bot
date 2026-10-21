@@ -99,6 +99,7 @@ function sandbox({ without = [] } = {}) {
         '  "compose up -d --build hambot") if [ -f "$here/build-fails" ]; then exit 1; fi ;;',
         '  *"--entrypoint tar hambot"*) if [ -f "$here/tar-out-fails" ]; then exit 1; fi; if [ -f "$here/session.tar" ]; then cat "$here/session.tar"; else tar -C "$here/fakes" -cf - --exclude="*" .; fi ;;',
         '  *"--entrypoint sh hambot"*) if [ -f "$here/tar-in-fails" ]; then exit 1; fi; cat > "$here/received.tar" ;;',
+        '  *"--entrypoint node hambot -e"*) if [ -f "$here/node-out.txt" ]; then cat "$here/node-out.txt"; exit "$(cat "$here/node-exit.txt" 2>/dev/null || echo 0)"; fi ;;',
         'esac',
         'exit 0'
     ]);
@@ -1020,6 +1021,290 @@ async function main() {
                 assert.strictEqual(envValue(path.join(work, 'hambot-wa-bot'), 'BOT_OWNER_ID'), '6281200000028', out);
             } finally { fs.rmSync(d, { recursive: true, force: true }); }
         });
+    }
+
+    // ── AI chat wizard ────────────────────────────────────────────────
+    console.log('\n🤖 ./deploy.sh chat...\n');
+
+    // A fake AI server in its own process: spawnSync below blocks this one.
+    const aiServer = (kind = 'ok') => {
+        const child = spawn(process.execPath, ['-e', `
+            const http = require('http');
+            const kind = ${JSON.stringify(kind)};
+            http.createServer((req, res) => {
+                let body = ''; req.on('data', d => body += d); req.on('end', () => {
+                    const json = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+                    if (kind === 'auth') return json(401, { error: { message: 'bad key' } });
+                    if (req.url === '/api/tags') return json(200, { models: [{ name: kind === 'badmodel' ? 'other:latest' : 'llama3.2:latest' }] });
+                    if (req.url.endsWith('/models')) return json(200, { data: [{ id: kind === 'badmodel' ? 'other-model' : 'fake-model' }] });
+                    if (req.url === '/api/chat') { res.writeHead(200, { 'content-type': 'application/x-ndjson' }); return res.end(JSON.stringify({ message: { content: 'OK' }, done: true }) + '\\n'); }
+                    res.writeHead(200, { 'content-type': 'text/event-stream' });
+                    res.end('data: ' + JSON.stringify({ choices: [{ delta: { content: 'OK' } }] }) + '\\n\\ndata: [DONE]\\n\\n');
+                });
+            }).listen(0, '127.0.0.1', function () { console.log(this.address().port); });
+        `], { stdio: ['ignore', 'pipe', 'inherit'] });
+        return new Promise((resolve) => {
+            child.stdout.once('data', (d) => resolve({ url: `http://127.0.0.1:${String(d).trim()}`, stop: () => child.kill() }));
+        });
+    };
+    const envText = d => fs.readFileSync(path.join(d, '.env'), 'utf8');
+    // What the bot itself will read: parse .env with the real dotenv.
+    const dotenvValue = (d, key) => {
+        const r = spawnSync(process.execPath, ['-e', `process.stdout.write(require('dotenv').parse(require('fs').readFileSync(${JSON.stringify(path.join(d, '.env'))}))[${JSON.stringify(key)}] ?? '<unset>')`], { cwd: ROOT, encoding: 'utf8' });
+        return r.stdout;
+    };
+
+    await test('chat: before any setup, it says to run ./deploy.sh first', () => {
+        const d = sandbox();
+        try {
+            const r = run(d, ['chat'], []);
+            assert.notStrictEqual(r.status, 0);
+            assert.match(r.output, /No \.env yet/);
+        } finally { fs.rmSync(d, { recursive: true, force: true }); }
+    });
+
+    {
+        const ai = await aiServer('ok');
+        const d = localSandbox();
+        try {
+            await test('chat (Local mode): Ollama setup, saved only after the summary, checked from where the bot runs', () => {
+                put(d, 'pm2state.txt', 'online');
+                const before = envText(d);
+                const r = run(d, ['chat'], [
+                    '',                 // who: Enter = owner
+                    '1',                // where: local
+                    '',                 // Ollama
+                    ai.url,             // address
+                    'llama3.2',         // model
+                    '',                 // fallback: none
+                    '',                 // 2 at once
+                    '',                 // no daily limit
+                    '',                 // save? Enter = yes
+                    ''                  // restart? Enter = yes
+                ]);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.strictEqual(envValue(d, 'CHAT_ENABLED'), 'true');
+                assert.strictEqual(envValue(d, 'CHAT_BACKEND'), 'local');
+                assert.strictEqual(envValue(d, 'CHAT_LOCAL_URL'), ai.url);
+                assert.strictEqual(envValue(d, 'CHAT_LOCAL_MODEL'), 'llama3.2');
+                assert.strictEqual(fs.readFileSync(path.join(d, '.env.bak'), 'utf8'), before, 'backup is the .env from before');
+                assert.match(r.output, /ok\s+local\(ollama\) reachable/);
+                assert.match(r.output, /answered in/);
+                assert.ok(calls(d, 'pm2').some(c => c.startsWith('start')), 'restarted');
+                assert.strictEqual((fs.statSync(path.join(d, '.env')).mode & 0o777).toString(8), '600');
+                assert.deepStrictEqual(leftovers(d), []);
+            });
+
+            await test('chat: Enter keeps every saved answer; `chat test` and `chat off` work without a terminal', () => {
+                let r = run(d, ['chat'], ['', '', '', '', '', '', '', '', '', 'n']);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.strictEqual(envValue(d, 'CHAT_LOCAL_MODEL'), 'llama3.2');
+                r = run(d, ['chat', 'test'], null);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.match(r.output, /All good/);
+                r = run(d, ['chat', 'off'], null);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.strictEqual(envValue(d, 'CHAT_ENABLED'), 'false');
+                assert.strictEqual(envValue(d, 'CHAT_LOCAL_MODEL'), 'llama3.2', 'settings kept');
+                r = run(d, ['chat', 'test'], null);
+                assert.match(r.output, /AI chat is off/);
+                r = run(d, ['chat'], null);
+                assert.notStrictEqual(r.status, 0);
+                assert.match(r.output, /run it in a terminal.*docs\/ai-chat\.md/);
+            });
+
+            await test('chat: keys with | & $ # \\ and spaces are saved exactly, never printed', () => {
+                const key = 'sk-a|b&c$HOME#d\\e f';
+                const r = run(d, ['chat'], [
+                    '', '2',            // owner, provider
+                    '1',                // OpenAI-compatible
+                    `${ai.url}/v1/chat/completions`, // pasted endpoint: stripped
+                    `  "Bearer ${key}"  `,           // quotes, Bearer and spaces removed (spaces inside too)
+                    'fake-model',
+                    '', '', '', '', 'n'
+                ]);
+                assert.strictEqual(r.status, 0, r.output);
+                const clean = key.replace(/ /g, '');
+                assert.strictEqual(dotenvValue(d, 'CHAT_PROVIDER_API_KEY'), clean);
+                assert.strictEqual(dotenvValue(d, 'CHAT_PROVIDER_URL'), `${ai.url}/v1`);
+                assert.ok(!r.output.includes('a|b&c'), 'the key is never shown');
+                assert.match(r.output, /…e f|…\\ef|\(\d+ chars\)/);
+                assert.match(r.output, /ok\s+provider\(openai\)/);
+            });
+
+            await test('chat: a key with a quote is refused and asked again', () => {
+                const r = run(d, ['chat'], ['', '2', '', '', "bad'key", 'goodkey123', '', '', '', '', '', 'n']);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.match(r.output, /cannot be saved by this wizard/);
+                assert.strictEqual(dotenvValue(d, 'CHAT_PROVIDER_API_KEY'), 'goodkey123');
+            });
+
+            await test('chat: Ctrl+C, end of input, or "no" at the summary leave .env byte-identical', () => {
+                const before = envText(d);
+                let r = run(d, ['chat'], ['', '1', '', ai.url]);       // input ends mid-way
+                assert.notStrictEqual(r.status, 0);
+                assert.match(r.output, /Input ended/);
+                assert.strictEqual(envText(d), before);
+                r = run(d, ['chat'], ['', '', '', '', '', '', '', '', 'n']);   // "no" at the summary
+                assert.match(r.output, /Nothing saved/);
+                assert.strictEqual(envText(d), before);
+                assert.deepStrictEqual(leftovers(d), []);
+            });
+
+            await test('chat: Ctrl+C at the key prompt leaves .env untouched and no temp files', async () => {
+                const before = envText(d);
+                const child = spawn('./deploy.sh', ['chat'], { cwd: d, env: baseEnv(d, { HAMBOT_TTY: 'stdin' }), detached: true });
+                let out = '';
+                child.stdout.on('data', c => { out += c; });
+                child.stderr.on('data', c => { out += c; });
+                child.stdin.write('\n2\n\n\n');   // owner, provider, openai, official URL
+                const deadline = Date.now() + 10000;
+                while (!/API key/.test(out) && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+                process.kill(-child.pid, 'SIGINT');
+                const code = await new Promise(resolve => child.on('exit', (c, sig) => resolve(c ?? sig)));
+                assert.strictEqual(code, 130, out);
+                assert.strictEqual(envText(d), before);
+                assert.deepStrictEqual(leftovers(d), []);
+            });
+
+            await test('chat: endless wrong answers stop within 5 tries', () => {
+                const r = run(d, ['chat'], Array(50).fill('banana'), {}, 10000);
+                assert.notStrictEqual(r.status, 0);
+                assert.match(r.output, /after 5 tries/);
+            });
+
+            await test('chat: a URL without http:// is offered with it; a key over http to the internet is moved to https', () => {
+                const r = run(d, ['chat'], [
+                    '', '3', '1',       // owner, agent, hermes
+                    'api.example.com/v1', 'y',   // offered http://api.example.com/v1
+                    'token-123456',
+                    'n',                // bot keeps memory
+                    '', '',             // agent access owner; fallback none (order: fallback first)
+                    '', '', '',
+                    'y',                // use https:// instead
+                    '', 'n'
+                ].slice(0, 20));
+                assert.match(r.output, /No http:\/\/ in front/);
+                assert.match(r.output, /travel unencrypted/);
+                assert.strictEqual(envValue(d, 'CHAT_AGENT_URL'), 'https://api.example.com/v1');
+            });
+
+            await test('chat: a failed check offers retry/edit/keep/undo — undo restores the earlier .env', () => {
+                const before = envText(d);
+                const r = run(d, ['chat'], [
+                    '', '1', '', ai.url, 'llama-missing', '', '', '', '',
+                    'u'
+                ]);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.match(r.output, /FIX\s+local\(ollama\): model llama-missing not found — ollama pull llama-missing, or set CHAT_LOCAL_MODEL to one of: llama3\.2:latest/);
+                assert.match(r.output, /Back to the earlier \.env/);
+                assert.strictEqual(envText(d), before);
+            });
+
+            await test('chat: "keep anyway" keeps the settings; the edit round stops after 3', () => {
+                let r = run(d, ['chat'], ['', '1', '', ai.url, 'llama-missing', '', '', '', '', 's', 'n']);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.strictEqual(envValue(d, 'CHAT_LOCAL_MODEL'), 'llama-missing');
+                const round = ['', '', '', '', '', '', '', '', '', 'e'];
+                r = run(d, ['chat'], [...round, ...round, ...round, ...round], {}, 20000);
+                assert.notStrictEqual(r.status, 0);
+                assert.match(r.output, /Still not working after 3 rounds/);
+            });
+
+            await test('chat undo puts back the .env from before the last wizard run', () => {
+                fs.writeFileSync(path.join(d, '.env.bak'), envText(d).replace(/^CHAT_LOCAL_MODEL=.*$/m, 'CHAT_LOCAL_MODEL=llama3.2'));
+                const r = run(d, ['chat', 'undo', '-y'], null);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.strictEqual(envValue(d, 'CHAT_LOCAL_MODEL'), 'llama3.2');
+            });
+
+            await test('chat: a failed restart says how to undo', () => {
+                put(d, 'pm2state.txt', 'online');
+                put(d, 'pm2-start-fails');
+                const r = run(d, ['chat'], ['', '', '', '', '', '', '', '', '', '']);
+                del(d, 'pm2-start-fails');
+                assert.match(r.output, /restart failed.*chat undo/);
+            });
+
+            await test('doctor lists the AI chat check', () => {
+                set(d);
+                function set(dd) { fs.writeFileSync(path.join(dd, '.env'), envText(dd).replace(/^CHAT_ENABLED=.*$/m, 'CHAT_ENABLED=true').replace(/^CHAT_LOCAL_MODEL=.*$/m, 'CHAT_LOCAL_MODEL=nope')); }
+                const r = run(d, ['doctor'], null);
+                assert.match(r.output, /AI chat \(\.chat\):/);
+                assert.match(r.output, /FIX\s+local\(ollama\): model nope not found/);
+            });
+        } finally {
+            ai.stop();
+            fs.rmSync(d, { recursive: true, force: true });
+        }
+    }
+
+    {
+        const d = sandbox();
+        try {
+            run(d, ['--docker', '--owner', '6281200000002'], null);
+            put(d, 'state.txt', 'running');
+
+            await test('chat (Docker mode): localhost is the container — host.docker.internal is offered', () => {
+                put(d, 'node-out.txt', 'ok   agent(hermes) reachable at http://host.docker.internal:8642 — key accepted, 1 model listed\nnote agent(hermes): not asked a test question\n');
+                resetCalls(d);
+                const r = run(d, ['chat'], [
+                    '', '3', '',        // owner, agent, hermes
+                    'http://localhost:8642/v1', 'y',
+                    'tok-abc-123',
+                    'y',                // agent keeps the session
+                    '',                 // fallback none
+                    '',                 // agent access owner
+                    '', '', '', ''
+                ]);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.match(r.output, /Inside the Docker container, localhost is the container itself/);
+                assert.strictEqual(envValue(d, 'CHAT_AGENT_URL'), 'http://host.docker.internal:8642/v1');
+                assert.strictEqual(envValue(d, 'CHAT_AGENT_MEMORY'), 'agent');
+                assert.ok(calls(d).some(c => c.startsWith('compose run --rm --no-deps --entrypoint node hambot -e') && c.includes('utils/chat/check')), 'checked inside the container');
+                assert.ok(calls(d).includes('compose up -d --no-build --force-recreate hambot'), 'recreated');
+            });
+
+            await test('chat (Docker mode): an image without the check says to update first', () => {
+                put(d, 'node-out.txt', 'MISSING\n');
+                put(d, 'node-exit.txt', '4');
+                const r = run(d, ['chat', 'test'], null);
+                assert.notStrictEqual(r.status, 0);
+                assert.match(r.output, /run \.\/deploy\.sh update first/);
+            });
+
+            await test('chat (Docker mode): a crashed check is never reported as ok', () => {
+                put(d, 'node-out.txt', 'Error: something exploded\n    at x\n');
+                put(d, 'node-exit.txt', '2');
+                const r = run(d, ['chat', 'test'], null);
+                assert.notStrictEqual(r.status, 0);
+                assert.match(r.output, /could not run \(exit 2\)/);
+                assert.doesNotMatch(r.output, /All good/);
+            });
+
+            await test('chat (Docker mode): public access and an open agent need confirming', () => {
+                put(d, 'node-out.txt', 'ok   fine\n');
+                put(d, 'node-exit.txt', '0');
+                const r = run(d, ['chat'], [
+                    '3', 'n',           // public? no -> owner
+                    '3', '', '', '', '', 'n',
+                    '',                 // fallback
+                    '3', 'y', 'n',      // agent public: sure? yes; really everyone? no -> owner
+                    '', '', '', 'n'
+                ]);
+                assert.strictEqual(r.status, 0, r.output);
+                assert.strictEqual(envValue(d, 'CHAT_ACCESS'), 'owner');
+                assert.strictEqual(envValue(d, 'CHAT_AGENT_ACCESS'), 'owner');
+            });
+
+            await test('chat off works even with Docker stopped', () => {
+                put(d, 'docker-info-fails');
+                const r = run(d, ['chat', 'off'], null);
+                del(d, 'docker-info-fails');
+                assert.strictEqual(r.status, 0, r.output);
+                assert.strictEqual(envValue(d, 'CHAT_ENABLED'), 'false');
+            });
+        } finally { fs.rmSync(d, { recursive: true, force: true }); }
     }
 
     console.log('\n' + '='.repeat(60));

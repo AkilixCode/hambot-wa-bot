@@ -29,9 +29,13 @@ utils/
   url-parser.js       Platform detection and per-platform yt-dlp arguments
   logger.js           Command logging in simple or full mode
   redact.js           Secret scrubbing for anything printed or sent
+  chat/               .chat: settings, streaming client (4 wire formats),
+                      health, memory, formatting; loaded on first use
+  logo.js             The logo, drawn on canvas or written as SVG
 deploy.sh             Install and manage, Docker or Local
 ecosystem.config.cjs  pm2 settings for Local mode
-scripts/              install.sh (one-line installer), healthcheck.js, smoke-test.sh
+scripts/              install.sh (one-line installer), healthcheck.js, smoke-test.sh,
+                      render-art.cjs (regenerates docs/images from utils/logo.js)
 tests/                Offline test suites (npm run test:all)
 docs/                 Guides (start at docs/README.md)
 ```
@@ -111,6 +115,8 @@ npm run test:integration # command metadata and alias integrity
 npm run test:security    # sanitising, URL guards, permissions, blocking
 npm run test:media       # yt-dlp runner, provider cascade, egress toggle
 npm run test:commands    # handler and command regressions, via a fake socket
+npm run test:chat        # .chat against fake AI servers: formats, timeouts, limits, health
+npm run test:network     # HTTP client: proxy, retries, fallback
 npm run test:deploy      # deploy.sh and the installer, both modes, failure paths
 npm run test:all
 ```

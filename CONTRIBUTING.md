@@ -28,6 +28,11 @@ live in `tests/` and need no network, WhatsApp session, Docker or yt-dlp. If
 you change behaviour that a test asserts, update the test in the same commit
 and say why in the message.
 
+Changing `.chat`? `npm run test:chat` drives it against fake AI servers on
+127.0.0.1 (every wire format, timeouts, limits, failures); add a case for any
+new failure path. Changed `utils/logo.js`? Run `node scripts/render-art.cjs`
+and commit the images (a test checks the SVG is current).
+
 Changing `deploy.sh` or `scripts/install.sh`? `npm run test:deploy` runs them
 against recording fakes on a sealed `PATH` (see `tests/deploy.test.cjs`); add
 a test for any new failure path, and keep both scripts POSIX `sh` (they are

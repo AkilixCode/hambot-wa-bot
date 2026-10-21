@@ -117,6 +117,57 @@ function sparkle(g, x, y, s) {
 }
 
 /**
+ * The night-sky background: violet into a warm corner, soft glows, a dot
+ * grid and a few sparkles. Shared with the avatar (scripts/render-art.cjs).
+ * @param {CanvasRenderingContext2D} g
+ * @param {number} width
+ * @param {number} height
+ * @param {Object} [opts]
+ * @param {Array<Array<number>>} [opts.sparkles] - [x, y, size] in a 1280×640 frame
+ */
+function drawBackground(g, width, height, opts = {}) {
+    const sx = width / WIDTH;
+    const sy = height / HEIGHT;
+
+    const bg = g.createLinearGradient(0, 0, width, height);
+    bg.addColorStop(0, '#140b2e');
+    bg.addColorStop(0.55, '#3a1c71');
+    bg.addColorStop(1, '#d76d77');
+    g.fillStyle = bg;
+    g.fillRect(0, 0, width, height);
+
+    // Soft glows.
+    for (const [x, y, r, color] of [
+        [1060, 110, 280, 'rgba(255,175,123,0.35)'],
+        [170, 580, 320, 'rgba(120,90,255,0.30)'],
+        [700, 320, 200, 'rgba(255,255,255,0.05)']
+    ]) {
+        const glow = g.createRadialGradient(x * sx, y * sy, 0, x * sx, y * sy, r * Math.max(sx, sy));
+        glow.addColorStop(0, color);
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = glow;
+        g.fillRect(0, 0, width, height);
+    }
+
+    // Dot grid.
+    g.fillStyle = 'rgba(255,255,255,0.07)';
+    for (let x = 40; x < width; x += 40) {
+        for (let y = 40; y < height; y += 40) {
+            g.beginPath();
+            g.arc(x, y, 1.6, 0, Math.PI * 2);
+            g.fill();
+        }
+    }
+
+    // Sparkles.
+    g.fillStyle = 'rgba(255,255,255,0.85)';
+    const points = opts.sparkles || [[1225, 600, 14], [1150, 120, 10], [250, 120, 12], [560, 560, 8], [60, 560, 9]];
+    for (const [x, y, s] of points) {
+        sparkle(g, x * sx, y * sy, s);
+    }
+}
+
+/**
  * Draw the default banner.
  * @param {Object} [opts] Overrides, e.g. for the README image (docs/images)
  * @param {string} [opts.badge] Pill text (default: "v<version>  ·  MENU")
@@ -129,45 +180,17 @@ function renderBanner(opts = {}) {
     const c = createCanvas(WIDTH, HEIGHT);
     const g = c.getContext('2d');
 
-    // Night-sky gradient, violet into a warm corner.
-    const bg = g.createLinearGradient(0, 0, WIDTH, HEIGHT);
-    bg.addColorStop(0, '#140b2e');
-    bg.addColorStop(0.55, '#3a1c71');
-    bg.addColorStop(1, '#d76d77');
-    g.fillStyle = bg;
-    g.fillRect(0, 0, WIDTH, HEIGHT);
+    drawBackground(g, WIDTH, HEIGHT);
 
-    // Soft glows.
-    for (const [x, y, r, color] of [
-        [1060, 110, 280, 'rgba(255,175,123,0.35)'],
-        [170, 580, 320, 'rgba(120,90,255,0.30)'],
-        [700, 320, 200, 'rgba(255,255,255,0.05)']
-    ]) {
-        const glow = g.createRadialGradient(x, y, 0, x, y, r);
-        glow.addColorStop(0, color);
-        glow.addColorStop(1, 'rgba(0,0,0,0)');
-        g.fillStyle = glow;
-        g.fillRect(0, 0, WIDTH, HEIGHT);
-    }
-
-    // Dot grid.
-    g.fillStyle = 'rgba(255,255,255,0.07)';
-    for (let x = 40; x < WIDTH; x += 40) {
-        for (let y = 40; y < HEIGHT; y += 40) {
-            g.beginPath();
-            g.arc(x, y, 1.6, 0, Math.PI * 2);
-            g.fill();
-        }
-    }
-
-    // Sparkles.
-    g.fillStyle = 'rgba(255,255,255,0.85)';
-    for (const [x, y, s] of [[1000, 480, 16], [1150, 290, 10], [250, 120, 12], [560, 560, 8], [1190, 575, 9]]) {
-        sparkle(g, x, y, s);
+    // The logo, right of the card. A banner without it beats no banner.
+    try {
+        require('./logo').drawLogo(g, 960, 150, 300, { shadow: true, outline: true });
+    } catch (error) {
+        logger.warn(`Menu image: logo could not be drawn (${error.message})`);
     }
 
     // Frosted card.
-    const cx = 100;
+    const cx = 80;
     const cy = 170;
     const cw = 860;
     const ch = 310;
@@ -294,4 +317,4 @@ function clearCache() {
     cache = null;
 }
 
-module.exports = { getMenuImage, renderBanner, clearCache, ASSET_DIR };
+module.exports = { getMenuImage, renderBanner, drawBackground, clearCache, ASSET_DIR };

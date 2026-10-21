@@ -44,23 +44,32 @@ class WorkSlots {
     /**
      * Wait in line for a slot.
      * @param {number} timeoutMs - Give up after this long
-     * @returns {Promise<boolean>} true once a slot is held, false on timeout
-     *   or when the line is already full
+     * @param {AbortSignal} [signal] - Leave the line early (e.g. `.chat stop`)
+     * @returns {Promise<boolean>} true once a slot is held, false on timeout,
+     *   abort, or when the line is already full
      */
-    wait(timeoutMs) {
+    wait(timeoutMs, signal) {
         if (this.tryAcquire()) return Promise.resolve(true);
-        if (this.queueFull) return Promise.resolve(false);
+        if (this.queueFull || (signal && signal.aborted)) return Promise.resolve(false);
 
         return new Promise(resolve => {
             const waiter = { resolve: null, timer: null };
-            waiter.timer = setTimeout(() => {
+            const leave = () => {
+                clearTimeout(waiter.timer);
                 this.waiters = this.waiters.filter(w => w !== waiter);
                 resolve(false);
+            };
+            const onAbort = () => leave();
+            waiter.timer = setTimeout(() => {
+                if (signal) signal.removeEventListener('abort', onAbort);
+                leave();
             }, timeoutMs);
             waiter.resolve = () => {
                 clearTimeout(waiter.timer);
+                if (signal) signal.removeEventListener('abort', onAbort);
                 resolve(true);
             };
+            if (signal) signal.addEventListener('abort', onAbort, { once: true });
             this.waiters.push(waiter);
         });
     }

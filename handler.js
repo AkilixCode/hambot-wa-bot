@@ -209,7 +209,12 @@ module.exports = async (sock, m) => {
         // Both the .env setting and the runtime toggle (.security disable chatFilter)
         // must be on — previously the runtime toggle was ignored here, so turning
         // the filter off from chat silently did nothing.
-        if (config.security.chatFilterEnabled && security.isFeatureEnabled('chatFilter')) {
+        // `.chat` is exempt: questions about code are full of `../` and
+        // `<script>`, the text only ever goes to an AI as data, and matching
+        // it here counted ordinary questions towards an auto-block. Rate
+        // limit, cooldown and permissions below still apply.
+        const filterExempt = commandRegistry.get(commandName)?.name === 'chat';
+        if (!filterExempt && config.security.chatFilterEnabled && security.isFeatureEnabled('chatFilter')) {
             const maliciousCheck = security.detectMaliciousPatterns(textBody);
             if (maliciousCheck.isMalicious) {
                 security.logSecurityEvent('malicious_pattern_detected', {
@@ -440,6 +445,10 @@ module.exports = async (sock, m) => {
         const netCtx = netContext.create(canonicalName);
         tracker.net = netCtx.stats;
         await netContext.run(netCtx, () => command.execute(sock, msg, args, context));
+
+        // A quick housekeeping reply (`.chat reset`, `.chat status`) should
+        // not hold up the person's next real command.
+        if (context.releaseCooldown) userCooldowns.delete(sender);
 
         // Check if command self-reported failure via logError()
         if (context._failed) {
