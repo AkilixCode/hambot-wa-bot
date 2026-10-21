@@ -404,7 +404,7 @@ class PinterestCommand extends CommandBase {
                 // Step down the resolution ladder before giving up on a pin.
                 if (!buffer) {
                     for (const smaller of ['/564x/', '/474x/', '/236x/']) {
-                        const alt = url.replace(/\/(736x|orig|564x|474x)\//, smaller);
+                        const alt = url.replace(/\/(736x|originals|orig|564x|474x)\//, smaller);
                         if (alt === url) continue;
                         buffer = await this.downloadImage(alt);
                         if (buffer) break;

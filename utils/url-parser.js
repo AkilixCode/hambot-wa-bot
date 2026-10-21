@@ -521,10 +521,10 @@ function getPlatformArgs(url) {
     const args = [];
 
     switch (platform.platform) {
-        case 'youtube':
-            // Use android client for better compatibility
-            args.push('--extractor-args', 'youtube:player_client=android');
-            break;
+        // No YouTube case: its player clients come from ytdlp.getYouTubeArgs()
+        // (YTDLP_PLAYER_CLIENTS). A pin here was overridden by that in the
+        // normal case, but with YTDLP_PLAYER_CLIENTS empty ("let yt-dlp
+        // choose") it was the one that ran: the deprecated android client.
         case 'tiktok':
             // TikTok often needs special handling
             args.push('--extractor-args', 'tiktok:api_hostname=api16-normal-c-useast1a.tiktokv.com');

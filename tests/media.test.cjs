@@ -193,12 +193,21 @@ async function main() {
     await test('The deprecated hardcoded android client is gone', () => {
         // player_client=android was pinned in music.js and video.js and is now
         // deprecated upstream; regressing to it would silently break YouTube.
-        for (const f of ['commands/music.js', 'commands/video.js']) {
+        for (const f of ['commands/music.js', 'commands/video.js', 'utils/url-parser.js']) {
             const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
             assert.ok(
                 !src.includes('player_client=android'),
                 `${f} still pins player_client=android`
             );
+        }
+    });
+
+    await test('url-parser adds no YouTube player client of its own', () => {
+        // yt-dlp keeps the last youtube: args. With YTDLP_PLAYER_CLIENTS empty
+        // ("let yt-dlp choose") a pin here was the one that ran.
+        const { getPlatformArgs } = require('../utils/url-parser');
+        for (const url of ['https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']) {
+            assert.ok(!getPlatformArgs(url).join(' ').includes('player_client'), url);
         }
     });
 
@@ -522,6 +531,75 @@ async function main() {
         }
     });
 
+    await test('A failed original steps down to a smaller size', async () => {
+        // Pinterest's full-size path is /originals/, which the ladder missed.
+        const seen = [];
+        const original = pin.downloadImage;
+        pin.downloadImage = async (url) => { seen.push(url); return url.includes('/564x/') ? Buffer.from('img') : null; };
+        const sent = [];
+        const sock = { sendMessage: async (to, body) => { sent.push(body); return {}; } };
+        try {
+            await pin.sendResults(sock, 'x@s.whatsapp.net', { key: { remoteJid: 'x@s.whatsapp.net' } },
+                ['https://i.pinimg.com/originals/a/b/c/x.jpg'], 'kucing', null);
+            assert.deepStrictEqual(seen, ['https://i.pinimg.com/originals/a/b/c/x.jpg', 'https://i.pinimg.com/564x/a/b/c/x.jpg']);
+            assert.ok(sent.some(b => b.image), 'the smaller image was sent');
+        } finally {
+            pin.downloadImage = original;
+        }
+    });
+
+    // ── Other media commands (offline) ────────────────────────────────
+    console.log('\n🎞️  Media Commands...\n');
+
+    await test('.video sends MP4 as a video, WebM/MKV as a file', () => {
+        const Video = require('../commands/video');
+        const v = new Video();
+        const mp4 = v.buildPayload({ path: '/t/a.mp4', name: 'a.mp4' }, { title: 'Clip' }, null);
+        assert.ok(mp4.video && mp4.mimetype === 'video/mp4');
+        const webm = v.buildPayload({ path: '/t/a.webm', name: 'a.webm' }, { title: 'A/B: clip?' }, null);
+        assert.ok(!webm.video && webm.document, 'webm is a document');
+        assert.strictEqual(webm.mimetype, 'video/webm');
+        assert.strictEqual(webm.fileName, 'AB clip.webm');
+        assert.match(webm.caption, /\.webm/);
+        const mkv = v.buildPayload({ path: '/t/a.mkv', name: 'a.mkv' }, {}, null);
+        assert.strictEqual(mkv.mimetype, 'video/x-matroska');
+    });
+
+    await test('.say tells a used-up quota and a blocked account from a bad key', () => {
+        const Say = require('../commands/say');
+        const say = new Say();
+        const axiosError = (status, body) => ({
+            message: `Request failed with status code ${status}`,
+            response: { status, data: Buffer.from(JSON.stringify(body)) }
+        });
+        assert.strictEqual(say.describeTtsError(axiosError(401, { detail: { status: 'quota_exceeded' } })).title, 'Kuota Habis');
+        assert.strictEqual(say.describeTtsError(axiosError(401, { detail: { status: 'detected_unusual_activity' } })).title, 'Akun Diblokir ElevenLabs');
+        assert.strictEqual(say.describeTtsError(axiosError(401, { detail: { status: 'invalid_api_key' } })).title, 'API Key Bermasalah');
+        assert.strictEqual(say.describeTtsError({ message: 'x', response: { status: 401, data: Buffer.from('<html>') } }).title, 'API Key Bermasalah');
+        assert.strictEqual(say.describeTtsError(axiosError(429, { detail: { status: 'too_many_concurrent_requests' } })).title, 'Sedang Sibuk');
+        assert.strictEqual(say.describeTtsError(Object.assign(new Error('spawn ffmpeg ENOENT'), { code: 'ENOENT' })).title, 'Tidak Tersedia');
+        assert.strictEqual(say.describeTtsError(Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' })).title, 'Waktu Habis');
+        assert.strictEqual(say.describeTtsError(new Error('weird')).title, 'Gagal');
+    });
+
+    await test('.toimg converts static and animated stickers', async () => {
+        const sharp = require('sharp');
+        const ToImg = require('../commands/toimg');
+        const frame = c => sharp({ create: { width: 8, height: 8, channels: 4, background: c } }).png().toBuffer();
+        const still = await sharp(await frame('#ff0000')).webp().toBuffer();
+        const animated = await sharp([await frame('#ff0000'), await frame('#00ff00')], { join: { animated: true } })
+            .webp({ loop: 0, delay: [100, 100] }).toBuffer();
+        assert.strictEqual((await sharp(animated, { animated: true }).metadata()).pages, 2, 'fixture is animated');
+
+        for (const input of [still, animated]) {
+            const png = await new ToImg().convert(input);
+            const meta = await sharp(png).metadata();
+            assert.strictEqual(meta.format, 'png');
+            assert.strictEqual(meta.width, 8);
+            assert.strictEqual(meta.height, 8, 'first frame only');
+        }
+    });
+
     await test('Playwright is no longer a dependency', () => {
         const pkg = require('../package.json');
         assert.ok(!pkg.dependencies.playwright, 'playwright must be removed');
@@ -539,8 +617,22 @@ async function main() {
     const runLog = path.join(fakeBin, 'runs.log');
     fs.writeFileSync(path.join(fakeBin, 'python3'), `#!/usr/bin/env node
 const fs = require('fs');
-const args = process.argv.slice(2);
+// Invoked as \`python3 -m yt_dlp <args>\`: drop the "-m yt_dlp".
+const args = process.argv.slice(4);
 fs.appendFileSync(${JSON.stringify(runLog)}, JSON.stringify(args) + '\\n');
+// 'botcheck': YouTube refuses every download, as from a datacenter IP.
+if (process.env.FAKE_YTDLP === 'botcheck' && /youtu/.test(args[0]) && args.includes('-o')) {
+    console.error("ERROR: [youtube] abc: Sign in to confirm you're not a bot");
+    process.exit(1);
+}
+// No -o: a metadata or search run (getInfo).
+if (!args.includes('-o')) {
+    const sc = args[0].startsWith('scsearch');
+    console.log(JSON.stringify(sc
+        ? { id: 'sc1', title: 'SC Song', uploader: 'SC Artist', duration: 100, url: 'https://soundcloud.com/a/sc-song' }
+        : { id: 'abc', title: 'YT Song', uploader: 'YT Artist', duration: 100 }));
+    process.exit(0);
+}
 if (process.env.FAKE_YTDLP === 'filtered') process.exit(0);
 const template = args[args.indexOf('-o') + 1];
 const ext = args.includes('-x') ? 'mp3' : 'mp4';
@@ -607,6 +699,75 @@ console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', dura
             } finally {
                 await tempdirMod.cleanupTemp(prefix);
             }
+        });
+
+        await test('.music: YouTube refusing the download falls back to SoundCloud once', async () => {
+            fs.rmSync(runLog, { force: true });
+            providers.resetHealth();
+            process.env.FAKE_YTDLP = 'botcheck';
+            const Music = require('../commands/music');
+            const music = new Music();
+            const prefix = `music_fb_${process.pid}`;
+            try {
+                const track = await music.resolveSearch('lagu enak');
+                assert.strictEqual(track.source, 'YouTube');
+                const out = await music.downloadWithFallback(track, 'lagu enak', false, prefix);
+                assert.ok(out.file && out.file.path.endsWith('.mp3'));
+                assert.strictEqual(out.track.source, 'SoundCloud');
+                assert.strictEqual(out.track.degraded, true);
+                assert.strictEqual(out.track.title, 'SC Song');
+                assert.match(music.buildInfoCard(out.track), /SoundCloud/);
+                const targets = runs().map(r => r[0]);
+                assert.deepStrictEqual(targets, ['ytsearch5:lagu enak', 'https://youtu.be/abc', 'scsearch5:lagu enak', 'https://soundcloud.com/a/sc-song']);
+            } finally {
+                delete process.env.FAKE_YTDLP;
+                providers.resetHealth();
+                await tempdirMod.cleanupTemp(prefix);
+            }
+        });
+
+        await test('.music: a pasted YouTube URL is never swapped for another song', async () => {
+            fs.rmSync(runLog, { force: true });
+            process.env.FAKE_YTDLP = 'botcheck';
+            const Music = require('../commands/music');
+            const music = new Music();
+            try {
+                const url = 'https://youtu.be/abc';
+                await assert.rejects(music.downloadWithFallback(music.resolveUrl(url), url, true, `music_url_${process.pid}`), /Sign in/);
+                assert.strictEqual(runs().length, 1, 'no SoundCloud search');
+            } finally {
+                delete process.env.FAKE_YTDLP;
+                providers.resetHealth();
+            }
+        });
+
+        await test('.music: after repeated refusals, searches skip YouTube', async () => {
+            fs.rmSync(runLog, { force: true });
+            providers.resetHealth();
+            const Music = require('../commands/music');
+            try {
+                for (let i = 0; i < providers.FAILURE_THRESHOLD; i++) {
+                    providers.recordFailure('youtube-download', new Error("Sign in to confirm you're not a bot"));
+                }
+                const track = await new Music().resolveSearch('lagu enak');
+                assert.strictEqual(track.source, 'SoundCloud');
+                assert.strictEqual(track.degraded, true);
+                assert.deepStrictEqual(runs().map(r => r[0]), ['scsearch5:lagu enak']);
+            } finally {
+                providers.resetHealth();
+            }
+        });
+
+        await test('.music <url> with words after it fetches only the URL', async () => {
+            fs.rmSync(runLog, { force: true });
+            const Music = require('../commands/music');
+            const sent = [];
+            const sock = { sendMessage: async (to, body) => { sent.push(body); return {}; } };
+            const msg = { key: { remoteJid: 'x@s.whatsapp.net' }, message: {} };
+            // An IP literal: the SSRF guard needs no DNS lookup for it.
+            await new Music().execute(sock, msg, ['https://93.184.216.34/track', 'tolong', 'dong'], { from: 'x@s.whatsapp.net' });
+            assert.strictEqual(runs()[0][0], 'https://93.184.216.34/track');
+            assert.ok(sent.some(b => b.audio), 'audio sent');
         });
 
         await test('A downloaded file is sent even when yt-dlp printed no metadata', async () => {

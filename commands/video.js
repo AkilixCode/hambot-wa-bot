@@ -131,11 +131,7 @@ class VideoCommand extends CommandBase {
 
             // Stream from disk rather than buffering the whole file — see the
             // same note in music.js.
-            await this.replyMedia(sock, from, msg, {
-                video: { url: file.path },
-                mimetype: 'video/mp4',
-                caption: this.buildCaption(info, platformInfo)
-            });
+            await this.replyMedia(sock, from, msg, this.buildPayload(file, info, platformInfo));
 
             await this.react(sock, msg, '✅');
         } catch (error) {
@@ -177,6 +173,31 @@ class VideoCommand extends CommandBase {
     }
 
     /**
+     * The message for a downloaded file. WhatsApp only plays MP4 in a video
+     * bubble; a WebM or MKV (yt-dlp's last-resort `/best` on some sites) sent
+     * as `video/mp4` arrived as a bubble that would not play, so those go as
+     * a file the user can open in a player instead.
+     *
+     * @param {{path: string, name: string}} file
+     * @param {Object} info - yt-dlp metadata
+     * @param {Object|null} platformInfo
+     * @returns {Object} Baileys payload
+     */
+    buildPayload(file, info, platformInfo) {
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (ext === 'mp4') {
+            return { video: { url: file.path }, mimetype: 'video/mp4', caption: this.buildCaption(info, platformInfo) };
+        }
+        const base = ui.safe(ui.truncate(info.title || 'video', 60)).replace(/[/\\?%*:|"<>]/g, '').trim() || 'video';
+        return {
+            document: { url: file.path },
+            mimetype: ext === 'webm' ? 'video/webm' : 'video/x-matroska',
+            fileName: `${base}.${ext}`,
+            caption: this.buildCaption(info, platformInfo, `Dikirim sebagai file .${ext} — buka dengan pemutar video.`)
+        };
+    }
+
+    /**
      * Build the caption shown under the video.
      *
      * Goes out through replyMedia, which clamps to WhatsApp's 1024-character
@@ -185,9 +206,10 @@ class VideoCommand extends CommandBase {
      *
      * @param {Object} info - yt-dlp metadata
      * @param {Object|null} platformInfo - Result of identifyPlatform
+     * @param {string} [note] - Extra last line
      * @returns {string} Rendered card
      */
-    buildCaption(info, platformInfo) {
+    buildCaption(info, platformInfo, note) {
         const lines = [];
 
         if (info.uploader || info.channel) {
@@ -210,6 +232,8 @@ class VideoCommand extends CommandBase {
         if (info.duration) {
             lines.push(ui.kv('Durasi', ui.duration(info.duration * 1000), '⏱️'));
         }
+
+        if (note) lines.push(note);
 
         const title = ui.safe(ui.truncate(info.title || 'Video', 70));
 

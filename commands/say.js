@@ -91,7 +91,7 @@ class SayCommand extends CommandBase {
         }
 
         // Parse input
-        const { language, text, expressions } = this.parseInput(args);
+        const { language, text } = this.parseInput(args);
 
         if (!text) {
             return await this.replyUsage(sock, from, msg, {
@@ -161,30 +161,64 @@ class SayCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-
-            const m = error.message || '';
-            let reason = 'Gagal menghasilkan suara.';
-            let title = 'Gagal';
-            let hint = ['Coba lagi sebentar lagi'];
-
-            if (m.includes('401') || m.includes('Unauthorized')) {
-                title = 'API Key Bermasalah';
-                reason = 'API key ElevenLabs tidak valid.';
-                hint = ['Hubungi owner bot'];
-            } else if (m.includes('429') || m.includes('quota')) {
-                title = 'Kuota Habis';
-                reason = 'Kuota ElevenLabs sudah habis.';
-                hint = ['Coba lagi bulan depan', 'Hubungi owner bot'];
-            } else if (m.includes('timeout')) {
-                title = 'Waktu Habis';
-                reason = 'Server ElevenLabs tidak merespons.';
-            }
-
+            const { reason, title, hint } = this.describeTtsError(error);
             await this.replyError(sock, from, msg, reason, { title, hint });
         } finally {
             // Cleanup temporary files
             await cleanupFiles(filePrefix);
         }
+    }
+
+    /**
+     * Turn a failure into the reply card's reason, title and hints.
+     *
+     * ElevenLabs answers 401 not only for a wrong key but also when the
+     * quota is used up (`quota_exceeded`) and when it blocks a free account
+     * used from a server or proxy (`detected_unusual_activity`). The reason
+     * is in the JSON body, which arrives as bytes (responseType
+     * arraybuffer), so it has to be decoded — the status alone sent the
+     * owner chasing a key that was fine.
+     *
+     * @param {Error} error - axios error, ffmpeg failure, or other
+     * @returns {{reason: string, title: string, hint: string[]}}
+     */
+    describeTtsError(error) {
+        const status = error?.response?.status;
+        let detail = '';
+        try {
+            const raw = error?.response?.data;
+            const body = raw && typeof raw === 'object' && !Buffer.isBuffer(raw) && !(raw instanceof ArrayBuffer)
+                ? raw
+                : JSON.parse(Buffer.from(raw).toString('utf8'));
+            detail = String(body?.detail?.status || body?.detail?.code || '').toLowerCase();
+        } catch {
+            // Not JSON: fall back to the status code.
+        }
+        const m = String(error?.message || '');
+
+        if (detail.includes('quota')) {
+            return { title: 'Kuota Habis', reason: 'Kuota ElevenLabs sudah habis.', hint: ['Coba lagi setelah kuota direset', 'Hubungi owner bot'] };
+        }
+        if (detail.includes('unusual_activity')) {
+            return {
+                title: 'Akun Diblokir ElevenLabs',
+                reason: 'ElevenLabs memblokir akun gratis yang dipakai dari server ini.',
+                hint: ['Owner: pakai paket berbayar, atau matikan proxy/VPN untuk ElevenLabs']
+            };
+        }
+        if (status === 401 || status === 403 || detail.includes('api_key')) {
+            return { title: 'API Key Bermasalah', reason: 'API key ElevenLabs tidak valid.', hint: ['Owner: periksa ELEVENLABS_API_KEY di .env'] };
+        }
+        if (status === 429) {
+            return { title: 'Sedang Sibuk', reason: 'ElevenLabs sedang menolak permintaan karena terlalu banyak.', hint: ['Coba lagi sebentar lagi'] };
+        }
+        if (error?.code === 'ENOENT' || /spawn ffmpeg|ffmpeg.*not found/i.test(m)) {
+            return { title: 'Tidak Tersedia', reason: 'Komponen konversi audio (ffmpeg) belum terpasang di server.', hint: ['Hubungi admin bot'] };
+        }
+        if (error?.timedOut || error?.code === 'ECONNABORTED' || m.includes('timeout')) {
+            return { title: 'Waktu Habis', reason: 'Server ElevenLabs tidak merespons.', hint: ['Coba lagi sebentar lagi'] };
+        }
+        return { title: 'Gagal', reason: 'Gagal menghasilkan suara.', hint: ['Coba lagi sebentar lagi'] };
     }
 
     /**
