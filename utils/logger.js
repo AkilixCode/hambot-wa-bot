@@ -62,7 +62,8 @@ const CATEGORY_EMOJI = {
     network: '🌐',
     general: '📋',
     security: '🔒',
-    owner: '👑'
+    owner: '👑',
+    ai: '🤖'
 };
 
 class Logger {
@@ -71,6 +72,7 @@ class Logger {
         this.silent = config.logging.silent;
         this.netLevel = config.logging.net || 'problems';
         this._netHistory = [];
+        this._chatHistory = [];
     }
 
     /**
@@ -441,6 +443,51 @@ class Logger {
             default:
                 return JSON.stringify(e);
         }
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  AI CHAT EVENTS (always shown, see utils/chat)
+    // ─────────────────────────────────────────────────────
+
+    /**
+     * Log an AI chat event: a failure with its fix, a backend set aside or
+     * back, the startup summary.
+     *
+     * Shown in both log modes and not gated by NET_LOG: when `.chat` stops
+     * working, these lines are the diagnosis. Redacted, and tagged with the
+     * command run like network lines. Never given prompt or answer text.
+     *
+     * @param {string|string[]} lines - First line, then indented detail lines
+     * @param {Object} [opts]
+     * @param {boolean} [opts.problem] - Keep in the history `.chat status` shows
+     */
+    chat(lines, opts = {}) {
+        const list = (Array.isArray(lines) ? lines : [lines]).filter(Boolean).map(l => redact.redact(String(l)));
+        if (!list.length) return;
+        const tag = netContext.tag();
+        const head = tag ? `[${tag}] ${list[0]}` : list[0];
+
+        if (opts.problem) {
+            this._chatHistory.push({ at: Date.now(), line: [head, ...list.slice(1)].join(' · ') });
+            if (this._chatHistory.length > NET_HISTORY_SIZE) this._chatHistory.shift();
+        }
+        if (this.silent) return;
+
+        const rest = list.slice(1).map(l => `       ${l}`);
+        if (this.mode === 'simple') {
+            console.log([`🤖 ${head}`, ...rest].join('\n'));
+        } else {
+            console.log([`🤖 [${new Date().toISOString()}] [CHAT] ${head}`, ...rest].join('\n'));
+        }
+    }
+
+    /**
+     * Recent AI chat problems, newest last, already redacted.
+     * @param {number} [limit]
+     * @returns {Array<{at: number, line: string}>}
+     */
+    recentChatProblems(limit = NET_HISTORY_SIZE) {
+        return this._chatHistory.slice(-limit);
     }
 
     // ─────────────────────────────────────────────────────

@@ -118,6 +118,25 @@ function redact(text) {
 }
 
 /**
+ * Replace only the exact secret values from this bot's own environment.
+ *
+ * For text the bot did not write, such as an AI answer: the pattern rules in
+ * redact() would also blank harmless look-alikes (an `api_key = "..."` code
+ * example), while this still catches an agent with file access that read
+ * .env and repeated a real key.
+ * @param {string} text
+ * @returns {string}
+ */
+function redactKnown(text) {
+    if (text === null || text === undefined) return '';
+    let output = String(text);
+    for (const secret of collectSecretValues()) {
+        output = output.split(secret).join(REDACTED);
+    }
+    return output;
+}
+
+/**
  * Short, non-reversible fingerprint of a secret.
  * Lets the owner confirm *which* key is loaded without exposing any of it.
  * @param {string} value
@@ -187,6 +206,7 @@ function maskHost(host) {
 module.exports = {
     REDACTED,
     redact,
+    redactKnown,
     fingerprint,
     describeSecret,
     maskJid,

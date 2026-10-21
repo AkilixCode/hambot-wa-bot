@@ -21,7 +21,7 @@ const ROW_WIDTH = 27;
 // commands (media, tools) below novelty ones, so categories are listed roughly
 // by how often people reach for them. Anything not listed falls to the end.
 const CATEGORY_ORDER = [
-    'general', 'media', 'tools', 'utility', 'technical',
+    'general', 'ai', 'media', 'tools', 'utility', 'technical',
     'info', 'entertainment', 'fun', 'group', 'system', 'security'
 ];
 
@@ -46,6 +46,29 @@ class MenuCommand extends CommandBase {
      */
     buildCommandGuides() {
         return {
+            // === AI ===
+            chat: {
+                title: '🤖 AI Chat',
+                description: 'Ngobrol dengan AI langsung dari WhatsApp. Bot meneruskan pesanmu ke model lokal, penyedia API, atau agen AI milik owner.',
+                usage: [
+                    '.chat <pertanyaan>',
+                    'reply pesan + .chat <perintah>',
+                    '.chat reset',
+                    '.chat stop',
+                    '.chat status'
+                ],
+                examples: [
+                    '.chat jelaskan apa itu DNS',
+                    '.chat buatkan pantun tentang kopi',
+                    '(reply pesan panjang) .chat ringkas ini'
+                ],
+                notes: [
+                    '• AI mengingat beberapa obrolan terakhirmu; .chat reset untuk mulai baru',
+                    '• Reply sebuah pesan dengan .chat agar isinya ikut dikirim',
+                    '• Owner: .chat test · .chat models · .chat use <local|provider|agent> · .chat stop all'
+                ]
+            },
+
             // === MEDIA COMMANDS ===
             video: {
                 title: '📹 Video Downloader',
@@ -856,6 +879,7 @@ class MenuCommand extends CommandBase {
         const emojis = {
             'system': '⚙️',
             'general': '📋',
+            'ai': '🤖',
             'media': '🎵',
             'tools': '🛠️',
             'utility': '🔧',
@@ -874,6 +898,7 @@ class MenuCommand extends CommandBase {
         const names = {
             'system': 'Sistem',
             'general': 'Umum',
+            'ai': 'AI',
             'media': 'Media & Audio',
             'tools': 'Alat',
             'utility': 'Utilitas',

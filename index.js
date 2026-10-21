@@ -246,6 +246,7 @@ async function startBot() {
                 pairingCodesIssued = 0;
                 logger.system(`✅ ${config.bot.name} connected to WhatsApp!`);
                 login.removeQrPng();
+                startChatOnce();
             }
         });
 
@@ -267,6 +268,19 @@ async function startBot() {
     }
 }
 
+// AI chat: report its settings (and probe the backends) once per process,
+// on the first connect. Loaded only when switched on.
+let chatStarted = false;
+function startChatOnce() {
+    if (chatStarted || !/^(true|yes|on|1)$/i.test(String(process.env.CHAT_ENABLED || '').trim())) return;
+    chatStarted = true;
+    try {
+        require('./utils/chat').service().startup();
+    } catch (error) {
+        logger.error(error, { context: 'chat-startup' });
+    }
+}
+
 // Graceful shutdown
 async function shutdown() {
     logger.system('Shutting down gracefully...');
@@ -280,6 +294,9 @@ async function shutdown() {
 
         // Cleanup cache
         cache.destroy();
+
+        // Cancel AI requests and save the daily counters
+        if (require.cache[require.resolve('./utils/chat')]) require('./utils/chat').shutdown();
 
         logger.system('Shutdown complete');
         process.exit(0);
