@@ -35,8 +35,19 @@ const logger = require('../utils/logger');
 const ytdlp = require('../utils/ytdlp');
 const media = require('../utils/media');
 const tempdir = require('../utils/tempdir');
-const { runProviders } = require('../utils/providers');
+const providers = require('../utils/providers');
 const { identifyPlatform, getPlatformArgs, getSupportedPlatformsText } = require('../utils/url-parser');
+
+// Breaker for YouTube *downloads*. Searching YouTube usually works from a
+// datacenter IP; the bot check hits when the audio itself is fetched. After a
+// few refused downloads in a row, searches go straight to SoundCloud for a
+// while instead of finding a YouTube hit that cannot be downloaded.
+const YOUTUBE_DOWNLOAD_ID = 'youtube-download';
+
+// yt-dlp failures (utils/ytdlp failureReason) where another source can still
+// give the user the song they searched for. Network, proxy and timeout
+// failures are not here: SoundCloud would sit behind the same problem.
+const FALLBACK_REASONS = new Set(['bot-check', 'geo-blocked', 'unavailable', 'private']);
 
 class MusicCommand extends CommandBase {
     constructor() {
@@ -77,8 +88,10 @@ class MusicCommand extends CommandBase {
 
         await this.react(sock, msg, '🔍');
 
-        const query = args.join(' ');
-        const isUrl = isValidUrl(query);
+        // A pasted URL is used on its own: words after it would otherwise
+        // become part of the "URL" yt-dlp is asked to fetch.
+        const isUrl = isValidUrl(args[0]);
+        const query = isUrl ? args[0] : args.join(' ');
         const filePrefix = generateFilename('music', '');
 
         // A direct URL gets fetched by yt-dlp, so it needs the SSRF guard. A
@@ -95,7 +108,7 @@ class MusicCommand extends CommandBase {
         try {
             await this.react(sock, msg, '🎵');
 
-            const track = isUrl
+            let track = isUrl
                 ? this.resolveUrl(query)
                 : await this.resolveSearch(query);
 
@@ -107,7 +120,9 @@ class MusicCommand extends CommandBase {
                     });
             }
 
-            const { file, tooLong } = await this.downloadAudio(track, filePrefix);
+            const downloaded = await this.downloadWithFallback(track, query, isUrl, filePrefix);
+            track = downloaded.track;
+            const { file, tooLong } = downloaded;
             if (tooLong) {
                 return await this.replyError(sock, from, msg,
                     'Lagunya kepanjangan. Coba yang lebih pendek ya!', {
@@ -176,7 +191,7 @@ class MusicCommand extends CommandBase {
      *                            fallback source was used
      */
     async resolveSearch(query) {
-        const outcome = await runProviders('music-search', [
+        const sources = [
             {
                 id: 'youtube',
                 label: 'YouTube',
@@ -187,9 +202,53 @@ class MusicCommand extends CommandBase {
                 label: 'SoundCloud',
                 run: () => this.searchSoundCloud(query)
             }
-        ]);
+        ];
+        // YouTube downloads keep being refused: a YouTube hit would only fail
+        // at the download, so do not look for one.
+        const usable = providers.isOpen(YOUTUBE_DOWNLOAD_ID) ? sources.slice(1) : sources;
+        const outcome = await providers.runProviders('music-search', usable);
 
-        return { ...outcome.result, degraded: outcome.degraded, source: outcome.providerLabel };
+        return {
+            ...outcome.result,
+            degraded: outcome.degraded || usable.length < sources.length,
+            source: outcome.providerLabel
+        };
+    }
+
+    /**
+     * Download the track; when a YouTube search hit is refused (the bot
+     * check usually lands here, not at the search), search SoundCloud and
+     * download from there instead. Once, never a loop.
+     *
+     * A URL the user pasted is never swapped for a different song.
+     *
+     * @param {Object} track - Track descriptor
+     * @param {string} query - The search terms (or the URL)
+     * @param {boolean} isUrl - Whether the user pasted a URL
+     * @param {string} filePrefix - Temp filename prefix
+     * @returns {Promise<{track: Object, file?: Object, tooLong: boolean}>}
+     */
+    async downloadWithFallback(track, query, isUrl, filePrefix) {
+        const fromYouTube = !isUrl && track.source === 'YouTube';
+        try {
+            const result = await this.downloadAudio(track, filePrefix);
+            if (fromYouTube) providers.recordSuccess(YOUTUBE_DOWNLOAD_ID);
+            return { track, ...result };
+        } catch (error) {
+            if (!fromYouTube || !FALLBACK_REASONS.has(ytdlp.failureReason(error))) throw error;
+            providers.recordFailure(YOUTUBE_DOWNLOAD_ID, error);
+            logger.info(`Music: YouTube refused the download (${ytdlp.failureReason(error)}), trying SoundCloud`);
+
+            await tempdir.cleanupTemp(filePrefix);
+            let fallback;
+            try {
+                fallback = { ...(await this.searchSoundCloud(query)), degraded: true, source: 'SoundCloud' };
+            } catch {
+                // Nothing on SoundCloud either: YouTube's reason is the useful one.
+                throw error;
+            }
+            return { track: fallback, ...(await this.downloadAudio(fallback, filePrefix)) };
+        }
     }
 
     /**

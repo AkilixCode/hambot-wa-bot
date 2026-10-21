@@ -6,12 +6,7 @@
 const CommandBase = require('./base');
 const logger = require('../utils/logger');
 const ui = require('../utils/ui');
-const { downloadMedia, generateFilename, spawnPromise } = require('../utils/helpers');
-const tempdir = require('../utils/tempdir');
-const fsPromises = require('fs').promises;
-
-// A sticker is small; anything slower than this means ffmpeg is stuck.
-const CONVERT_TIMEOUT_MS = 30000;
+const { downloadMedia } = require('../utils/helpers');
 
 class ToImgCommand extends CommandBase {
     constructor() {
@@ -42,27 +37,10 @@ class ToImgCommand extends CommandBase {
 
         await this.react(sock, msg, '🖼️');
 
-        // Scratch files live in tmp/, not the repo root.
-        const webpFile = tempdir.tempPath(generateFilename('sticker', 'webp'));
-        const pngFile = tempdir.tempPath(generateFilename('sticker', 'png'));
-
         try {
             logger.info('ToImg: converting sticker to image...');
             const stickerBuffer = await downloadMedia(quotedSticker, 'sticker');
-
-            await fsPromises.writeFile(webpFile, stickerBuffer);
-
-            // -y goes before the output path. It was previously placed after,
-            // where ffmpeg treats it as a trailing global flag rather than an
-            // overwrite instruction for this output — so a leftover file could
-            // make ffmpeg block on an interactive prompt that never gets
-            // answered. With the timeout below that is now survivable either
-            // way, but the flag order is the actual fix.
-            await spawnPromise('ffmpeg', ['-y', '-i', webpFile, pngFile], {
-                timeout: CONVERT_TIMEOUT_MS
-            });
-
-            const imageBuffer = await fsPromises.readFile(pngFile);
+            const imageBuffer = await this.convert(stickerBuffer);
             logger.info('ToImg: conversion done');
 
             await this.replyMedia(sock, from, msg, {
@@ -78,20 +56,27 @@ class ToImgCommand extends CommandBase {
             await this.react(sock, msg, '✅');
         } catch (error) {
             this.logError(error, context);
-
-            const isMissingFfmpeg = /enoent|not found/i.test(error.message || '');
-            await this.replyError(sock, from, msg,
-                isMissingFfmpeg
-                    ? 'Komponen konversi belum terpasang di server.'
-                    : 'Gagal mengubah stiker jadi gambar.', {
-                    hint: isMissingFfmpeg
-                        ? ['Hubungi admin bot']
-                        : ['Coba stiker yang lain', 'Stiker animasi belum didukung']
-                });
-        } finally {
-            await fsPromises.unlink(webpFile).catch(() => {});
-            await fsPromises.unlink(pngFile).catch(() => {});
+            await this.replyError(sock, from, msg, 'Gagal mengubah stiker jadi gambar.', {
+                hint: ['Coba stiker yang lain']
+            });
         }
+    }
+
+    /**
+     * WebP sticker → PNG, in memory.
+     *
+     * This used ffmpeg, whose WebP decoder (5.x, as in the Docker image)
+     * cannot read animated WebP — so every animated sticker failed. sharp
+     * (already used by .sticker) reads both; an animated sticker gives its
+     * first frame. No temp files and no ffmpeg needed.
+     *
+     * @param {Buffer} webp
+     * @returns {Promise<Buffer>} PNG bytes
+     */
+    async convert(webp) {
+        // Required here, not at load: sharp is ~22 MB an idle bot need not hold.
+        const sharp = require('sharp');
+        return sharp(webp, { animated: false }).png().toBuffer();
     }
 }
 

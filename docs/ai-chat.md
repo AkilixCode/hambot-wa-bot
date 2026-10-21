@@ -372,6 +372,121 @@ question from inside the container (through `docker-compose.yml` and
 `./deploy.sh chat test`), and checks that a loopback-only agent and a
 `localhost` address fail with the fixes above.
 
+## Files from the agent
+
+An agent can send files back, not only text: a chart it plotted, a script
+it wrote, a PDF. Hermes marks each file with a line of its own in the answer:
+
+```text
+Ini grafiknya.
+MEDIA:/outbox/chart.png
+```
+
+With `CHAT_AGENT_MEDIA_DIR` set, HamBot takes those lines out of the text and
+sends each file in the chat:
+
+| File | Sent as |
+| --- | --- |
+| `png`, `jpg`, `jpeg` | image |
+| `mp4` | video |
+| `mp3`, `m4a`, `ogg`, `opus`, `wav` | audio |
+| anything else (`py`, `pdf`, `zip`, `gif`, …) | a document, with its file name |
+
+### Rules
+
+- **Opt-in.** It is off while `CHAT_AGENT_MEDIA_DIR` is empty, and only the
+  agent backend's answers are read for `MEDIA:` lines.
+- **One folder.** Only a regular file inside that folder is ever sent:
+  - symlinks are resolved first;
+  - the open refuses a link swapped in afterwards.
+
+  So `MEDIA:/app/.env`, `MEDIA:../../etc/passwd`, and a link in the folder
+  pointing elsewhere are refused.
+- **Limits:**
+  - at most `CHAT_AGENT_MEDIA_MAX_FILES` files per answer (default 5);
+  - each file at most `MAX_MEDIA_SIZE` (default 64M);
+  - a `MEDIA:` line inside a ``` code block is left as text.
+- **Refused files:** the chat gets one short note ("1 file tidak terkirim (di
+  luar folder outbox)"), and the log one line, e.g.
+  `files: 2 sent, refused 1 outside`. File contents and paths are never logged.
+
+### Set it up
+
+The agent and HamBot need to see **the same folder at the same path**. The
+agent can write to it; HamBot only reads.
+
+**Docker**
+
+1. Create a shared volume, once. Hermes's image runs as UID 10000, so give
+   the folder to that user:
+
+   ```bash
+   docker volume create hermes-outbox
+   docker run --rm -v hermes-outbox:/outbox alpine chown 10000:10000 /outbox
+   ```
+
+2. Mount it in the agent's compose file, writable:
+
+   ```yaml
+   services:
+     hermes:
+       volumes:
+         - hermes-outbox:/outbox
+   volumes:
+     hermes-outbox:
+       external: true
+   ```
+
+3. Mount it read-only in HamBot. Put this in a `docker-compose.override.yml`
+   next to HamBot's `docker-compose.yml`, so updates never touch it:
+
+   ```yaml
+   services:
+     hambot:
+       volumes:
+         - hermes-outbox:/outbox:ro
+   volumes:
+     hermes-outbox:
+       external: true
+   ```
+
+4. In HamBot's `.env`:
+
+   ```ini
+   CHAT_AGENT_MEDIA_DIR=/outbox
+   ```
+
+5. Recreate the bot so it reads `.env` again:
+
+   ```bash
+   docker compose up -d --force-recreate
+   ```
+
+**Local mode, or both on one machine without Docker:** point
+`CHAT_AGENT_MEDIA_DIR` at a plain folder the agent writes into, e.g.
+`/home/you/.hermes/outbox`.
+
+**Tell the agent.** Add the convention to its standing instructions. For
+Hermes, that is `SOUL.md` in its data folder; back it up first:
+
+```text
+When you make a file for the user (image, chart, script, document, archive),
+save it in /outbox and put a line MEDIA:/outbox/<file name> on its own line
+in your reply, one line per file, plus one sentence saying what it is.
+```
+
+**Check it:**
+
+- `.chat status` (owner) shows the folder on its "File agen" line.
+- A wrong folder appears there, and in the startup log, as a config problem.
+  The feature then stays off; the rest of `.chat` keeps working.
+
+**Old files.** Nothing deletes them. To clear files older than a week:
+
+```bash
+docker run --rm -v hermes-outbox:/outbox alpine find /outbox -type f -mtime +7 -delete
+```
+
 ## Timeouts: silence, not slowness
 
 Every request streams. A timeout means the AI **stopped responding**; it never
@@ -446,6 +561,9 @@ Otherwise people get a short "AI offline" reply and the owner sees why.
   - `.security logs` redacts `CHAT_*_KEY` / `CHAT_*_TOKEN` like every other
     secret.
 - **Agents** are owner-only unless you open them with `CHAT_AGENT_ACCESS`.
+  With it open, anyone who may chat can make the agent run its tools.
+- **Files from the agent** are only read from `CHAT_AGENT_MEDIA_DIR`; see
+  [Files from the agent](#files-from-the-agent).
 - **`.env` files** are written with owner-only permissions. The backup is
   `.env.bak`; it is ignored by git and kept out of the Docker image.
 
@@ -467,6 +585,9 @@ and prints one fix per problem.
 | Empty answers from a reasoning model | Raise `CHAT_MAX_TOKENS`; the thinking counts towards it |
 | `input too long` | `.chat reset`, or lower `CHAT_MEMORY_MAX_CHARS` / `CHAT_MAX_INPUT` |
 | A backend stays "set aside" after you fixed it | `.chat test`: a passing check puts it back at once |
+| The agent's files arrive as `MEDIA:` text | `CHAT_AGENT_MEDIA_DIR` is empty or was refused (see `.chat status`), or the answer came from another backend |
+| "file tidak terkirim (di luar folder outbox)" | The agent saved the file outside the folder, or the two containers mount it at different paths |
+| "file tidak terkirim (tidak bisa dibaca)" | Permissions: HamBot runs as UID 999 and must be able to read the files (Hermes's default `0644` is fine) |
 
 ## All settings
 
@@ -524,6 +645,8 @@ and prints one fix per problem.
 | `CHAT_AGENT_ID` | default | OpenClaw agent id |
 | `CHAT_AGENT_MODEL` | platform default | `hermes-agent`, `openclaw/<id>`, or what your agent expects |
 | `CHAT_AGENT_MEMORY` | `bot` | `bot`: HamBot sends the history; `agent`: the agent keeps the session |
+| `CHAT_AGENT_MEDIA_DIR` | — | Folder the agent saves files in; its `MEDIA:` lines are sent as files. Empty = off |
+| `CHAT_AGENT_MEDIA_MAX_FILES` | `5` | Files per answer (1-10); each at most `MAX_MEDIA_SIZE` |
 | `CHAT_*_STREAM` | `true` | Per backend; `false` only for servers that cannot stream |
 | `CHAT_*_RESPONSE_TIMEOUT_SEC` | 120 / 60 / 90 | No response at all |
 | `CHAT_*_IDLE_TIMEOUT_SEC` | 60 / 60 / 180 | Silence mid-answer |

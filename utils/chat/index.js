@@ -29,6 +29,7 @@ const settingsLib = require('./settings');
 const ChatMemory = require('./memory');
 const BackendHealth = require('./health');
 const format = require('./format');
+const agentMedia = require('./media');
 const transport = require('./transport');
 
 const STATE_FILE = 'chat.json';
@@ -240,7 +241,7 @@ class ChatService {
      * @param {Function} [hooks.onQueued] - (position) when it has to wait
      * @param {Function} [hooks.onStart] - (session) once it runs
      * @param {Function} [hooks.onActivity] - (event, session) for each sign of life
-     * @returns {Promise<Object>} { parts, model, backend, viaFallback, partial, cut, truncated, ms, remaining }
+     * @returns {Promise<Object>} { parts, files, filesDropped, model, backend, viaFallback, partial, cut, truncated, ms, remaining }
      * @throws {ChatUserError}
      */
     async ask(who, question, hooks = {}) {
@@ -290,18 +291,32 @@ class ChatService {
 
             let text = s.stripThinking ? format.stripThinking(result.text) : result.text.trim();
             text = redactKnown(text);
-            if (!text) throw new ChatUserError('empty');
+            const remembered = text;
 
-            const { parts, cut } = format.split(format.toWhatsApp(text), { maxParts: s.maxParts });
+            // Files the agent made (MEDIA:<path> lines). Only the agent's
+            // answers, and only with an outbox folder configured.
+            let files = [];
+            let filesDropped = 0;
+            if (s.agentMedia.dir && result.backend === 'agent') {
+                ({ text, refs: files, dropped: filesDropped } = agentMedia.extract(text, s.agentMedia.maxFiles));
+            }
+            if (!text && files.length === 0) throw new ChatUserError('empty');
+
+            const { parts, cut } = text
+                ? format.split(format.toWhatsApp(text), { maxParts: s.maxParts })
+                : { parts: [], cut: false };
 
             if (!result.partial) {
-                this.memory.add(key, userContent, text);
+                // The full text, MEDIA lines included: the agent sees what it sent.
+                this.memory.add(key, userContent, remembered);
             }
             this.countUse(who);
 
             return {
                 parts,
                 cut,
+                files,
+                filesDropped,
                 model: result.model,
                 backend: result.backend,
                 viaFallback: result.viaFallback,
@@ -566,6 +581,18 @@ class ChatService {
     }
 
     /**
+     * Open a file the agent named in a MEDIA: line, if it is inside the
+     * outbox folder (utils/chat/media.js holds the checks).
+     * @param {string} ref
+     * @returns {Promise<Object>} An opened file, or { error }
+     */
+    openFile(ref) {
+        const dir = this.settings.agentMedia.dir;
+        if (!dir) return Promise.resolve({ error: 'outside' });
+        return agentMedia.open(ref, dir, config.media.maxFileBytes);
+    }
+
+    /**
      * Everything `.chat status` shows.
      * @param {Object} who
      */
@@ -604,6 +631,7 @@ class ChatService {
             slots: { active: this.slots.active, waiting: this.slots.waiting, max: s.maxConcurrent, queueMax: s.queueMax },
             memory: { enabled: s.memory.turns > 0, turns: s.memory.turns, idleMin: Math.round(s.memory.idleMs / 60000), mine: this.memory.size(ChatMemory.key(who.chat, who.sender)) },
             daily: { enabled: s.daily.enabled, limit: s.daily.limit, remaining: this.remaining(who) },
+            agentMedia: { dir: s.agentMedia.dir, maxFiles: s.agentMedia.maxFiles, maxBytes: config.media.maxFileBytes },
             problems: s.problems,
             recent: logger.recentChatProblems(5)
         };
