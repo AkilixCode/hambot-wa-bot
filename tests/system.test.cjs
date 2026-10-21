@@ -137,12 +137,14 @@ try {
     assert(Array.isArray(networkArgs) && networkArgs.includes('--force-ipv4'), 
            'Config: getYtDlpNetworkArgs returns --force-ipv4 when enabled');
     
-    // Test getYtDlpNetworkArgs returns empty when disabled
+    // Test getYtDlpNetworkArgs drops --force-ipv4 when disabled
     process.env.FORCE_IPV4 = 'false';
     const testNetConfig5 = new Config.constructor();
-    const emptyArgs = testNetConfig5.getYtDlpNetworkArgs();
-    assert(Array.isArray(emptyArgs) && emptyArgs.length === 0, 
-           'Config: getYtDlpNetworkArgs returns empty when forceIPv4 disabled');
+    const noIpv4Args = testNetConfig5.getYtDlpNetworkArgs();
+    assert(Array.isArray(noIpv4Args) && !noIpv4Args.includes('--force-ipv4'),
+           'Config: getYtDlpNetworkArgs omits --force-ipv4 when forceIPv4 disabled');
+    assert(noIpv4Args.includes('--retries') && noIpv4Args.includes('--socket-timeout'),
+           'Config: getYtDlpNetworkArgs carries transport retries');
     
     // Test getYtDlpProxyArgs returns empty when proxy disabled
     delete process.env.PROXY_ENABLED;

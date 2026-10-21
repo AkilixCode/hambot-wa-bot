@@ -9,6 +9,7 @@ const RateLimiter = require('./utils/rate-limiter');
 // Heavy commands share MAX_PROCESSES slots; a few more may wait in line.
 const { heavy: heavySlots } = require('./utils/work-slots');
 const logger = require('./utils/logger');
+const netContext = require('./utils/net-context');
 const security = require('./utils/security');
 const groupCache = require('./utils/group-cache');
 const ui = require('./utils/ui');
@@ -434,7 +435,11 @@ module.exports = async (sock, m) => {
         }
 
         // --- Execute Command ---
-        await command.execute(sock, msg, args, context);
+        // Inside a network context, so every request the command makes is
+        // tagged with it in the log and counted into its "Network" line.
+        const netCtx = netContext.create(canonicalName);
+        tracker.net = netCtx.stats;
+        await netContext.run(netCtx, () => command.execute(sock, msg, args, context));
 
         // Check if command self-reported failure via logError()
         if (context._failed) {

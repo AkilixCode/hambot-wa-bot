@@ -69,8 +69,21 @@ command works without any key.
 
 `PROXY_ENABLED`, `PROXY_TYPE` (`http`, `https`, `socks5`), `PROXY_HOST`,
 `PROXY_PORT`, `PROXY_USER`, `PROXY_PASS` configure an outbound proxy shared by
-yt-dlp and axios. `NETWORK_FALLBACK_TO_LOCAL` retries without the proxy when the
-proxy itself is unreachable.
+yt-dlp and every HTTP request (`HB_PROXY_URL` overrides them all). HTTP
+proxies are used through a CONNECT tunnel, so HTTPS sites work through them.
+`NETWORK_FALLBACK_TO_LOCAL` retries without the proxy when the proxy itself
+fails (refused, unreachable, no answer within `PROXY_CONNECT_TIMEOUT`, or it
+refused the CONNECT); a slow or failing *target* never falls back. After 3
+proxy failures in a row the proxy is skipped for a minute (doubling on each
+repeat, capped at 30 minutes), so a dead phone costs no waiting at all.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HTTP_RETRIES` | `2` | Extra attempts for a failed GET (reset, timeout, 429/5xx), with backoff. POST is never retried. |
+| `HTTP_TIMEOUT` | `30000` | Per-attempt HTTP timeout, ms |
+| `PROXY_CONNECT_TIMEOUT` | `10000` | How long the proxy may take to answer before it counts as down, ms |
+| `FORCE_IPV4` | `true` | IPv4 only, for HTTP and yt-dlp |
+| `YTDLP_SOCKET_TIMEOUT`, `YTDLP_RETRIES`, `YTDLP_FRAGMENT_RETRIES`, `YTDLP_EXTRACTOR_RETRIES` | `30`, `5`, `10`, `3` | yt-dlp transport retries; `0` keeps yt-dlp's own default |
 
 Because the bot usually runs on a datacenter IP — which YouTube treats as a bot —
 routing media traffic through a residential connection is the most effective fix
@@ -80,6 +93,11 @@ Tailscale + Every Proxy setup.
 
 `LOG_LEVEL` accepts `simple` (default, one block per command) or `full`
 (verbose). `LOG_SILENT=true` suppresses output entirely.
+
+`NET_LOG` controls network log lines, which show in both modes: `problems`
+(default — retries, failures, proxy fallbacks, circuit changes), `all` (also
+every successful request) or `off`. See
+[MEDIA.md](MEDIA.md#reading-the-network-log) for how to read them.
 
 ### Deployment
 

@@ -86,6 +86,25 @@ Owns `config.proxy.enabled`, which every consumer already reads. Flipping it
 moves the whole bot at once. The choice is persisted to `data/` so it survives a
 restart.
 
+### HTTP client — `utils/http-client.js`
+
+Every HTTP request goes through here, and it decides route, transport, retries
+and fallback:
+
+- **Shared keep-alive agents.** HTTP proxies get a real CONNECT tunnel
+  (`https-proxy-agent`); SOCKS uses `socks-proxy-agent`. One tunnel is reused
+  across requests instead of a fresh handshake each time.
+- **Retries** for GET/HEAD on resets, timeouts, DNS hiccups and 408/429/5xx,
+  with jittered backoff and `Retry-After` honoured (up to 5s). POST is never
+  retried by default. An overall deadline (2 × timeout) caps the total.
+- **Proxy faults are told apart from target faults.** Only a failure of the
+  proxy itself switches a request to direct; a slow target does not.
+- **The proxy has its own circuit breaker** (`egress:proxy`), shared with
+  yt-dlp: once 3 requests find the proxy dead, HTTP and yt-dlp both go direct
+  straight away until it recovers.
+
+Failures are classified by `utils/net-errors.js`.
+
 ---
 
 ## Setting up a residential proxy (free)
@@ -157,7 +176,8 @@ In order of likelihood:
 ### `.pinterest` returns nothing
 
 Tier 1 will have tripped its breaker and Wallhaven will be serving. To confirm,
-look for `served by fallback "wallhaven"` in the logs.
+look for a `🔁 … pinterest: pinterest-api ✗ … → wallhaven ✓` line in the logs;
+the reason after the ✗ (`HTTP 403`, `timeout after 20s`, …) says what broke.
 
 If Pinterest's endpoint has changed, the request shape is in
 `searchPinterest()` in `commands/pinterest.js`. Open Pinterest search in a
@@ -203,3 +223,45 @@ const outcome = await runProviders('my-command', [
 Return an empty array to signal "no usable result"; the cascade treats that as
 failure and moves on, because an empty result from a scraper almost always means
 *blocked*, not *nothing matched*.
+
+---
+
+## Reading the network log
+
+Network problems print in the default `simple` log mode, one line each,
+tagged with the command and a short run id so concurrent commands can be told
+apart. Query strings are never printed (they hold API keys and search terms),
+and proxy credentials are never printed: the proxy is named by `host:port`.
+
+```
+🌐 [.pinterest #a3f9] GET i.pinimg.com/736x/…/x.jpg → connection reset (ECONNRESET) · 412ms · proxy · retry 1/2 in 310ms
+🌐 [.pinterest #a3f9] GET www.pinterest.com/resource/BaseSearchResource/get/ → ✗ HTTP 403 · 812ms · proxy
+🌐 [.music #77c1] proxy 100.64.0.2:8080 failed (proxy ECONNREFUSED) → retrying direct for www.youtube.com
+⚡ [.music #77c1] circuit: egress:proxy paused 60s after 3 failures (last: proxy ECONNREFUSED)
+🌐 [.meme #0b2e] proxy 100.64.0.2:8080 is paused (circuit open) → going direct
+🔁 [.music #77c1] music-search: youtube ✗ bot-check (4.1s) → soundcloud ✓ (2.3s)
+🎬 [.video #5d10] yt-dlp www.tiktok.com · proxy → ✗ network · 31.0s · ERROR: [TikTok] …: Unable to download webpage
+✅ circuit: egress:proxy recovered
+```
+
+| You see | It means |
+| --- | --- |
+| `retry n/m` | A transient failure; the request is being retried. Occasional ones are normal. |
+| `✗ HTTP 403` / `✗ HTTP 429` | The site refused or rate-limited the server. Turning the proxy on usually helps. |
+| `proxy … failed (…) → retrying direct` | The phone/proxy is unreachable. Check that Tailscale and Every Proxy are running. |
+| `circuit: egress:proxy paused` | The proxy failed 3 times; traffic goes direct until it answers again. |
+| `✗ bot-check` | YouTube's bot check. See the runbook above. |
+| `✗ timeout after …` with `proxy` | The *site* was slow through the proxy. The proxy itself is fine. |
+
+Each command block also gets a summary line:
+
+```
+📌 .pinterest
+   From    : 628xxxx (pribadi)
+   Status  : ✅ Done (3120ms)
+   Network : 6 req · 5 ok · 1 failed · 2 retries · 1.4MB · via proxy
+```
+
+Set `NET_LOG=all` to see every successful request as well, or `NET_LOG=off`
+to silence these lines. `.security media` lists the last five problems even
+when they were not printed.

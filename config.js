@@ -79,7 +79,12 @@ class Config {
         this.logging = {
             // 'simple' = clean command blocks, 'full' = verbose debug logs
             level: process.env.LOG_LEVEL || 'simple',
-            silent: process.env.LOG_SILENT === 'true'
+            silent: process.env.LOG_SILENT === 'true',
+            // Network log lines, in both modes:
+            //   'problems' = retries, failures, proxy fallbacks, circuit changes
+            //   'all'      = also every successful request
+            //   'off'      = none
+            net: ['problems', 'all', 'off'].includes(process.env.NET_LOG) ? process.env.NET_LOG : 'problems'
         };
 
         // Security settings
@@ -111,12 +116,22 @@ class Config {
         // Network configuration for yt-dlp and other CLI tools
         // Controls how commands connect to the internet
         this.network = {
-            // Force IPv4 for yt-dlp connections (default: true for compatibility)
-            // Set to false if your network supports IPv6 or if IPv4 causes issues
+            // Force IPv4 for every outgoing connection, HTTP and yt-dlp alike
+            // (default: true). A VPS with half-working IPv6 otherwise times out
+            // at random. Set to false if your network has working IPv6.
             forceIPv4: process.env.FORCE_IPV4 !== 'false',
             // When proxy is enabled, fall back to local IP if proxy fails (default: true)
             // This ensures commands still work even if the proxy is temporarily unavailable
-            fallbackToLocal: process.env.NETWORK_FALLBACK_TO_LOCAL !== 'false'
+            fallbackToLocal: process.env.NETWORK_FALLBACK_TO_LOCAL !== 'false',
+            // Extra attempts for a failed GET/HEAD (resets, timeouts, 429/5xx).
+            // POST is never retried unless a caller asks for it.
+            httpRetries: this._parseCount(process.env.HTTP_RETRIES, 2, 5),
+            // Default per-attempt timeout for HTTP requests, in ms.
+            httpTimeout: parseInt(process.env.HTTP_TIMEOUT) || 30000,
+            // How long to wait for the proxy itself to answer (TCP + CONNECT or
+            // SOCKS handshake) before calling it down. Kept well below
+            // httpTimeout so a dead phone costs seconds, not the full timeout.
+            proxyConnectTimeout: parseInt(process.env.PROXY_CONNECT_TIMEOUT) || 10000
         };
     }
 
@@ -135,6 +150,19 @@ class Config {
         const unit = (match[2] || '').toUpperCase();
         const multiplier = { K: 1024, M: 1024 ** 2, G: 1024 ** 3 }[unit] || 1;
         return Math.floor(amount * multiplier);
+    }
+
+    /**
+     * Parse a small non-negative count from env, clamped to `max`.
+     * @param {string|undefined} value
+     * @param {number} fallback - Used when unset or unparseable
+     * @param {number} max
+     * @returns {number}
+     */
+    _parseCount(value, fallback, max) {
+        const n = parseInt(value, 10);
+        if (!Number.isFinite(n) || n < 0) return fallback;
+        return Math.min(n, max);
     }
 
     /**
@@ -221,11 +249,34 @@ class Config {
     }
 
     /**
-     * Get network arguments for yt-dlp (e.g., --force-ipv4)
-     * Configurable via FORCE_IPV4 env var
+     * Get network arguments for yt-dlp: IPv4 pinning plus transport retries.
+     *
+     * yt-dlp's own defaults suit a desktop on a stable line. Over a phone
+     * proxy on Tailscale, a stalled socket or a dropped fragment is routine,
+     * so stalls are cut shorter and retried with backoff. The hard ceiling is
+     * still YTDLP_DOWNLOAD_TIMEOUT in utils/ytdlp.js.
+     *
+     * Each value is tunable from .env; 0 drops that flag and leaves yt-dlp's
+     * default in place.
      */
     getYtDlpNetworkArgs() {
-        return this.network.forceIPv4 ? ['--force-ipv4'] : [];
+        const args = this.network.forceIPv4 ? ['--force-ipv4'] : [];
+
+        const tunables = [
+            ['--socket-timeout', process.env.YTDLP_SOCKET_TIMEOUT, 30],
+            ['--retries', process.env.YTDLP_RETRIES, 5],
+            ['--fragment-retries', process.env.YTDLP_FRAGMENT_RETRIES, 10],
+            ['--extractor-retries', process.env.YTDLP_EXTRACTOR_RETRIES, 3]
+        ];
+        for (const [flag, raw, fallback] of tunables) {
+            const value = this._parseCount(raw, fallback, 600);
+            if (value > 0) args.push(flag, String(value));
+        }
+
+        // Exponential sleep between retries (1s, 2s, 4s ... capped at 20s), so
+        // a retry does not hit a throttling server again immediately.
+        args.push('--retry-sleep', 'exp=1:20', '--retry-sleep', 'fragment:exp=1:20');
+        return args;
     }
 
     /**

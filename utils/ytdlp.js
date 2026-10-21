@@ -34,6 +34,8 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const logger = require('./logger');
+const providers = require('./providers');
+const { PROXY_BREAKER_ID } = require('./http-client');
 
 // Wall-clock ceilings. Metadata is a single API round trip; a download moves
 // real bytes and legitimately takes longer.
@@ -173,11 +175,104 @@ function run(args, options = {}) {
 }
 
 /**
+ * Short label for what yt-dlp was asked to fetch, for log lines: the host of
+ * a URL, or the search kind ("ytsearch") — never the user's search terms.
+ * @param {string} target
+ * @returns {string}
+ */
+function describeTarget(target) {
+    const value = String(target || '');
+    const search = /^([a-z]+search)\d*:/i.exec(value);
+    if (search) return search[1].toLowerCase();
+    try {
+        return new URL(value).host;
+    } catch {
+        return 'yt-dlp';
+    }
+}
+
+/**
+ * One-word reason for a yt-dlp failure, for logs and the provider cascade.
+ * Order matters, as in media.describeError: most specific first.
+ * @param {Error} error
+ * @returns {string}
+ */
+function failureReason(error) {
+    const msg = (error && error.message ? error.message : '').toLowerCase();
+    if (error && error.timedOut) return 'timeout';
+    if (msg.includes('no module named') || msg.includes('python3 tidak ditemukan')) return 'not-installed';
+    if (isProxyFailure(error)) return 'proxy';
+    if (isBotCheck(error)) return 'bot-check';
+    if (msg.includes('geo') || msg.includes('not available in your country')) return 'geo-blocked';
+    if (msg.includes('private') || msg.includes('members-only') || msg.includes('login required')) return 'private';
+    if (msg.includes('unavailable') || msg.includes('removed') || msg.includes('has been terminated')) return 'unavailable';
+    if (msg.includes('unsupported url') || msg.includes('no suitable extractor')) return 'unsupported';
+    if (msg.includes('max-filesize') || msg.includes('file is larger')) return 'too-large';
+    if (msg.includes('timed out') || msg.includes('transporterror') || msg.includes('unable to download') ||
+        msg.includes('connection reset') || msg.includes('connection refused')) return 'network';
+    return 'error';
+}
+
+/**
+ * The most useful line of yt-dlp's stderr: its last "ERROR:" line, or the
+ * last line at all. The logger redacts it before printing.
+ * @param {Error} error
+ * @returns {string|null}
+ */
+function lastErrorLine(error) {
+    const lines = String((error && error.message) || '').split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return null;
+    const line = [...lines].reverse().find(l => l.startsWith('ERROR:')) || lines[lines.length - 1];
+    return line.length > 160 ? `${line.slice(0, 157)}...` : line;
+}
+
+/**
+ * run(), plus one log event for the outcome and a `.net` annotation on
+ * failure so the provider cascade can say "youtube=bot-check".
+ *
+ * The args are never logged: they carry `--proxy user:pass@host`.
+ *
+ * @param {string[]} args
+ * @param {'proxy'|'direct'} route
+ * @param {Object} options - Passed to run()
+ * @param {boolean} fallbackAllowed - Whether a proxy failure will be retried direct
+ * @returns {Promise<string>} stdout
+ */
+async function runLogged(args, route, options, fallbackAllowed = false) {
+    const target = describeTarget(args[0]);
+    const started = Date.now();
+    try {
+        const stdout = await run(args, options);
+        logger.net({ type: 'ytdlp', ok: true, target, route, ms: Date.now() - started, problem: false });
+        return stdout;
+    } catch (error) {
+        const reason = failureReason(error);
+        error.net = { summary: reason, kind: reason, host: target, route };
+        logger.net({
+            type: 'ytdlp',
+            ok: false,
+            target,
+            route,
+            reason,
+            detail: lastErrorLine(error),
+            fallback: fallbackAllowed && route === 'proxy' && isProxyFailure(error),
+            ms: Date.now() - started,
+            problem: true
+        });
+        throw error;
+    }
+}
+
+/**
  * Run yt-dlp with proxy args, retrying directly if the proxy fails.
  *
  * Only connection-level proxy failures trigger the retry. A YouTube bot-check
  * is not a proxy failure, and retrying it without the proxy would just hand
  * YouTube the datacenter IP we were trying to avoid — strictly worse.
+ *
+ * Proxy health is shared with utils/http-client: if HTTP requests have
+ * already found the proxy dead (its breaker is open), yt-dlp goes direct
+ * straight away instead of waiting on the dead proxy first.
  *
  * @param {string[]} baseArgs - Arguments excluding proxy/network flags
  * @param {Object} [options] - Passed through to run()
@@ -186,18 +281,23 @@ function run(args, options = {}) {
 async function runWithFallback(baseArgs, options = {}) {
     const proxyArgs = config.getYtDlpProxyArgs();
     const networkArgs = config.getYtDlpNetworkArgs();
+    const fallbackAllowed = proxyArgs.length > 0 && config.network.fallbackToLocal;
 
+    if (fallbackAllowed && providers.isOpen(PROXY_BREAKER_ID)) {
+        return runLogged([...baseArgs, ...networkArgs], 'direct', options);
+    }
+
+    const route = proxyArgs.length > 0 ? 'proxy' : 'direct';
     try {
-        return await run([...baseArgs, ...networkArgs, ...proxyArgs], options);
+        const stdout = await runLogged([...baseArgs, ...networkArgs, ...proxyArgs], route, options, fallbackAllowed);
+        if (route === 'proxy') providers.recordSuccess(PROXY_BREAKER_ID);
+        return stdout;
     } catch (error) {
-        const canFallBack =
-            proxyArgs.length > 0 &&
-            config.network.fallbackToLocal &&
-            isProxyFailure(error);
+        const proxyFailed = route === 'proxy' && isProxyFailure(error);
+        if (proxyFailed) providers.recordFailure(PROXY_BREAKER_ID, error);
 
-        if (canFallBack) {
-            logger.warn('yt-dlp: proxy unreachable, retrying on local IP');
-            return run([...baseArgs, ...networkArgs], options);
+        if (proxyFailed && fallbackAllowed) {
+            return runLogged([...baseArgs, ...networkArgs], 'direct', options);
         }
         throw error;
     }
@@ -372,6 +472,8 @@ module.exports = {
     getPotArgs,
     isProxyFailure,
     isBotCheck,
+    failureReason,
+    describeTarget,
     INFO_TIMEOUT_MS,
     DOWNLOAD_TIMEOUT_MS
 };
