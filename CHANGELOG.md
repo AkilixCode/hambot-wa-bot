@@ -23,6 +23,33 @@ without.
 
 ### Fixed
 
+- **Networking: content fetches fail far less often.** The HTTP layer had
+  several bugs that made `.pinterest`, `.meme`, `.weather` and friends fail
+  for no good reason:
+  - Falling back to the server IP when a SOCKS proxy was down did not work:
+    the "direct" retry still went through the dead proxy.
+  - An HTTP proxy (Every Proxy) was used through axios's built-in proxy
+    support, which does not tunnel HTTPS. Nearly every site is HTTPS. Requests
+    now use a proper CONNECT tunnel, and `.security proxy test` checks that
+    same path.
+  - A slow *site* counted as a dead proxy, so the request was repeated
+    direct after a second full timeout, leaking it to the datacenter IP.
+    Only failures of the proxy itself fall back now.
+  - A proxy that accepted the connection and then went silent could hang a
+    request for minutes; it is now cut off after `PROXY_CONNECT_TIMEOUT` (10s).
+  - Nothing was retried: one connection reset or one 503 failed the whole
+    command. GET/HEAD now retry resets, timeouts and 429/5xx with backoff
+    (`HTTP_RETRIES`, default 2), honouring `Retry-After`. POST is not retried.
+  - No connection reuse: every request paid a fresh TCP, TLS and proxy
+    handshake. Connections are now kept alive and shared.
+  - `HB_PROXY_URL` was used by yt-dlp but ignored by HTTP requests.
+  - `FORCE_IPV4` applied to yt-dlp only; it now covers HTTP requests too.
+- **Network problems were invisible.** Retries, failures, proxy fallbacks and
+  circuit-breaker trips logged only in `full` mode, so the default log showed
+  `❌ Failed` and nothing else. They now print in both modes, one line each,
+  tagged with the command and a run id, with secrets and query strings
+  removed. See [docs/MEDIA.md](docs/MEDIA.md#reading-the-network-log).
+
 - **The installer could ask forever.** If input ended mid-question (an SSH
   connection dropped, a closed terminal), `./deploy.sh` repeated "This one is
   required." endlessly. Every question now allows 5 tries and stops at once
@@ -109,6 +136,20 @@ without.
   process output is capped at 16 MB.
 
 ### Added
+
+- **Network log lines and totals.** A `Network :` line in each command block
+  (requests, failures, retries, bytes, route); a `🔁` line showing which media
+  source failed, why, and which one answered; a `🎬` line for each failed
+  yt-dlp run with its reason (`bot-check`, `proxy`, `timeout`, …) and its last
+  error line. `NET_LOG=problems|all|off` chooses how much is shown.
+- **`.security media` shows proxy health and the last five network problems.**
+- **A shared proxy circuit breaker.** After 3 proxy failures in a row, HTTP
+  requests and yt-dlp go direct straight away, instead of each waiting on
+  the dead proxy first, until the proxy answers again.
+- **yt-dlp transport retries** (`--socket-timeout`, `--retries`,
+  `--fragment-retries`, `--extractor-retries`, with exponential sleeps),
+  tunable through `YTDLP_*` in `.env`.
+- `npm run test:network`: local-server tests for all of the above.
 
 - **Local mode: run HamBot without Docker.** `./deploy.sh` asks Docker or
   Local (`--docker` / `--local` skip the question) and every command works the
