@@ -35,4 +35,7 @@ jobs:
         with:
           node-version: '24'
       - run: sh -n deploy.sh && sh -n scripts/install.sh
+      # The AI chat wizard tests run the bot's real connection check, which
+      # needs the npm packages (not their native builds).
+      - run: npm ci --ignore-scripts
       - run: npm run test:deploy
