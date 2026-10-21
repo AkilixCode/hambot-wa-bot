@@ -923,6 +923,130 @@ async function main() {
         svc.shutdown();
     });
 
+    // ── Files from the agent (MEDIA: lines) ──────────────
+    const agentMedia = require('../utils/chat/media');
+    const OUT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-outbox-')));
+    const SECRET = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-secret-')));
+    const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4b40000000049454e44ae426082', 'hex');
+    fs.writeFileSync(path.join(SECRET, '.env'), 'CHAT_AGENT_TOKEN=very-secret-value\n');
+    fs.writeFileSync(path.join(OUT, 'chart.png'), PNG);
+    fs.writeFileSync(path.join(OUT, 'hello.py'), 'print("halo")\n');
+    fs.writeFileSync(path.join(OUT, 'empty.txt'), '');
+    fs.writeFileSync(path.join(OUT, 'big.bin'), Buffer.alloc(2000, 1));
+    fs.mkdirSync(path.join(OUT, 'sub'));
+    fs.symlinkSync(path.join(SECRET, '.env'), path.join(OUT, 'notes.txt'));
+    fs.symlinkSync(path.join(OUT, 'chart.png'), path.join(OUT, 'alias.png'));
+    const agentEnv = (extra = {}) => ({
+        CHAT_BACKEND: 'agent', CHAT_AGENT_ACCESS: 'public', CHAT_AGENT_URL: `${srv.url}/v1`, CHAT_AGENT_TOKEN: 'tok-123456789',
+        CHAT_AGENT_MEDIA_DIR: OUT, ...extra
+    });
+
+    await test('files: MEDIA lines are taken out; code fences, duplicates and the per-answer cap respected', () => {
+        const text = [
+            'Ini grafiknya:',
+            'MEDIA:/outbox/a.png',
+            '  `MEDIA: /outbox/b.py`',
+            'MEDIA:/outbox/a.png',
+            '```',
+            'MEDIA:/outbox/example.png',
+            '```',
+            'MEDIA:"/outbox/c.pdf"',
+            'Selesai. MEDIA:/not/a/line.png'
+        ].join('\n');
+        const out = agentMedia.extract(text, 2);
+        assert.deepStrictEqual(out.refs, ['/outbox/a.png', '/outbox/b.py']);
+        assert.strictEqual(out.dropped, 1);
+        assert.ok(out.text.includes('MEDIA:/outbox/example.png'), 'inside a fence stays');
+        assert.ok(out.text.includes('Selesai. MEDIA:/not/a/line.png'), 'only whole lines count');
+        assert.ok(!/^MEDIA:\/outbox\/a/m.test(out.text));
+        assert.deepStrictEqual(agentMedia.extract('no files here', 5), { text: 'no files here', refs: [], dropped: 0 });
+    });
+
+    await test('files: only a regular file inside the outbox opens; traversal, symlinks out and odd files are refused', async () => {
+        const open = ref => agentMedia.open(ref, OUT, 1000);
+        const ok = await open(path.join(OUT, 'chart.png'));
+        assert.ok(ok.buffer && ok.buffer.equals(PNG));
+        assert.strictEqual(ok.name, 'chart.png');
+        assert.strictEqual((await open('hello.py')).name, 'hello.py', 'relative to the folder');
+        assert.strictEqual((await open('alias.png')).name, 'chart.png', 'a link that stays inside is fine');
+
+        const refused = {
+            '../hambot-secret/.env': 'outside',
+            '/etc/passwd': 'outside',
+            '/opt/data/.env': 'outside',
+            [path.join(SECRET, '.env')]: 'outside',
+            [`${OUT}/../${path.basename(SECRET)}/.env`]: 'outside',
+            [`${OUT}-evil/x.png`]: 'outside',
+            'notes.txt': 'outside',
+            'nope.png': 'missing',
+            'empty.txt': 'empty',
+            'sub': 'not_file',
+            'big.bin': 'too_large'
+        };
+        for (const [ref, reason] of Object.entries(refused)) {
+            const r = await open(ref);
+            assert.strictEqual(r.error, reason, `${ref} → ${JSON.stringify(r.error || r.name)}`);
+            assert.ok(!r.buffer);
+        }
+        const { spawnSync } = require('child_process');
+        if (spawnSync('mkfifo', [path.join(OUT, 'pipe')]).status === 0) {
+            assert.strictEqual((await open('pipe')).error, 'not_file', 'a FIFO neither hangs nor opens');
+        }
+    });
+
+    await test('files: images, video and audio go as media, everything else as a named document', () => {
+        assert.deepStrictEqual(agentMedia.kindOf('a.PNG'), { kind: 'image', mimetype: 'image/png' });
+        assert.strictEqual(agentMedia.kindOf('a.mp4').kind, 'video');
+        assert.strictEqual(agentMedia.kindOf('a.mp3').kind, 'audio');
+        assert.deepStrictEqual(agentMedia.kindOf('hello.py'), { kind: 'document', mimetype: 'text/x-python' });
+        assert.deepStrictEqual(agentMedia.kindOf('noext'), { kind: 'document', mimetype: 'application/octet-stream' });
+        const buf = Buffer.from('x');
+        assert.ok(agentMedia.toMessage({ buffer: buf, name: 'a.png', kind: 'image', mimetype: 'image/png' }).image);
+        const doc = agentMedia.toMessage({ buffer: buf, name: 'r.pdf', kind: 'document', mimetype: 'application/pdf' });
+        assert.strictEqual(doc.document, buf);
+        assert.strictEqual(doc.fileName, 'r.pdf');
+    });
+
+    await test('files: off by default; a relative or missing folder is reported and keeps it off', () => {
+        assert.strictEqual(settingsLib.load({}).agentMedia.dir, null);
+        const rel = settingsLib.load({ CHAT_AGENT_MEDIA_DIR: 'outbox' });
+        assert.strictEqual(rel.agentMedia.dir, null);
+        assert.ok(rel.problems.some(p => p.includes('CHAT_AGENT_MEDIA_DIR=outbox is not an absolute path')));
+        const missing = settingsLib.load({ CHAT_AGENT_MEDIA_DIR: path.join(OUT, 'nope') });
+        assert.strictEqual(missing.agentMedia.dir, null);
+        assert.ok(missing.problems.some(p => /CHAT_AGENT_MEDIA_DIR=.*cannot be read \(ENOENT\)/.test(p)));
+        const good = settingsLib.load({ CHAT_AGENT_MEDIA_DIR: OUT, CHAT_AGENT_MEDIA_MAX_FILES: '50' });
+        assert.strictEqual(good.agentMedia.dir, OUT);
+        assert.strictEqual(good.agentMedia.maxFiles, 10);
+    });
+
+    await test('files: only the agent\'s answers are scanned; a files-only answer is a real answer', async () => {
+        const answer = `Ini grafiknya.\nMEDIA:${OUT}/chart.png`;
+        srv.on((req, res) => sseAnswer(res, [answer]));
+        const svc = serviceFor(srv, agentEnv());
+        const r = await svc.ask(who(97), 'buat grafik');
+        assert.deepStrictEqual(r.files, [`${OUT}/chart.png`]);
+        assert.ok(!r.parts.join('\n').includes('MEDIA:'));
+        assert.ok(r.parts[0].includes('Ini grafiknya.'));
+        svc.shutdown();
+
+        srv.on((req, res) => sseAnswer(res, [`MEDIA:${OUT}/chart.png`]));
+        const svcOnly = serviceFor(srv, agentEnv());
+        const only = await svcOnly.ask(who(97), 'grafik saja');
+        assert.deepStrictEqual(only.parts, []);
+        assert.strictEqual(only.files.length, 1);
+        svcOnly.shutdown();
+
+        srv.on((req, res) => sseAnswer(res, [answer]));
+        for (const env of [{ CHAT_AGENT_MEDIA_DIR: OUT }, agentEnv({ CHAT_AGENT_MEDIA_DIR: '' })]) {
+            const other = serviceFor(srv, env);
+            const out = await other.ask(who(97), 'q');
+            assert.deepStrictEqual(out.files, []);
+            assert.ok(out.parts.join('\n').includes('MEDIA:'), 'left as text when the feature does not apply');
+            other.shutdown();
+        }
+    });
+
     await test('.chat test reports each step; startup logs a summary and never throws', async () => {
         srv.on((req, res) => {
             if (req.url.endsWith('/models')) return jsonReply(res, 200, { data: [{ id: 'other-model' }] });
@@ -1096,8 +1220,35 @@ async function main() {
         registry.register(new ChatCommand());
     });
 
+    await test('files through the handler: text without MEDIA lines, then the image and the document; a refused path gets a note', async () => {
+        const saved = {};
+        const env = agentEnv({ CHAT_ACCESS: 'public' });
+        for (const [k, v] of Object.entries(env)) { saved[k] = process.env[k]; process.env[k] = v; }
+        require('../utils/chat')._reset();
+        try {
+            srv.on((req, res) => sseAnswer(res, [`Sudah jadi.\nMEDIA:${OUT}/chart.png\nMEDIA:hello.py\nMEDIA:${SECRET}/.env\nMEDIA:/etc/passwd`]));
+            const sock = fakeSock();
+            await send(sock, '.chat buatkan grafik dan skrip', { sender: '6287777777777@s.whatsapp.net' });
+            const all = texts(sock);
+            assert.ok(all.some(t => t.includes('Sudah jadi.')), all.join('\n---\n'));
+            assert.ok(!all.some(t => /MEDIA:|\.env|passwd|very-secret/.test(t)), all.join('\n---\n'));
+            const image = sock.sent.find(m => m.image);
+            assert.ok(image && image.image.equals(PNG));
+            const doc = sock.sent.find(m => m.document);
+            assert.strictEqual(doc.fileName, 'hello.py');
+            assert.strictEqual(doc.mimetype, 'text/x-python');
+            assert.ok(all.some(t => t.includes('2 file tidak terkirim (di luar folder outbox)')), all.join('\n---\n'));
+            const order = sock.sent.filter(m => !m.react).map(m => (m.text ? 'text' : m.image ? 'image' : m.document ? 'doc' : '?'));
+            assert.deepStrictEqual(order.slice(-4), ['text', 'image', 'doc', 'text']);
+        } finally {
+            for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+        }
+    });
+
     require('../utils/chat')._reset();
     transport.destroyAgents();
+    fs.rmSync(OUT, { recursive: true, force: true });
+    fs.rmSync(SECRET, { recursive: true, force: true });
     await srv.close();
     await srv2.close();
     fs.rmSync(DATA, { recursive: true, force: true });

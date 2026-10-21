@@ -445,6 +445,7 @@ function load(env = process.env, opts = {}) {
         startupCheck: r.bool('CHAT_STARTUP_CHECK', true),
 
         allowed: parseAllowlist(r.raw('CHAT_ALLOWED_USERS'), problems),
+        agentMedia: loadAgentMedia(r, problems),
         problems,
         backends: {}
     };
@@ -489,6 +490,31 @@ function load(env = process.env, opts = {}) {
     }
 
     return s;
+}
+
+/**
+ * Where the agent leaves files for HamBot to send (`MEDIA:<path>` lines in
+ * its answer). Off unless CHAT_AGENT_MEDIA_DIR names an absolute folder this
+ * process can read; anything else is a problem line and the feature stays
+ * off, so a wrong mount never breaks .chat itself.
+ * @returns {{dir: string|null, maxFiles: number}}
+ */
+function loadAgentMedia(r, problems) {
+    const dir = r.raw('CHAT_AGENT_MEDIA_DIR');
+    const maxFiles = r.num('CHAT_AGENT_MEDIA_MAX_FILES', 5, 1, 10);
+    if (!dir) return { dir: null, maxFiles };
+    if (!path.isAbsolute(dir)) {
+        problems.push(`CHAT_AGENT_MEDIA_DIR=${dir} is not an absolute path (e.g. /outbox), files from the agent are off`);
+        return { dir: null, maxFiles };
+    }
+    try {
+        if (!fs.statSync(dir).isDirectory()) throw Object.assign(new Error('not a folder'), { code: 'ENOTDIR' });
+        fs.accessSync(dir, fs.constants.R_OK | fs.constants.X_OK);
+    } catch (error) {
+        problems.push(`CHAT_AGENT_MEDIA_DIR=${dir} cannot be read (${error.code || error.message}) — mount the agent's outbox there; files from the agent are off`);
+        return { dir: null, maxFiles };
+    }
+    return { dir: path.resolve(dir), maxFiles };
 }
 
 /**

@@ -18,6 +18,8 @@
 const CommandBase = require('./base');
 const config = require('../config');
 const ui = require('../utils/ui');
+const logger = require('../utils/logger');
+const { formatSize } = require('../utils/helpers');
 
 const OWNER_SUBCOMMANDS = new Set(['test', 'models', 'use']);
 const PROGRESS_NOTE_AFTER_MS = 30 * 1000;
@@ -199,11 +201,49 @@ class ChatCommand extends CommandBase {
         }
 
         const parts = [...result.parts];
-        if (notes.length) parts[parts.length - 1] = `${parts[parts.length - 1]}\n\n${notes.join('\n')}`;
+        const files = result.files || [];
+        // A files-only answer has no text to carry the notes.
+        if (notes.length && parts.length) parts[parts.length - 1] = `${parts[parts.length - 1]}\n\n${notes.join('\n')}`;
+        let sent = 0;
         for (let i = 0; i < parts.length; i++) {
-            const options = i === 0 ? { quoted: msg } : {};
+            const options = sent === 0 ? { quoted: msg } : {};
             await sock.sendMessage(from, { text: ui.clamp(parts[i]) }, options);
+            sent++;
         }
+
+        if (!files.length && !result.filesDropped) return;
+        const agentMedia = require('../utils/chat/media');
+        const refused = {};
+        let delivered = 0;
+        for (const ref of files) {
+            const file = await svc.openFile(ref);
+            if (file.error) {
+                refused[file.error] = (refused[file.error] || 0) + 1;
+                continue;
+            }
+            try {
+                await sock.sendMessage(from, agentMedia.toMessage(file), sent === 0 ? { quoted: msg } : {});
+                sent++;
+                delivered++;
+            } catch (error) {
+                refused.send_failed = (refused.send_failed || 0) + 1;
+            }
+        }
+
+        // One line in the log, one note in the chat; never paths or contents.
+        const failedCount = Object.values(refused).reduce((a, b) => a + b, 0);
+        const why = Object.entries(refused).map(([k, n]) => `${n} ${k}`).join(', ');
+        logger.chat(`files: ${delivered} sent${failedCount ? `, refused ${why}` : ''}${result.filesDropped ? `, ${result.filesDropped} over CHAT_AGENT_MEDIA_MAX_FILES` : ''}`,
+            { problem: failedCount > 0 });
+
+        const tail = [];
+        if (failedCount) {
+            const reasons = Object.keys(refused).map(k => agentMedia.REASONS[k] || 'gagal dikirim');
+            tail.push(`⚠️ _${failedCount} file tidak terkirim (${[...new Set(reasons)].join(', ')})._`);
+        }
+        if (result.filesDropped) tail.push(`⚠️ _${result.filesDropped} file lain tidak dikirim (batas ${svc.settings.agentMedia.maxFiles} file per jawaban)._`);
+        if (!parts.length) tail.push(...notes);
+        if (tail.length) await sock.sendMessage(from, { text: ui.clamp(tail.join('\n')) }, sent === 0 ? { quoted: msg } : {});
     }
 
     async showUsage(sock, from, msg) {
@@ -420,6 +460,11 @@ class ChatCommand extends CommandBase {
         if (who.isOwner) {
             lines.push('', ui.section('Detail owner', '👑'));
             lines.push(ui.kv('Akses', `${st.access}${st.backends.agent ? ` · agen: ${st.agentAccess}` : ''}`));
+            if (st.backends.agent) {
+                lines.push(ui.kv('File agen', st.agentMedia.dir
+                    ? `${ui.safe(st.agentMedia.dir, 60)} · maks ${st.agentMedia.maxFiles} file, ${formatSize(st.agentMedia.maxBytes)} per file`
+                    : 'mati (CHAT_AGENT_MEDIA_DIR)'));
+            }
             for (const [id, b] of Object.entries(st.backends)) {
                 lines.push(ui.kv(id, `${b.label} @ ${b.host}${b.key ? ` · kunci ${b.key}` : ''}${b.memory === 'agent' ? ' · sesi di agen' : ''}`));
                 const err = b.health.lastError;
