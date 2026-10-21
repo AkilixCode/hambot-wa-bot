@@ -3,6 +3,9 @@ node_modules/
 
 # Environment
 .env
+# ./deploy.sh chat keeps the previous .env here (secrets)
+.env.bak
+.env.bak.taken
 .env.local
 .env.*.local
 

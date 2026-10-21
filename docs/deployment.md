@@ -174,6 +174,7 @@ The same in both modes:
 | `./deploy.sh relink [--qr \| --code <number>]` | Link the WhatsApp number again from scratch |
 | `./deploy.sh restore-session` | Undo the last relink |
 | `./deploy.sh switch docker\|local` | Move to the other mode (see below) |
+| `./deploy.sh chat` | Set up `.chat` (AI chat); also `chat test`, `chat off`, `chat undo` — see [AI chat](ai-chat.md) |
 | `./deploy.sh help` | All of the above |
 
 API keys and other settings go in `.env` ([configuration](configuration.md));

@@ -9,6 +9,7 @@ default except the API keys.
 - [Permissions and limits](#permissions-and-limits)
 - [Presentation](#presentation)
 - [API keys](#api-keys)
+- [AI chat](#ai-chat)
 - [Proxy and logging](#proxy-and-logging)
 - [Deployment](#deployment)
 
@@ -60,10 +61,28 @@ closed rather than granting access.
 | --- | --- |
 | `OMDB_API_KEY` | `.movie` — free key from [omdbapi.com](https://www.omdbapi.com/apikey.aspx) |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | `.say` |
-| `GEMINI_API_KEY` | reserved, not currently used |
+| `GEMINI_API_KEY` | `.chat` with `CHAT_PROVIDER_API=gemini`, when `CHAT_PROVIDER_API_KEY` is empty |
 
 Commands whose key is missing say so rather than failing obscurely. Every other
 command works without any key.
+
+### AI chat
+
+`.chat` is configured by the `CHAT_*` variables — easiest with
+`./deploy.sh chat`. The main ones:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CHAT_ENABLED` | `false` | Master switch |
+| `CHAT_BACKEND` | `local` | `local` (Ollama, LM Studio, …), `provider` (OpenAI-compatible, Anthropic, Gemini) or `agent` (Hermes Agent, OpenClaw) |
+| `CHAT_FALLBACK` | `none` | Second backend for when the main one is down |
+| `CHAT_ACCESS` | `owner` | `owner`, `allowlist` (`CHAT_ALLOWED_USERS`) or `public` |
+| `CHAT_AGENT_ACCESS` | `owner` | Who may reach the agent; never wider than `CHAT_ACCESS` |
+| `CHAT_MAX_CONCURRENT` | `2` | Answers worked on at the same time |
+| `CHAT_DAILY_LIMIT_ENABLED`, `CHAT_DAILY_LIMIT` | `false`, `20` | Questions per person per day |
+
+Every setting — backends, timeouts, memory, resilience — is in
+[docs/ai-chat.md](ai-chat.md#all-settings).
 
 ### Proxy and logging
 

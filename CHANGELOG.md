@@ -7,11 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Quality pass, a new look and menu, typo-tolerant commands, Node 24, a
-faster, lighter bot, and a one-command install that runs it with Docker or
-without.
+## [4.0.0] - 2026-10-21
+
+HamBot 4.0: **AI chat from WhatsApp** (`.chat`) with your own local model,
+API provider or agent, a new logo, and everything since 3.2 — a quality pass,
+a new look and menu, typo-tolerant commands, Node 24, a faster and lighter
+bot, reliable networking, and a one-command install that runs it with Docker
+or without. Nothing changes for an existing setup until you turn `.chat` on.
 
 ### Security
+
+- **`.chat` keeps keys secret.** Keys and tokens come only from `.env` and
+  no chat command can set an address, key or header. They travel only in
+  request headers (Gemini's too, never in the URL), never over plain http to
+  a public address, and never on a redirect (redirects are not followed).
+  Provider errors are redacted before logging; prompts, answers and keys
+  are never logged; answers are scrubbed of the bot's own secrets (an agent
+  that reads `.env` cannot echo it into a chat). Agents, which can run tools
+  on their machine, are owner-only unless `CHAT_AGENT_ACCESS` opens them.
+- `./deploy.sh chat` writes `.env` with owner-only permissions and keeps the
+  previous one as `.env.bak`, which git and the Docker image ignore.
 
 - `sharp` upgraded to 0.35.4 (libheif advisories, reachable via `.sticker`).
 - `sharp` 0.35.5 (librsvg CVE-2026-96889), and through their parents
@@ -136,6 +151,45 @@ without.
   process output is capped at 16 MB.
 
 ### Added
+
+- **AI chat: `.chat`** (aliases `.ai`, `.ask`, `.tanya`). Questions go to a
+  local model (Ollama, LM Studio, llama.cpp, vLLM, …), an API provider
+  (OpenAI-compatible, Anthropic through the official SDK, Gemini) or an agent
+  platform (Hermes Agent, OpenClaw, or any OpenAI-style agent) — on the
+  bot's machine or another one on your Tailscale network, e.g. the bot on a
+  VPS and the agent on your home PC. Reply to a message with `.chat` to
+  include it; the AI remembers recent turns per person (`.chat reset`
+  forgets); `.chat stop` cancels. Owner tools: `.chat status`, `test`,
+  `models`, `use local|provider|agent`, `stop all`. Guide: docs/ai-chat.md.
+  - **Timeouts mean silence, not slowness.** Every request streams; answer
+    text, reasoning, tool progress and keep-alives all keep a session
+    active, so a long-thinking model or a busy agent is never cut off. Only
+    no response, or silence mid-answer, times out (per-backend settings).
+  - **At most 2 answers at once** (`CHAT_MAX_CONCURRENT`), a short queue,
+    one question per person, an optional daily limit
+    (`CHAT_DAILY_LIMIT_ENABLED`), its own slots apart from media downloads.
+  - **Broken backends are dropped, not waited on.** Unusable settings turn a
+    backend off before the first message; a wrong key or missing model sets
+    it aside at once; repeated failures set it aside without timeouts until
+    one probe succeeds. A fallback backend answers meanwhile, and the owner
+    is told once when a backend goes down and when it is back.
+  - **Logs say what to fix:** one line per failure with the backend, masked
+    host, status, timing and the exact `.env` variable or step to fix it.
+  - Every setting is in `.env` (`CHAT_*`); `utils/chat` is only loaded once
+    `.chat` is used.
+- **`./deploy.sh chat`** sets it up: who may chat, where questions go,
+  fallback, limits; tests the connection from where the bot runs; restarts.
+  Nothing is written before the summary is confirmed, every question has
+  5 tries, a failed check offers retry / edit / keep / undo, and
+  `chat undo` restores the earlier `.env`. Also `chat test`, `chat off`;
+  `./deploy.sh doctor` includes the AI chat check.
+- **New logo**: a robot in a speech bubble. The `.menu` banner carries it;
+  `docs/images` has the SVG, a PNG, and an avatar for the bot's WhatsApp
+  profile picture and the GitHub social preview
+  (`node scripts/render-art.cjs` regenerates them).
+- `npm run test:chat`: `.chat` against fake AI servers on 127.0.0.1.
+- `docker-compose.yml` maps `host.docker.internal`, so the container can
+  reach a model or agent on the same machine.
 
 - **Network log lines and totals.** A `Network :` line in each command block
   (requests, failures, retries, bytes, route); a `🔁` line showing which media

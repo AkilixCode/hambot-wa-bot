@@ -2,7 +2,7 @@
 
 <img src="docs/images/banner.jpg" alt="HamBot" width="720">
 
-**A WhatsApp bot with media downloads, stickers, networking tools and a security panel.**<br>
+**A WhatsApp bot with AI chat, media downloads, stickers, networking tools and a security panel.**<br>
 Built on [Baileys](https://github.com/WhiskeySockets/Baileys) · replies in Indonesian · runs in Docker or locally.
 
 [![Tests](https://github.com/AkilixCode/hambot-wa-bot/actions/workflows/test.yml/badge.svg)](https://github.com/AkilixCode/hambot-wa-bot/actions/workflows/test.yml)
@@ -57,6 +57,7 @@ off, **`./deploy.sh doctor`** checks everything and prints the fix.
 | `./deploy.sh logs` | Follow the logs |
 | `./deploy.sh config` | Fix the owner or pairing number |
 | `./deploy.sh relink` | Link the WhatsApp number again (`--qr` or `--code <number>`) |
+| `./deploy.sh chat` | Set up AI chat (`.chat`): model, provider or agent |
 | `./deploy.sh stop` | Stop the bot; the session is kept |
 
 Settings and API keys live in `.env` — see [configuration](docs/configuration.md).
@@ -65,6 +66,7 @@ Settings and API keys live in `.env` — see [configuration](docs/configuration.
 
 | | |
 | --- | --- |
+| 🤖 **AI chat** | `.chat` talks to a local model (Ollama, LM Studio, …), an API (OpenAI-compatible, Claude, Gemini) or your own agent (Hermes Agent, OpenClaw) — even one on your home PC over Tailscale. Set up with `./deploy.sh chat`. [Guide](docs/ai-chat.md) |
 | 🎬 **Media** | `.video` and `.music` from 30+ platforms (YouTube, TikTok, Instagram, …), `.pinterest`, text-to-speech with `.say` |
 | 🖼️ **Stickers** | `.sticker` from any image, `.brat` text stickers, `.toimg` back to a picture |
 | 🌐 **Networking** | `.dns`, `.ipinfo`, `.subnet`, `.port` and a `.netinfo` reference |
@@ -73,7 +75,7 @@ Settings and API keys live in `.env` — see [configuration](docs/configuration.
 | 👥 **Groups** | `.tagall` (admins), `.info` |
 | 🔒 **Security** | Owner-only `.security` panel: lockdown, blocks, audit log, proxy toggle, media doctor |
 
-36 commands in all — send `.menu` to the bot, or see the [command list](docs/commands.md).
+37 commands in all — send `.menu` to the bot, or see the [command list](docs/commands.md).
 Mistyped a command? The bot runs the one you meant and says so.
 
 **Under the hood:** input sanitising and SSRF guards, rate limits and
@@ -87,6 +89,7 @@ never deleted).
 | --- | --- |
 | [Deployment](docs/deployment.md) | Docker, Local, linking the number, switching, unattended installs, troubleshooting |
 | [Configuration](docs/configuration.md) | Every `.env` setting |
+| [AI chat](docs/ai-chat.md) | Local models, API providers, agents, Tailscale, troubleshooting |
 | [Commands](docs/commands.md) | All commands and their aliases |
 | [Media](docs/MEDIA.md) | Keeping `.video` / `.music` working: yt-dlp, player clients, proxy |
 | [Development](docs/development.md) | Architecture, adding a command, tests |

@@ -17,6 +17,15 @@ body:
         - npm start by hand
     validations:
       required: true
+  - type: dropdown
+    id: chat
+    attributes:
+      label: Is it about .chat (AI chat)? Which backend?
+      options:
+        - Not about .chat
+        - Local model (Ollama, LM Studio, ...)
+        - API provider (OpenAI-compatible, Anthropic, Gemini)
+        - Agent (Hermes Agent, OpenClaw, ...)
   - type: input
     id: system
     attributes:
