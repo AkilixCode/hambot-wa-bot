@@ -446,6 +446,10 @@ module.exports = async (sock, m) => {
         tracker.net = netCtx.stats;
         await netContext.run(netCtx, () => command.execute(sock, msg, args, context));
 
+        // A quick housekeeping reply (`.chat reset`, `.chat status`) should
+        // not hold up the person's next real command.
+        if (context.releaseCooldown) userCooldowns.delete(sender);
+
         // Check if command self-reported failure via logError()
         if (context._failed) {
             logger.commandEnd(tracker, 'failed', context._failError);

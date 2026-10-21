@@ -109,6 +109,8 @@ class ChatCommand extends CommandBase {
         const sub = (args[0] || '').toLowerCase();
         const exact = args.length === 1 || (args.length === 2 && ['use', 'stop', 'models'].includes(sub));
         if (exact && ['reset', 'status', 'test', 'models', 'use', 'stop', 'help'].includes(sub)) {
+            // Housekeeping, not a question: the next question may follow at once.
+            context.releaseCooldown = true;
             if (OWNER_SUBCOMMANDS.has(sub) && !isOwner) {
                 return this.replyError(sock, from, msg, `${ui.mono('.chat ' + sub)} khusus owner.`, { title: 'Akses Ditolak', icon: ui.EMOJI.locked });
             }

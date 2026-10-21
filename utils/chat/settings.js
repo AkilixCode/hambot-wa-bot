@@ -355,6 +355,11 @@ function buildBackend(id, r, env, common, problems) {
         b.stream = r.bool('CHAT_AGENT_STREAM', true);
         b.responseTimeoutMs = r.num('CHAT_AGENT_RESPONSE_TIMEOUT_SEC', 90, 5, 3600) * 1000;
         b.idleTimeoutMs = r.num('CHAT_AGENT_IDLE_TIMEOUT_SEC', 180, 5, 3600) * 1000;
+        if (b.platform === 'hermes' && b.idleTimeoutMs < 35000) {
+            // Hermes sends a keep-alive every 30s while it works; a shorter
+            // idle limit ends every long run before its first keep-alive.
+            problems.push(`CHAT_AGENT_IDLE_TIMEOUT_SEC=${b.idleTimeoutMs / 1000} is below Hermes' 30s keep-alive, so long agent runs would be cut off — use 35 or more`);
+        }
         const parsed = normaliseUrl(urlRaw, 'openai', 'CHAT_AGENT_URL', notes);
         b.url = parsed.url;
         if (parsed.error) unusable.push(parsed.error);

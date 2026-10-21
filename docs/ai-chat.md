@@ -253,8 +253,9 @@ model name it expects (`CHAT_AGENT_MODEL`).
   make it run its tools twice. The one exception is a refused connection: then
   the request never arrived.
 - **Silent tools.** Agents may run a long tool without saying anything, so
-  `CHAT_AGENT_IDLE_TIMEOUT_SEC` defaults to 180 seconds. Hermes sends
-  keep-alives while it works.
+  `CHAT_AGENT_IDLE_TIMEOUT_SEC` defaults to 180 seconds. Hermes sends a
+  keep-alive every 30 seconds while it works, so keep this above 30 (the bot
+  warns if it isn't).
 
 ## Across machines with Tailscale
 

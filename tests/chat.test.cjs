@@ -1076,6 +1076,26 @@ async function main() {
         assert.ok(out.includes('fake-model') && out.includes('other'));
     });
 
+    await test('.chat reset (or status) does not make the next question wait for the cooldown', async () => {
+        process.env.CHAT_COOLDOWN_SEC = '30';
+        delete require.cache[require.resolve('../commands/chat')];
+        const registry = require('../commands/registry');
+        const ChatCommand = require('../commands/chat');
+        registry.register(new ChatCommand());
+        require('../utils/chat')._reset();
+        srv.on((req, res) => sseAnswer(res, ['jawaban']));
+        const sock = fakeSock();
+        await send(sock, '.chat reset', { sender: '6281111111111@s.whatsapp.net' });
+        await send(sock, '.chat pertanyaan', { sender: '6281111111111@s.whatsapp.net' });
+        const out = texts(sock).join('\n');
+        assert.ok(out.includes('jawaban'), out);
+        assert.ok(!/tunggu/i.test(out));
+        const sock2 = fakeSock();
+        await send(sock2, '.chat satu', { sender: '6285555555555@s.whatsapp.net' });
+        process.env.CHAT_COOLDOWN_SEC = '0';
+        registry.register(new ChatCommand());
+    });
+
     require('../utils/chat')._reset();
     transport.destroyAgents();
     await srv.close();
