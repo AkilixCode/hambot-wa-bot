@@ -1,6 +1,6 @@
 {
   "name": "hambot",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "private": true,
   "description": "WhatsApp bot with AI chat, a modular command system, media downloading, and networking tools",
   "main": "index.js",

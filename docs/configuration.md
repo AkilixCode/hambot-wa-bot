@@ -78,6 +78,7 @@ command works without any key.
 | `CHAT_FALLBACK` | `none` | Second backend for when the main one is down |
 | `CHAT_ACCESS` | `owner` | `owner`, `allowlist` (`CHAT_ALLOWED_USERS`) or `public` |
 | `CHAT_AGENT_ACCESS` | `owner` | Who may reach the agent; never wider than `CHAT_ACCESS` |
+| `CHAT_AGENT_MEDIA_DIR` | — | Folder the agent saves files in; they are sent to WhatsApp ([details](ai-chat.md#files-from-the-agent)) |
 | `CHAT_MAX_CONCURRENT` | `2` | Answers worked on at the same time |
 | `CHAT_DAILY_LIMIT_ENABLED`, `CHAT_DAILY_LIMIT` | `false`, `20` | Questions per person per day |
 

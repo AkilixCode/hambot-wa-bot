@@ -5,6 +5,60 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-10-21
+
+Agents can send **files** to WhatsApp through `.chat`, and seven media
+command fixes.
+
+### Added
+
+- **Files from the agent.** With `CHAT_AGENT_MEDIA_DIR` set, the `MEDIA:<path>`
+  lines in an agent's answer are taken out of the text and sent as files:
+  - images, video and audio go as WhatsApp media;
+  - anything else goes as a named document.
+
+  Opt-in, and only for the agent backend. Settings and setup are in
+  [docs/ai-chat.md](docs/ai-chat.md#files-from-the-agent).
+- `CHAT_AGENT_MEDIA_MAX_FILES` (default 5): files per answer. Each file is
+  capped at `MAX_MEDIA_SIZE`.
+- `.chat status` (owner) shows the outbox folder.
+
+### Security
+
+- Only a regular file strictly inside the outbox folder is opened:
+  - symlinks are resolved first;
+  - the open refuses a link swapped in afterwards (`O_NOFOLLOW`, plus a check
+    of the opened path on Linux);
+  - FIFOs and folders are refused.
+
+  `MEDIA:/app/.env` and `../` paths never leave the bot. File contents and
+  paths are never logged.
+
+### Fixed
+
+- **YouTube:** `utils/url-parser.js` still pinned
+  `youtube:player_client=android`. yt-dlp keeps the last `youtube:` args, so
+  with `YTDLP_PLAYER_CLIENTS` empty ("let yt-dlp choose") the deprecated
+  android client was what ran. `YTDLP_PLAYER_CLIENTS` is now the only source.
+- **`.music`:**
+  - When YouTube refused the *download* of a search hit (the bot check usually
+    lands there, not at the search), the user got an error instead of the
+    SoundCloud fallback. Now it falls back once, and repeated refusals make
+    searches skip YouTube for a while.
+  - A pasted URL is never swapped for another song.
+  - Words after a pasted URL are no longer sent to yt-dlp as part of it.
+- **`.video`:** WebM and MKV files were sent as `video/mp4` and would not play.
+  They now arrive as a file.
+- **`.say`:** ElevenLabs answers 401 for a used-up quota and for a blocked
+  free account, not only for a bad key. The reply now reads the reason from
+  the response, instead of always blaming the API key. A missing ffmpeg is
+  named as such.
+- **`.toimg`:** animated stickers failed, because ffmpeg 5's WebP decoder
+  cannot read them. It now converts with sharp: the first frame, no temp
+  files, no ffmpeg.
+- **`.pinterest`:** a failed full-size (`/originals/`) image was never retried
+  at a smaller size.
+
 ## [4.0.0] - 2026-10-21
 
 HamBot 4.0: **AI chat from WhatsApp** (`.chat`) with your own local model,
