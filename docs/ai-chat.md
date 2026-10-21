@@ -8,7 +8,7 @@ questions go:
 | --- | --- | --- |
 | **Local model** | Ollama, LM Studio, llama.cpp, vLLM, LocalAI, Jan | Free and private, if the machine can run a model |
 | **API provider** | Any OpenAI-compatible API (OpenAI, OpenRouter, Groq, DeepSeek, Mistral, Together, …), Anthropic (Claude), Google Gemini | Strong models with nothing to install |
-| **Agent platform** | [Hermes Agent](https://hermes-agent.nousresearch.com), [OpenClaw](https://docs.openclaw.ai), or any agent with an OpenAI-style API | An assistant that can use tools, on this machine or another one on your Tailscale network |
+| **Agent platform** | [Hermes Agent](https://hermes-agent.nousresearch.com), [OpenClaw](https://docs.openclaw.ai), or any agent with an OpenAI-style API | An assistant that can use tools — next to the bot (Docker or Local) or on another machine on your Tailscale network |
 
 All settings live in `.env`. Keys stay there too: the bot never puts them in
 a chat message or a log line.
@@ -17,7 +17,7 @@ a chat message or a log line.
 - [Using it](#using-it)
 - [Who may use it, and how much](#who-may-use-it-and-how-much)
 - [Local model](#local-model) · [API provider](#api-provider) · [Agent platform](#agent-platform)
-- [Across machines with Tailscale](#across-machines-with-tailscale)
+- [Where the bot and the agent run](#where-the-bot-and-the-agent-run) (Docker, Local, Tailscale)
 - [Timeouts: silence, not slowness](#timeouts-silence-not-slowness)
 - [When a backend fails](#when-a-backend-fails)
 - [Security](#security)
@@ -157,9 +157,10 @@ CHAT_LOCAL_API_KEY=                          # only if the server was started wi
 
 **Docker mode, model on the same machine.** Inside the container, `127.0.0.1`
 is the container itself. Use `http://host.docker.internal:PORT` (the compose
-file maps it to the host), and make the server listen beyond loopback. For
-Ollama that is `OLLAMA_HOST=0.0.0.0` in its service settings. The wizard
-offers the right address.
+file maps it to the host), and make the server listen on the Docker bridge
+address too, e.g. `OLLAMA_HOST=172.17.0.1` in Ollama's service settings —
+see [Bot in Docker, agent on the same machine](#bot-in-docker-agent-on-the-same-machine),
+which works the same for a model. The wizard offers the right address.
 
 ## API provider
 
@@ -257,23 +258,87 @@ model name it expects (`CHAT_AGENT_MODEL`).
   keep-alive every 30 seconds while it works, so keep this above 30 (the bot
   warns if it isn't).
 
-## Across machines with Tailscale
+## Where the bot and the agent run
 
-The agent or model does not have to run where the bot does. A common setup:
-**the bot runs on a VPS, and the agent runs on your home PC.** The VPS sends the
-question to your PC over [Tailscale](https://tailscale.com), your PC's agent
-does the work, and the answer travels back to the VPS and into WhatsApp.
-Nothing is opened to the internet.
+The bot and the agent don't have to be on the same machine, and the bot can
+run in Docker or Local mode. Every combination works; only the address in
+`CHAT_AGENT_URL`, and where the agent listens, change:
+
+| Bot | Agent | `CHAT_AGENT_URL` | Where the agent listens |
+| --- | --- | --- | --- |
+| Local mode (pm2) | same machine | `http://127.0.0.1:8642/v1` | its default (127.0.0.1) — nothing to change |
+| Docker | same machine | `http://host.docker.internal:8642/v1` | the Docker bridge, not 127.0.0.1 ([below](#bot-in-docker-agent-on-the-same-machine)) |
+| Docker | its own container, same machine | `http://host.docker.internal:8642/v1` | its port published on the Docker bridge ([below](#agent-in-its-own-container)) |
+| Docker or Local, on a VPS | your home PC (or any other machine) | `http://100.x.y.z:8642/v1` | the tailnet ([below](#bot-on-a-vps-agent-on-your-pc-tailscale)) |
+
+The ports are Hermes'; OpenClaw uses `18789`. Run `./deploy.sh chat test`
+after any change: in Docker mode it checks from **inside the container**, so
+it sees exactly what the bot will. (`./deploy.sh chat` sets all of this up
+and, in Docker mode, offers `host.docker.internal` when you type `localhost`.)
+
+### Bot in Docker, agent on the same machine
+
+Inside the container, `127.0.0.1` is the container itself, so the bot reaches
+the machine as `host.docker.internal` (mapped in `docker-compose.yml`). That
+name points at the **Docker bridge** address of the machine (usually
+`172.17.0.1`; `ip -4 addr show docker0` shows it), and an agent listening
+only on 127.0.0.1 can't be reached there. Make it listen on the bridge — only
+containers and this machine can reach that address, nothing from outside:
+
+- **Hermes Agent**, in `~/.hermes/.env`:
+
+  ```ini
+  API_SERVER_HOST=172.17.0.1
+  API_SERVER_KEY=a-long-random-secret     # required when not on 127.0.0.1
+  ```
+
+  Start `hermes gateway` after Docker, so the bridge address exists (with
+  systemd: `After=docker.service`).
+- **OpenClaw** prefers tailnet binds: set `gateway.bind: "tailnet"`, then use
+  this machine's own Tailscale address, `CHAT_AGENT_URL=http://100.x.y.z:18789/v1`
+  (`tailscale ip -4`). The container reaches it through the host.
+
+Don't bind an agent to `0.0.0.0` unless a firewall closes the port: anyone
+who can reach the machine could then drive it.
+
+```ini
+CHAT_AGENT_URL=http://host.docker.internal:8642/v1
+```
+
+### Agent in its own container
+
+Publish the agent's port on the Docker bridge only, then use the same
+address as above:
+
+```bash
+docker run -d --name hermes -p 172.17.0.1:8642:8642 -e API_SERVER_HOST=0.0.0.0 ... <hermes image>
+```
+
+```ini
+CHAT_AGENT_URL=http://host.docker.internal:8642/v1
+```
+
+(`API_SERVER_HOST=0.0.0.0` is inside the agent's container; the `-p` keeps
+the port off every outside interface.)
+
+### Bot on a VPS, agent on your PC (Tailscale)
+
+A common setup: **the bot runs on a VPS, and the agent runs on your home
+PC.** The VPS sends the question to your PC over [Tailscale](https://tailscale.com),
+your PC's agent does the work, and the answer travels back to the VPS and
+into WhatsApp. Nothing is opened to the internet. It works the same whether
+the bot on the VPS runs in Docker or Local mode.
 
 ```
-WhatsApp ⇄ HamBot (VPS) ──Tailscale──▶ agent on your PC (127.0.0.1:8642)
+WhatsApp ⇄ HamBot on the VPS (Docker or Local) ──Tailscale──▶ agent on your PC
 ```
 
-1. Install Tailscale on both machines and sign in to the same tailnet.
-2. On the PC, expose the agent to the tailnet only:
+1. Install Tailscale on **both machines** (on the VPS: on the host itself,
+   not in the bot's container) and sign in to the same tailnet.
+2. On the PC, expose the agent to the tailnet only, and note its address:
 
    ```bash
-   tailscale serve --bg --tcp 8642 tcp://localhost:8642     # Hermes; OpenClaw: 18789
+   tailscale serve --bg --tcp 8642 tcp://localhost:8642     # Hermes; OpenClaw: 18789, or gateway.bind: "tailnet"
    tailscale ip -4                                           # e.g. 100.101.102.103
    ```
 
@@ -291,17 +356,21 @@ WhatsApp ⇄ HamBot (VPS) ──Tailscale──▶ agent on your PC (127.0.0.1:8
 
 **Things to know:**
 
-- **The PC must be on.** When it sleeps, `.chat` would fail. Set a fallback, e.g.
-  `CHAT_FALLBACK=provider`, and questions are answered there instead. The
-  owner gets one message when the agent goes offline and one when it is back.
-- **Docker mode.** MagicDNS names (`pc.tailnet.ts.net`) often don't resolve
-  inside containers; use the `100.x` address. Tailscale on the host is
-  enough: the container's traffic is routed through it.
+- **The PC must be on.** When it sleeps, `.chat` would fail. Set a fallback,
+  e.g. `CHAT_FALLBACK=provider`, and questions are answered there instead.
+  The owner gets one message when the agent goes offline and one when it is
+  back.
+- **Docker mode: use the `100.x` address,** not the MagicDNS name
+  (`pc.tailnet.ts.net`): inside containers those names often don't resolve.
+  Tailscale on the host is enough; the container's traffic goes through it.
 - **The reverse works too.** A bot at home can use a GPU model on a VPS the
   same way.
-- **Same machine, Docker mode.** `http://host.docker.internal:PORT` works if the
-  agent listens beyond loopback. Otherwise use `tailscale serve` as above with
-  the machine's own `100.x` address.
+
+The bot-in-Docker paths are tested on every change: CI builds the image and
+runs `scripts/docker-agent-test.sh`, which asks an agent on the host a real
+question from inside the container (through `docker-compose.yml` and
+`./deploy.sh chat test`), and checks that a loopback-only agent and a
+`localhost` address fail with the fixes above.
 
 ## Timeouts: silence, not slowness
 
@@ -388,7 +457,7 @@ and prints one fix per problem.
 | Symptom | Fix |
 | --- | --- |
 | "AI chat belum dinyalakan" | `CHAT_ENABLED=true` (or `./deploy.sh chat`), then restart |
-| `connection refused` | Is the server running? Ollama listens only on 127.0.0.1 unless `OLLAMA_HOST=0.0.0.0`; Hermes unless `API_SERVER_HOST` is set. In Docker mode, `localhost` is the container: use `host.docker.internal` or the Tailscale IP. |
+| `connection refused` | Is the server running? Ollama listens only on 127.0.0.1 unless `OLLAMA_HOST` is set; Hermes unless `API_SERVER_HOST` is. In Docker mode, `localhost` is the container: use `host.docker.internal` and have the server listen on the Docker bridge (`172.17.0.1`), or use the Tailscale IP. |
 | `host name does not resolve` | Check the address. In Docker, use the `100.x` Tailscale IP instead of a MagicDNS name. |
 | `no route to host` | Is the other machine on? `tailscale status` on both |
 | `401 auth` | Wrong or expired key/token; the log shows the loaded key's fingerprint |
