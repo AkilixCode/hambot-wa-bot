@@ -1,4 +1,5 @@
-require('dotenv').config({ quiet: true });
+const path = require('path');
+const { APP_DIR } = require('./utils/env');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
@@ -13,6 +14,7 @@ const login = require('./utils/login');
 const health = require('./utils/health');
 const session = require('./utils/session');
 const groupCache = require('./utils/group-cache');
+const shutdownLib = require('./utils/shutdown');
 
 // Use the modular handler directly
 const handler = require('./handler');
@@ -23,8 +25,10 @@ let makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore;
 let sock = null;
 
 // Where Baileys keeps the linked session (a Docker volume in production).
-// HAMBOT_AUTH_DIR exists for the tests, which must never touch a real session.
-const AUTH_DIR = process.env.HAMBOT_AUTH_DIR || 'auth_info_baileys';
+// Anchored to the app folder: started from anywhere else, the bot used to
+// create a new, unlinked session in that folder. HAMBOT_AUTH_DIR exists for
+// the tests, which must never touch a real session.
+const AUTH_DIR = path.resolve(APP_DIR, process.env.HAMBOT_AUTH_DIR || 'auth_info_baileys');
 
 // Survive reconnects within this process: backoff state, and how many
 // pairing codes were already requested (capped, then QR — see utils/login).
@@ -73,6 +77,8 @@ async function cachedGroupMetadata(jid) {
  */
 function scheduleStart(delayMs) {
     clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    if (shutdown.isShuttingDown()) return;
     reconnectTimer = setTimeout(() => startBot(), delayMs);
 }
 
@@ -119,6 +125,7 @@ function handleClose(lastDisconnect) {
 }
 
 async function startBot() {
+    if (shutdown.isShuttingDown()) return;
     try {
         // Dynamically import ESM-only Baileys module (cached after first call)
         if (!makeWASocket) {
@@ -158,6 +165,15 @@ async function startBot() {
         }
         
         const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+        // A stop that arrived while the session was being read: no new socket.
+        if (shutdown.isShuttingDown()) return;
+
+        // Session writes are tracked, so a shutdown waits for them instead of
+        // exiting with creds.json or a key file half written.
+        const keys = {
+            get: (type, ids) => state.keys.get(type, ids),
+            set: (data) => shutdown.track(state.keys.set(data))
+        };
 
         // Detach the previous socket first: startBot() runs again on every
         // reconnect, and without this each dead socket kept its listeners.
@@ -168,7 +184,7 @@ async function startBot() {
             // Signal keys are read on every message; keep recent ones in
             // memory instead of re-reading a file each time. Writes still go
             // straight to disk.
-            auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, baileysLogger) },
+            auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(keys, baileysLogger) },
             printQRInTerminal: false,
             logger: baileysLogger,
             browser: config.bot.browser,
@@ -179,7 +195,7 @@ async function startBot() {
         socketRef.set(sock);
         health.report('connecting');
 
-        sock.ev.on('creds.update', saveCreds);
+        sock.ev.on('creds.update', (...args) => shutdown.track(saveCreds(...args)));
         groupCache.attach(sock.ev);
 
         // How to link this device if there are no saved credentials yet.
@@ -281,34 +297,43 @@ function startChatOnce() {
     }
 }
 
-// Graceful shutdown
-async function shutdown() {
-    logger.system('Shutting down gracefully...');
-
-    try {
-        // Close WhatsApp connection
-        // Detach first, so closing the socket doesn't schedule a reconnect.
-        clearTimeout(reconnectTimer);
-        clearTimeout(connectWatchdog);
-        retireSocket();
-
-        // Cleanup cache
-        cache.destroy();
-
-        // Cancel AI requests and save the daily counters
-        if (require.cache[require.resolve('./utils/chat')]) require('./utils/chat').shutdown();
-
-        logger.system('Shutdown complete');
-        process.exit(0);
-    } catch (error) {
-        logger.error(error, { context: 'shutdown' });
-        process.exit(1);
-    }
-}
-
-// Handle shutdown signals
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+// Graceful shutdown (utils/shutdown): every stop signal, pm2's shutdown
+// message on Windows, once, within a deadline.
+const shutdown = shutdownLib.create({
+    log: (message) => logger.system(message),
+    steps: [
+        {
+            // First, so nothing can start a new connection from here on.
+            name: 'stop reconnecting',
+            run: () => {
+                clearTimeout(reconnectTimer);
+                clearTimeout(connectWatchdog);
+                reconnectTimer = null;
+            }
+        },
+        {
+            // Detach first, so closing the socket doesn't schedule a reconnect
+            // or start new session writes.
+            name: 'close WhatsApp',
+            run: () => retireSocket()
+        },
+        {
+            name: 'finish session writes',
+            run: ({ flush }) => flush()
+        },
+        {
+            name: 'stop cache',
+            run: () => cache.destroy()
+        },
+        {
+            // Cancel AI requests and save the daily counters
+            name: 'stop AI chat',
+            run: () => {
+                if (require.cache[require.resolve('./utils/chat')]) require('./utils/chat').shutdown();
+            }
+        }
+    ]
+});
 
 // Handle uncaught errors
 process.on('uncaughtException', (error) => {
@@ -322,10 +347,15 @@ process.on('unhandledRejection', (reason, promise) => {
 // Start the bot when run directly (`node index.js`). Tests require this file
 // to exercise handleClose() without connecting to WhatsApp.
 if (require.main === module) {
+    shutdown.install();
     startBot();
 }
 
 module.exports = {
     handleClose,
-    cancelScheduledStart: () => { clearTimeout(reconnectTimer); clearTimeout(connectWatchdog); }
+    cancelScheduledStart: () => { clearTimeout(reconnectTimer); clearTimeout(connectWatchdog); reconnectTimer = null; },
+    // Test hooks
+    shutdown,
+    reconnectScheduled: () => reconnectTimer !== null,
+    authDir: () => AUTH_DIR
 };

@@ -3,7 +3,7 @@
  * Centralized configuration with validation and defaults
  */
 
-require('dotenv').config({ quiet: true });
+require('./utils/env');
 
 // package.json is the single source of truth for the version. Previously the
 // number was duplicated across the changelog, SECURITY.md and the Baileys

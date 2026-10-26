@@ -359,16 +359,101 @@ async function main() {
     const SecurityCommand = require('../commands/security');
     const securityCmd = new SecurityCommand();
 
-    const waitForFallback = (bin) => new Promise((resolve, reject) => {
+    const pm2 = require('../utils/pm2');
+
+    // A fake pm2 install, laid out the way npm lays out a global one. The
+    // entry point is plain JS, so the same fixture runs on every OS.
+    const pm2Root = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-pm2-'));
+    const pm2Prefix = path.join(pm2Root, 'prefix');
+    const pm2Entry = path.join(pm2Prefix, 'node_modules', 'pm2', 'bin', 'pm2');
+    fs.mkdirSync(path.dirname(pm2Entry), { recursive: true });
+    fs.writeFileSync(pm2Entry, [
+        "const fs = require('fs');",
+        "fs.appendFileSync(process.env.FAKE_PM2_LOG, JSON.stringify(process.argv.slice(2)) + '\\n');",
+        'process.exit(Number(process.env.FAKE_PM2_EXIT || 0));'
+    ].join('\n'));
+    const pm2Log = path.join(pm2Root, 'calls.log');
+
+    const waitForFallback = (entry) => new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('fallback was never called')), 3000);
-        securityCmd._runPm2(['restart', 'hambot-test'], () => { clearTimeout(timer); resolve(); }, bin);
+        securityCmd._runPm2(['restart', 'hambot-test'], () => { clearTimeout(timer); resolve(); }, entry);
     });
 
     await test('restart falls back when pm2 is not installed', () =>
-        waitForFallback('hambot-definitely-not-a-binary'));
+        waitForFallback(null));
 
-    await test('restart falls back when pm2 exits with an error', () =>
-        waitForFallback('false'));
+    await test('restart falls back when pm2 exits with an error', async () => {
+        process.env.FAKE_PM2_LOG = pm2Log;
+        process.env.FAKE_PM2_EXIT = '1';
+        try {
+            await waitForFallback(pm2Entry);
+        } finally {
+            delete process.env.FAKE_PM2_EXIT;
+        }
+    });
+
+    await test('pm2 runs as its JS entry point under this Node, arguments intact, no shell', async () => {
+        process.env.FAKE_PM2_LOG = pm2Log;
+        fs.rmSync(pm2Log, { force: true });
+        const proc = pm2.run(['logs', 'hambot', '--nostream', '--lines', '5'], {}, pm2Entry);
+        const code = await new Promise(resolve => proc.on('exit', resolve));
+        assert.strictEqual(code, 0);
+        assert.strictEqual(proc.spawnfile, process.execPath, 'spawned with this Node, not a shell or a .cmd');
+        assert.deepStrictEqual(JSON.parse(fs.readFileSync(pm2Log, 'utf8').trim()), ['logs', 'hambot', '--nostream', '--lines', '5']);
+    });
+
+    await test('pm2.locate: npm\'s Windows layout (pm2.cmd next to node_modules)', () => {
+        fs.writeFileSync(path.join(pm2Prefix, 'pm2.cmd'), '@echo off\r\n');
+        const entry = pm2.locate({ PATH: ['/nowhere', pm2Prefix].join(path.delimiter) }, 'win32');
+        assert.strictEqual(entry, path.resolve(pm2Entry));
+        assert.strictEqual(pm2.locate({ Path: pm2Prefix }, 'win32'), path.resolve(pm2Entry), 'Windows spells it Path');
+    });
+
+    await test('pm2.locate: Linux/macOS layout (bin/pm2 -> ../lib/node_modules/pm2/bin/pm2)', () => {
+        const prefix = path.join(pm2Root, 'unix');
+        const entry = path.join(prefix, 'lib', 'node_modules', 'pm2', 'bin', 'pm2');
+        fs.mkdirSync(path.dirname(entry), { recursive: true });
+        fs.mkdirSync(path.join(prefix, 'bin'), { recursive: true });
+        fs.writeFileSync(entry, '');
+        // A wrapper script rather than a link: found through the prefix layout.
+        fs.writeFileSync(path.join(prefix, 'bin', 'pm2'), '#!/bin/sh\n');
+        assert.strictEqual(pm2.locate({ PATH: path.join(prefix, 'bin') }, 'linux'), path.resolve(entry));
+        assert.strictEqual(pm2.locate({ PATH: path.join(pm2Root, 'empty') }, 'linux'), null, 'not installed');
+    });
+
+    await test('pm2.locate: PM2_BIN must be the JS entry point, never a launcher', () => {
+        assert.strictEqual(pm2.locate({ PM2_BIN: pm2Entry }), path.resolve(pm2Entry));
+        assert.strictEqual(pm2.locate({ PM2_BIN: path.join(pm2Prefix, 'pm2.cmd') }), null);
+        assert.strictEqual(pm2.locate({ PM2_BIN: path.join(pm2Root, 'missing.js') }), null);
+    });
+
+    await test('PM2_PROCESS_NAME: options, paths and shell syntax are refused', () => {
+        assert.strictEqual(pm2.processName({}), 'hambot');
+        for (const ok of ['hambot', 'HamBot_2', 'bot.prod', 'a-b']) {
+            assert.strictEqual(pm2.processName({ PM2_PROCESS_NAME: ok }), ok);
+        }
+        for (const bad of ['-h', '--silent', 'a;b', 'a b', '../x', 'a/b', 'a\\b', '$(id)', '`id`', 'x'.repeat(65)]) {
+            assert.strictEqual(pm2.processName({ PM2_PROCESS_NAME: bad }), null, bad);
+        }
+    });
+
+    await test('.security restart refuses an unsafe PM2_PROCESS_NAME instead of running pm2', async () => {
+        const prev = process.env.PM2_PROCESS_NAME;
+        process.env.PM2_PROCESS_NAME = '--silent';
+        const sock = fakeSock();
+        let ran = false;
+        const realRun = securityCmd._runPm2;
+        securityCmd._runPm2 = () => { ran = true; };
+        try {
+            await securityCmd._doRestart(sock, 'owner@s.whatsapp.net', { key: { id: 'x' } }, { sender: 'owner@s.whatsapp.net' });
+        } finally {
+            securityCmd._runPm2 = realRun;
+            if (prev === undefined) delete process.env.PM2_PROCESS_NAME;
+            else process.env.PM2_PROCESS_NAME = prev;
+        }
+        assert.strictEqual(ran, false);
+        assert.ok(texts(sock).some(t => t.includes('pm2_process_name')), 'the owner is told why');
+    });
 
     // ── Command parsing ──────────────────────────────────────────────
     console.log('\n🔤 Command parsing...\n');
@@ -857,7 +942,7 @@ async function main() {
     await test('Startup leaves sharp and canvas unloaded until a command needs them', () => {
         const { spawnSync } = require('child_process');
         const probe = "require('./handler'); const k = Object.keys(require.cache);" +
-            "console.log(JSON.stringify(['sharp', 'canvas'].filter(m => k.some(f => f.includes('/node_modules/' + m + '/')))))";
+            "console.log(JSON.stringify(['sharp', 'canvas'].filter(m => k.some(f => f.split(require('path').sep).join('/').includes('/node_modules/' + m + '/')))))";
         const result = spawnSync(process.execPath, ['-e', probe], { cwd: ROOT, encoding: 'utf8' });
         const loaded = JSON.parse(result.stdout.trim().split('\n').pop());
         assert.deepStrictEqual(loaded, [], `loaded at startup: ${loaded}`);

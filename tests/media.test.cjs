@@ -160,9 +160,9 @@ async function main() {
         const prev = process.env.YTDLP_PYTHON;
         try {
             delete process.env.YTDLP_PYTHON;
-            assert.strictEqual(ytdlp.pythonBin(), 'python3', 'Docker: unset');
+            assert.strictEqual(ytdlp.pythonBin('linux'), 'python3', 'Docker: unset');
             process.env.YTDLP_PYTHON = '.venv/does-not-exist/python';
-            assert.strictEqual(ytdlp.pythonBin(), 'python3', 'a local .env read inside Docker must not break media');
+            assert.strictEqual(ytdlp.pythonBin('linux'), 'python3', 'a local .env read inside Docker must not break media');
             process.env.YTDLP_PYTHON = 'package.json'; // any file that exists, relative to the repo root
             assert.strictEqual(ytdlp.pythonBin(), 'package.json');
             process.env.YTDLP_PYTHON = './package.json';
@@ -608,17 +608,14 @@ async function main() {
     });
 
     // ── One yt-dlp run per download ──────────────────────────────────
-    // A fake `python3` on PATH stands in for yt-dlp: it logs each run and
+    // A fake yt-dlp (tests/fixtures/fake-ytdlp, any OS) logs each run and
     // either "downloads" (prints JSON, writes the -o file) or, like yt-dlp's
     // --match-filter, prints nothing and writes nothing.
     console.log('\n🎬 Single-pass downloads...\n');
 
-    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-fake-ytdlp-'));
-    const runLog = path.join(fakeBin, 'runs.log');
-    fs.writeFileSync(path.join(fakeBin, 'python3'), `#!/usr/bin/env node
+    const runLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-ytdlp-runs-')), 'runs.log');
+    const fakeYtdlp = require('./fixtures/fake-ytdlp.cjs').install(`
 const fs = require('fs');
-// Invoked as \`python3 -m yt_dlp <args>\`: drop the "-m yt_dlp".
-const args = process.argv.slice(4);
 fs.appendFileSync(${JSON.stringify(runLog)}, JSON.stringify(args) + '\\n');
 // 'botcheck': YouTube refuses every download, as from a datacenter IP.
 if (process.env.FAKE_YTDLP === 'botcheck' && /youtu/.test(args[0]) && args.includes('-o')) {
@@ -641,9 +638,7 @@ if (process.env.FAKE_YTDLP !== 'nofile') fs.writeFileSync(template.replace('%(ex
 // 'nojson': a file but no metadata, as some odd extractors might.
 if (process.env.FAKE_YTDLP === 'nojson') process.exit(0);
 console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', duration: 42 }));
-`, { mode: 0o755 });
-    const savedPath = process.env.PATH;
-    process.env.PATH = `${fakeBin}${path.delimiter}${savedPath}`;
+`);
     const runs = () => fs.existsSync(runLog)
         ? fs.readFileSync(runLog, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
         : [];
@@ -798,8 +793,8 @@ console.log(JSON.stringify({ title: 'Fake Title', uploader: 'Fake Channel', dura
             }
         });
     } finally {
-        process.env.PATH = savedPath;
-        fs.rmSync(fakeBin, { recursive: true, force: true });
+        fakeYtdlp.restore();
+        fs.rmSync(path.dirname(runLog), { recursive: true, force: true });
     }
 
     // ── Summary ───────────────────────────────────────────────────────

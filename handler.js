@@ -3,7 +3,7 @@
  * Main message processing with security controls
  */
 
-require('dotenv').config({ quiet: true });
+require('./utils/env');
 const config = require('./config');
 const RateLimiter = require('./utils/rate-limiter');
 // Heavy commands share MAX_PROCESSES slots; a few more may wait in line.
