@@ -115,12 +115,17 @@ CHAT_DAILY_LIMIT=20         # per person per day, when enabled
   default).
   - Further questions wait in a short queue (`CHAT_QUEUE_MAX`, up to
     `CHAT_QUEUE_WAIT_SEC`), and the person is told their place.
-  - Each person has one question in progress at a time.
+  - Each person has one question in progress at a time, across all chats
+    (each chat still keeps its own history). `.chat stop` cancels it from any
+    chat.
   - AI chat has its own slots, so it never holds up `.video` or `.music`.
 - **The daily limit** is off unless `CHAT_DAILY_LIMIT_ENABLED=true`.
   - It resets at midnight in `BOT_TIMEZONE`.
   - It survives a restart.
   - The owner is not counted unless `CHAT_DAILY_LIMIT_OWNER=true`.
+  - A question takes its place in the count as soon as it starts. An answer
+    keeps it; an error, an empty answer, a queue timeout or `.chat stop` gives
+    it back.
 - **Where it works:** `CHAT_IN_GROUPS` / `CHAT_IN_PRIVATE` turn `.chat` off in
   groups or in private chats.
 

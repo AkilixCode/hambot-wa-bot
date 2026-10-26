@@ -283,7 +283,8 @@ class ChatCommand extends CommandBase {
             case 'stopped':
                 return send('Permintaan dibatalkan.', { title: 'Dibatalkan', icon: '⏹️' });
             case 'busy_user':
-                return send('Pertanyaanmu sebelumnya masih diproses.', {
+                // One request per person across all chats, so it may be elsewhere.
+                return send('Pertanyaanmu sebelumnya masih diproses (di chat ini atau chat lain).', {
                     title: 'Masih Diproses', icon: ui.EMOJI.wait, hint: ['Tunggu jawabannya dulu', '.chat stop — batalkan']
                 });
             case 'busy':

@@ -92,6 +92,10 @@ class ChatService {
         this.slots = new WorkSlots(this.settings.maxConcurrent, this.settings.queueMax);
         /** @type {Map<string, Object>} person+chat → session */
         this.sessions = new Map();
+        // People with a request running or queued, in any chat: one each.
+        this.busyPeople = new Set();
+        // Daily-limit uses reserved by requests still in flight.
+        this.reserved = new Map();
         this.ownerNotices = new Map();
         this.usage = { day: today(this.now()), counts: {} };
         this.usageDirty = false;
@@ -215,12 +219,35 @@ class ChatService {
         const daily = this.settings.daily;
         if (!daily.enabled || (who.isOwner && !daily.owner)) return null;
         this.rollDay();
-        return Math.max(0, daily.limit - (this.usage.counts[personKey(who.sender)] || 0));
+        const key = personKey(who.sender);
+        return Math.max(0, daily.limit - (this.usage.counts[key] || 0) - (this.reserved.get(key) || 0));
     }
 
-    countUse(who) {
+    /**
+     * Take one of today's questions for a request that is starting. Called in
+     * the same synchronous step as the remaining() check, so two requests
+     * arriving together (in two chats) cannot both take the last one.
+     * @returns {boolean} whether a use was reserved (false: no limit applies)
+     */
+    reserveUse(who) {
         const daily = this.settings.daily;
-        if (!daily.enabled || (who.isOwner && !daily.owner)) return;
+        if (!daily.enabled || (who.isOwner && !daily.owner)) return false;
+        const key = personKey(who.sender);
+        this.reserved.set(key, (this.reserved.get(key) || 0) + 1);
+        return true;
+    }
+
+    /** Give a reserved use back: the request ended without an answer. */
+    releaseUse(who) {
+        const key = personKey(who.sender);
+        const left = (this.reserved.get(key) || 0) - 1;
+        if (left > 0) this.reserved.set(key, left);
+        else this.reserved.delete(key);
+    }
+
+    /** The request was answered: its reserved use becomes a counted one. */
+    countUse(who) {
+        this.releaseUse(who);
         this.rollDay();
         const key = personKey(who.sender);
         this.usage.counts[key] = (this.usage.counts[key] || 0) + 1;
@@ -247,10 +274,15 @@ class ChatService {
     async ask(who, question, hooks = {}) {
         const s = this.settings;
         const key = ChatMemory.key(who.chat, who.sender);
+        const person = personKey(who.sender);
 
+        // Everything from here to the reservation is synchronous: two requests
+        // from one person (say in two chats) cannot both pass these checks.
+        // One request per person at a time, whichever chat it is in; each
+        // chat keeps its own history.
+        if (this.busyPeople.has(person)) throw new ChatUserError('busy_user');
         const left = this.remaining(who);
         if (left !== null && left <= 0) throw new ChatUserError('daily_limit', { limit: s.daily.limit });
-        if (this.sessions.has(key)) throw new ChatUserError('busy_user');
 
         const order = this.candidates(who);
         if (!order.length) throw new ChatUserError('agent_owner');
@@ -269,6 +301,10 @@ class ChatService {
             chars: 0
         };
         this.sessions.set(key, session);
+        this.busyPeople.add(person);
+        // Held until the request ends: counted if answered, released if not
+        // (error, empty answer, queue timeout, .chat stop).
+        let reserved = this.reserveUse(who);
 
         let holding = false;
         try {
@@ -310,7 +346,10 @@ class ChatService {
                 // The full text, MEDIA lines included: the agent sees what it sent.
                 this.memory.add(key, userContent, remembered);
             }
-            this.countUse(who);
+            if (reserved) {
+                this.countUse(who);
+                reserved = false;
+            }
 
             return {
                 parts,
@@ -326,8 +365,10 @@ class ChatService {
                 remaining: this.remaining(who)
             };
         } finally {
+            if (reserved) this.releaseUse(who);
             if (holding) this.slots.release();
             this.sessions.delete(key);
+            this.busyPeople.delete(person);
         }
     }
 
@@ -500,6 +541,10 @@ class ChatService {
 
     /**
      * Cancel running or queued requests.
+     *
+     * A person's own request, from whichever chat it was asked in: there is
+     * at most one, and "masih diproses" in one chat must be stoppable there.
+     *
      * @param {Object} who
      * @param {boolean} all - Every session (owner)
      * @returns {number} how many were cancelled
@@ -507,7 +552,7 @@ class ChatService {
     stop(who, all = false) {
         let count = 0;
         for (const session of this.sessions.values()) {
-            const mine = personKey(session.sender) === personKey(who.sender) && session.chat === who.chat;
+            const mine = personKey(session.sender) === personKey(who.sender);
             if (all || mine) {
                 session.controller.abort('stopped');
                 count++;

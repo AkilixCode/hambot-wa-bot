@@ -22,6 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Images over 40 megapixels are refused before decoding (decompression bombs).
 - `.sticker` and `.toimg` now wait for a heavy-command slot like the other
   conversions, so a burst of them is queued and bounded.
+
+### Fixed
+
+- **The `.chat` daily limit could be exceeded.** It was checked when a
+  question started but counted only when it was answered, and "one question
+  at a time" applied per chat. So one person asking in two chats at once got
+  two answers on a limit of one. Now:
+  - a question reserves its place in the count the moment it starts (in the
+    same step as the check);
+  - an answer keeps the reservation; an error, an empty answer, a queue
+    timeout or `.chat stop` gives it back;
+  - each person has one question in progress across all chats, while every
+    chat keeps its own history;
+  - `.chat stop` cancels your question from whichever chat you send it in.
+
 ## [4.2.0] - 2026-10-26
 
 HamBot runs the same on Linux, macOS and Windows, on a PC, a laptop or a
