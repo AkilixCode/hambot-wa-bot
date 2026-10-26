@@ -68,6 +68,32 @@ A gap remains by design: yt-dlp performs its own DNS resolution, so a record
 that changes between our check and its fetch is not covered. Closing that would
 require proxying every fetch through the bot.
 
+## Incoming attachments
+
+`.sticker` and `.toimg` download the image or sticker the sender attached. The
+message carries its own download location (`url`, `directPath`), and a
+modified client can put any address there. Baileys' own downloader trusted it,
+host included, so `utils/incoming-media.js` replaces it:
+
+- **Destination.** Only WhatsApp's media CDN is contacted: `https`, a
+  `*.whatsapp.net` host, port 443. A `directPath` goes to `mmg.whatsapp.net`
+  unless the message names another WhatsApp media host. Anything else is
+  refused before a connection is made.
+- **Redirects** are followed by hand, at most 3, each one held to the same
+  rule.
+- **Size.** The size the message declares, the `Content-Length`, and the bytes
+  actually read are each capped at `MAX_MEDIA_SIZE`; the transfer is cancelled
+  as soon as it goes over. The whole download has a 60 s timeout.
+- **Integrity.** The file's HMAC is checked before decryption, as WhatsApp
+  clients do, so a tampered file never reaches the image decoder.
+- **Decoding.** sharp refuses images over 40 megapixels before decoding them,
+  so a small file cannot unpack into gigabytes.
+- **Concurrency.** Both commands take a heavy-command slot, so a burst waits in
+  the bounded queue instead of converting without limit.
+
+Addresses the owner configures (AI backends, the egress proxy) are settings,
+not message content, and never pass through this path.
+
 ## Process execution
 
 Every `child_process` call passes arguments as an array with no shell, so user
@@ -129,7 +155,7 @@ backdoor.
 | Rate limit | `utils/rate-limiter.js` | 15 commands / 60 s per user |
 | Cooldown | `handler.js` | 3 s, or the command's own value |
 | Heavy-command queue | `handler.js` | 3 concurrent |
-| Download size cap | `.video`, `.music` | 200 MB |
+| Download size cap | `.video`, `.music`, `.sticker`, `.toimg` | `MAX_MEDIA_SIZE` (64 MB) |
 | Duration cap | `.video`, `.music` | 10 minutes |
 | Message length cap | `utils/ui.js` | 4000 characters |
 

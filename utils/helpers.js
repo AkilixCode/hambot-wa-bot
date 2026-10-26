@@ -9,17 +9,6 @@ const httpClient = require('./http-client');
 const security = require('./security');
 const tempdir = require('./tempdir');
 
-// Baileys is ESM-only since v7 — lazy-load via dynamic import
-let _downloadContentFromMessage = null;
-
-async function _loadBaileysHelper() {
-    if (!_downloadContentFromMessage) {
-        const baileys = await import('@whiskeysockets/baileys');
-        _downloadContentFromMessage = baileys.downloadContentFromMessage;
-    }
-    return _downloadContentFromMessage;
-}
-
 // --- HELPER FUNCTIONS ---
 
 /**
@@ -144,18 +133,12 @@ function getRandomPinterestHeaders() {
 }
 
 /**
- * Download media from WhatsApp message
+ * Download an attachment from a WhatsApp message: WhatsApp's media CDN only,
+ * size-capped, MAC-checked (see utils/incoming-media).
+ * @throws {import('./incoming-media').IncomingMediaError}
  */
-async function downloadMedia(message, type) {
-    const downloadContentFromMessage = await _loadBaileysHelper();
-    const stream = await downloadContentFromMessage(message, type);
-    // Collect then concatenate once: concatenating inside the loop copied the
-    // whole buffer again for every chunk (quadratic in the file size).
-    const chunks = [];
-    for await (const chunk of stream) {
-        chunks.push(chunk);
-    }
-    return Buffer.concat(chunks);
+function downloadMedia(message, type) {
+    return require('./incoming-media').download(message, type);
 }
 
 /**
