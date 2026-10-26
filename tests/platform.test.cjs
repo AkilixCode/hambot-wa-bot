@@ -306,6 +306,62 @@ async function main() {
         });
     }
 
+    // ── Process runners: a timeout really ends the child ─────────
+    console.log('\n⏱️  Process timeouts...\n');
+
+    /** Wait until a pid is gone (true) or the deadline passes (false). */
+    async function gone(pid, ms) {
+        const deadline = Date.now() + ms;
+        while (Date.now() < deadline) {
+            try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') return true; }
+            await sleep(50);
+        }
+        return false;
+    }
+    const readPid = async (file) => {
+        const deadline = Date.now() + 10000;
+        while (!(fs.existsSync(file) && fs.readFileSync(file, 'utf8').trim()) && Date.now() < deadline) await sleep(50);
+        return Number(fs.readFileSync(file, 'utf8'));
+    };
+
+    if (process.platform !== 'win32') {
+        // Windows has no SIGTERM to ignore: kill() there ends the process
+        // outright. On POSIX a child can ignore it, and must still die.
+        await test('spawnPromise: a child that ignores SIGTERM is SIGKILLed after the grace period', async () => {
+            const { spawnPromise } = require('../utils/helpers');
+            const pidFile = path.join(scratch, 'stubborn-node.pid');
+            const code = `process.on('SIGTERM', () => {}); require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
+            const pending = spawnPromise('node', ['-e', code], { timeout: 1500, killGraceMs: 300 });
+            const pid = await readPid(pidFile);
+            const error = await pending.then(() => null, e => e);
+            assert.ok(error && error.timedOut, 'the caller is told at once');
+            assert.ok(await gone(pid, 3000), `pid ${pid} survived the timeout`);
+        });
+
+        await test('ytdlp.run: a yt-dlp that ignores SIGTERM is SIGKILLed after the grace period', async () => {
+            const ytdlp = require('../utils/ytdlp');
+            const pidFile = path.join(scratch, 'stubborn-ytdlp.pid');
+            const fake = require('./fixtures/fake-ytdlp.cjs').install('', {
+                mainPy: [
+                    'import os, signal, time',
+                    'signal.signal(signal.SIGTERM, signal.SIG_IGN)',
+                    `open(${JSON.stringify(pidFile)}, 'w').write(str(os.getpid()))`,
+                    'time.sleep(60)',
+                    ''
+                ].join('\n')
+            });
+            try {
+                const pending = ytdlp.run(['https://example.com/v'], { timeout: 1500, killGraceMs: 300 });
+                const pid = await readPid(pidFile);
+                const error = await pending.then(() => null, e => e);
+                assert.ok(error && error.timedOut, 'the caller is told at once');
+                assert.ok(await gone(pid, 3000), `pid ${pid} survived the timeout`);
+            } finally {
+                fake.restore();
+            }
+        });
+    }
+
     // ── Python for yt-dlp ────────────────────────────────────────
     console.log('\n🐍 Python discovery...\n');
 

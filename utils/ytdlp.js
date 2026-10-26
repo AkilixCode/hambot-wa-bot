@@ -120,6 +120,7 @@ function pythonBin(platform = process.platform) {
  * @param {string[]} args - Arguments after `-m yt_dlp`
  * @param {Object} [options]
  * @param {number} [options.timeout] - Milliseconds before the process is killed
+ * @param {number} [options.killGraceMs] - Wait after SIGTERM before SIGKILL
  * @param {string} [options.cwd] - Working directory
  * @returns {Promise<string>} stdout
  * @throws {Error} On non-zero exit, spawn failure, or timeout (`.timedOut` set)
@@ -142,13 +143,16 @@ function run(args, options = {}) {
         // could otherwise grow unbounded in memory.
         const MAX_BUFFER = 16 * 1024 * 1024;
 
+        // The caller hears about a timeout at once, but the SIGKILL stays
+        // armed until the child has really exited: clearing it on reject
+        // (as this used to) left a yt-dlp that ignores SIGTERM running.
         const finish = (fn, arg) => {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
-            if (killTimer) clearTimeout(killTimer);
             fn(arg);
         };
+        proc.on('exit', () => { if (killTimer) clearTimeout(killTimer); });
 
         const timer = setTimeout(() => {
             if (settled) return;
@@ -159,7 +163,7 @@ function run(args, options = {}) {
             // missing and that leaked heavy slots.
             killTimer = setTimeout(() => {
                 try { proc.kill('SIGKILL'); } catch { /* already gone */ }
-            }, KILL_GRACE_MS);
+            }, options.killGraceMs || KILL_GRACE_MS);
 
             const error = new Error(`yt-dlp timeout after ${Math.round(timeout / 1000)}s`);
             error.timedOut = true;

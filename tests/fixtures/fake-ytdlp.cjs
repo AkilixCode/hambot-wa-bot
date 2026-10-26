@@ -35,15 +35,18 @@ function findPython() {
 
 /**
  * @param {string} body - JavaScript for the fake; `args` holds yt-dlp's arguments
+ * @param {Object} [opts]
+ * @param {string} [opts.mainPy] - Python for yt_dlp/__main__.py itself, in
+ *   place of the hand-off to Node (for behaviour of the spawned process)
  * @returns {{dir: string, restore: Function}}
  */
-function install(body) {
+function install(body, opts = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-fake-ytdlp-'));
     const script = path.join(dir, 'fake.cjs');
     fs.writeFileSync(script, `const args = process.argv.slice(2);\n${body}`);
     fs.mkdirSync(path.join(dir, 'yt_dlp'));
     fs.writeFileSync(path.join(dir, 'yt_dlp', '__init__.py'), '');
-    fs.writeFileSync(path.join(dir, 'yt_dlp', '__main__.py'), [
+    fs.writeFileSync(path.join(dir, 'yt_dlp', '__main__.py'), opts.mainPy || [
         'import subprocess, sys',
         `sys.exit(subprocess.run([${JSON.stringify(process.execPath)}, ${JSON.stringify(script)}] + sys.argv[1:]).returncode)`,
         ''

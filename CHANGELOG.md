@@ -40,6 +40,13 @@ server. CI now tests the bot on Windows and macOS, on Node 22 and 24.
   - it runs once, cancels reconnects, and waits for session writes;
   - it ends within `SHUTDOWN_DEADLINE_MS` (default 4 s), and pm2's
     `kill_timeout` is set 4 s longer, so pm2 never cuts it short.
+- **A timed-out ffmpeg or yt-dlp that ignored SIGTERM kept running.** Both
+  process runners armed the SIGKILL fallback and then cancelled it at once,
+  while reporting the timeout. The SIGKILL now stays armed until the process
+  has really exited.
+- **A checkout on Windows turned line endings into CRLF** (Git's usual
+  `core.autocrlf`), which breaks `deploy.sh` in WSL or Git Bash. A new
+  `.gitattributes` keeps every text file LF on every OS.
 - **`.env.example` set `NODE_OPTIONS=--max-old-space-size=2048`.** Docker
   passes `.env` to the container, so that replaced the image's 1536 MB heap
   ceiling with one above the container's 2 GB memory limit. It is no longer
