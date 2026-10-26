@@ -990,7 +990,14 @@ async function main() {
         }
         const { spawnSync } = require('child_process');
         if (spawnSync('mkfifo', [path.join(OUT, 'pipe')]).status === 0) {
-            assert.strictEqual((await open('pipe')).error, 'not_file', 'a FIFO neither hangs nor opens');
+            const fifo = await open('pipe');
+            if (process.platform === 'win32') {
+                // Git for Windows' mkfifo makes an MSYS emulation that Windows
+                // itself does not see as a file: refused either way, no hang.
+                assert.ok(fifo.error && !fifo.buffer, `a FIFO neither hangs nor opens → ${JSON.stringify(fifo.error || fifo.name)}`);
+            } else {
+                assert.strictEqual(fifo.error, 'not_file', 'a FIFO neither hangs nor opens');
+            }
         }
     });
 
