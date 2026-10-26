@@ -1460,7 +1460,9 @@ chat_check() {
     new_tmp check
     out=$TMP
     rc=0
-    be_node "$snippet" >"$out" 2>&1 || rc=$?
+    # Local mode: the .env this wizard just wrote, named outright (the bot
+    # would find it anyway, next to its code). Docker passes it as env_file.
+    (HAMBOT_ENV_FILE="$(pwd)/.env"; export HAMBOT_ENV_FILE; be_node "$snippet") >"$out" 2>&1 || rc=$?
     if grep -q '^MISSING' "$out"; then
         warn "This version of the bot has no AI chat check yet: run ./deploy.sh update first."
         return 2

@@ -48,9 +48,9 @@ const logger = require('../utils/logger');
 const egress = require('../utils/egress');
 const ytdlp = require('../utils/ytdlp');
 const providers = require('../utils/providers');
+const pm2 = require('../utils/pm2');
 const tempdir = require('../utils/tempdir');
 const { formatSize } = require('../utils/helpers');
-const { spawn } = require('child_process');
 const crypto = require('crypto');
 const os = require('os');
 const fs = require('fs');
@@ -915,11 +915,14 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
         try {
             let logContent = null;
 
-            // 1. PM2 log files on disk
-            const pm2ProcessName = process.env.PM2_PROCESS_NAME || 'hambot';
+            // 1. PM2 log files on disk (an unsafe PM2_PROCESS_NAME never
+            // becomes part of a path or a pm2 argument)
+            const pm2ProcessName = pm2.processName();
             const pm2LogPaths = [
-                path.join(os.homedir(), `.pm2/logs/${pm2ProcessName}-out.log`),
-                path.join(os.homedir(), `.pm2/logs/${pm2ProcessName}-error.log`),
+                ...(pm2ProcessName ? [
+                    path.join(pm2.logDir(), `${pm2ProcessName}-out.log`),
+                    path.join(pm2.logDir(), `${pm2ProcessName}-error.log`)
+                ] : []),
                 '/var/log/hambot.log'
             ];
 
@@ -932,7 +935,7 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
             }
 
             // 2. Ask PM2 directly
-            if (!logContent) {
+            if (!logContent && pm2ProcessName) {
                 try {
                     logContent = await this._getPm2Logs(pm2ProcessName, lineCount);
                 } catch (pm2Err) {
@@ -1070,12 +1073,12 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
             const chunks = [];
             let totalBytes = 0;
 
-            // No shell: arguments are passed as an array so a hostile
-            // PM2_PROCESS_NAME cannot turn into a command injection.
-            const pm2Log = spawn('pm2', ['logs', processName, '--nostream', '--lines', String(lineCount)], {
-                timeout: 5000,
-                shell: false
+            // pm2's own entry point under this Node, never a shell (see
+            // utils/pm2); processName has already passed its pattern.
+            const pm2Log = pm2.run(['logs', processName, '--nostream', '--lines', String(lineCount)], {
+                timeout: 5000
             });
+            if (!pm2Log) return reject(new Error('pm2 not installed'));
 
             const collect = (data) => {
                 if (totalBytes >= MAX_LOG_BYTES) return;
@@ -1943,7 +1946,8 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
      * @private
      */
     async _doRestart(sock, from, msg, context) {
-        const pm2ProcessName = process.env.PM2_PROCESS_NAME || 'hambot';
+        const pm2ProcessName = pm2.processName();
+        if (!pm2ProcessName) return this._replyBadPm2Name(sock, from, msg);
         this._audit('owner.process.restart', context, { detail: pm2ProcessName });
 
         await this.reply(sock, from, msg,
@@ -1963,7 +1967,8 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
      * @private
      */
     async _doStop(sock, from, msg, context) {
-        const pm2ProcessName = process.env.PM2_PROCESS_NAME || 'hambot';
+        const pm2ProcessName = pm2.processName();
+        if (!pm2ProcessName) return this._replyBadPm2Name(sock, from, msg);
         this._audit('owner.process.stop', context, { outcome: 'warning', detail: pm2ProcessName });
 
         // Under Docker there is no pm2: the process exits and the restart
@@ -1983,6 +1988,18 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
     }
 
     /**
+     * PM2_PROCESS_NAME failed its pattern: say so instead of acting on it.
+     * @private
+     */
+    _replyBadPm2Name(sock, from, msg) {
+        return this.replyError(sock, from, msg,
+            'PM2_PROCESS_NAME di .env tidak valid, jadi tidak dipakai.', {
+                title: 'Konfigurasi Salah',
+                hint: ['Huruf, angka, titik, - dan _ saja; tidak boleh diawali -']
+            });
+    }
+
+    /**
      * Run a detached pm2 command, calling `onUnavailable` if it cannot do
      * the job.
      *
@@ -1991,13 +2008,17 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
      * nothing listening for 'error' a missing pm2 meant `.security restart`
      * announced a restart and then did nothing at all.
      *
+     * pm2 runs as its JavaScript entry point under this Node (utils/pm2), so
+     * the same path works on Windows, where the launcher is a .cmd file that
+     * cannot be spawned without a shell.
+     *
      * @param {string[]} args - pm2 arguments
      * @param {Function} onUnavailable - Fallback when pm2 is missing or fails
-     * @param {string} [bin='pm2'] - Binary to run (overridable for tests)
+     * @param {string|null} [entry] - pm2 entry point (overridable for tests)
      * @returns {import('child_process').ChildProcess|null}
      * @private
      */
-    _runPm2(args, onUnavailable, bin = 'pm2') {
+    _runPm2(args, onUnavailable, entry = pm2.locate()) {
         let fellBack = false;
         const fallBack = (reason) => {
             if (fellBack) return;
@@ -2008,9 +2029,13 @@ _Audit hanya disimpan di memori dan hilang saat bot restart._`;
 
         let proc;
         try {
-            proc = spawn(bin, args, { detached: true, stdio: 'ignore', shell: false });
+            proc = pm2.run(args, { detached: true, stdio: 'ignore' }, entry);
         } catch (error) {
             fallBack(error.message);
+            return null;
+        }
+        if (!proc) {
+            fallBack('not installed');
             return null;
         }
 

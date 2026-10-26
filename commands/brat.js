@@ -6,6 +6,7 @@
 
 const CommandBase = require('./base');
 const logger = require('../utils/logger');
+const { optional, reason: optionalReason } = require('../utils/optional');
 // canvas and sharp are required where they are used: together they add
 // ~37 MB to the process, which an idle bot need not carry.
 const path = require('path');
@@ -36,10 +37,10 @@ class BratCommand extends CommandBase {
      */
     _registerFont() {
         this.fontChecked = true;
-        const { registerFont } = require('canvas');
+        const { registerFont } = optional('canvas');
         const fontPaths = [
-            path.join(process.cwd(), 'fonts', 'arialnarrow.ttf'),
-            path.join(process.cwd(), 'fonts', 'ArialNarrow.ttf'),
+            path.join(__dirname, '..', 'fonts', 'arialnarrow.ttf'),
+            path.join(__dirname, '..', 'fonts', 'ArialNarrow.ttf'),
             // Liberation Sans Narrow is metrically compatible with Arial Narrow
             // and ships in the Docker image via fonts-liberation, so the sticker
             // still renders correctly without a proprietary font on disk.
@@ -96,6 +97,16 @@ class BratCommand extends CommandBase {
             return await this.replyError(sock, from, msg, 'Teks terlalu panjang — maksimal 500 karakter.', { title: 'Terlalu Panjang' });
         }
 
+        // canvas is optional (utils/optional): a platform without a prebuilt
+        // binary still runs the bot, just without this sticker.
+        if (!optional('canvas')) {
+            return await this.replyError(sock, from, msg,
+                'Stiker brat belum tersedia di server ini.', {
+                    title: 'Tidak Tersedia',
+                    hint: context.isOwner ? [`canvas: ${optionalReason('canvas')}`, 'Pasang dengan: npm install canvas'] : ['Hubungi admin bot']
+                });
+        }
+
         await this.react(sock, msg, '⏳');
 
         try {
@@ -139,7 +150,7 @@ class BratCommand extends CommandBase {
         const lineHeightRatio = 1.05; // Tight line spacing like album cover
 
         if (!this.fontChecked) this._registerFont();
-        const { createCanvas } = require('canvas');
+        const { createCanvas } = optional('canvas');
         const canvas = createCanvas(size, size);
         const ctx = canvas.getContext('2d');
 

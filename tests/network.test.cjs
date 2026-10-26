@@ -557,17 +557,12 @@ async function main() {
     });
 
     await test('yt-dlp skips a proxy the HTTP layer already found dead, and never logs its args', async () => {
-        const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-fake-ytdlp-'));
-        const runLog = path.join(fakeBin, 'runs.log');
-        fs.writeFileSync(path.join(fakeBin, 'python3'), `#!/usr/bin/env node
-require('fs').appendFileSync(${JSON.stringify(runLog)}, JSON.stringify(process.argv.slice(2)) + '\\n');
-if (process.argv.includes('--proxy')) { console.error('ERROR: Unable to connect to proxy'); process.exit(1); }
+        const runLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-ytdlp-runs-')), 'runs.log');
+        const fakeYtdlp = require('./fixtures/fake-ytdlp.cjs').install(`
+require('fs').appendFileSync(${JSON.stringify(runLog)}, JSON.stringify(args) + '\\n');
+if (args.includes('--proxy')) { console.error('ERROR: Unable to connect to proxy'); process.exit(1); }
 console.log(JSON.stringify({ title: 'ok' }));
-`, { mode: 0o755 });
-        const savedPath = process.env.PATH;
-        const savedPython = process.env.YTDLP_PYTHON;
-        process.env.PATH = `${fakeBin}${path.delimiter}${savedPath}`;
-        delete process.env.YTDLP_PYTHON;
+`);
         const runs = () => fs.readFileSync(runLog, 'utf8').trim().split('\n').map(l => JSON.parse(l));
 
         try {
@@ -588,9 +583,8 @@ console.log(JSON.stringify({ title: 'ok' }));
             assert.strictEqual(runs().length, 3);
             assert.ok(!runs()[2].includes('--proxy'));
         } finally {
-            process.env.PATH = savedPath;
-            if (savedPython !== undefined) process.env.YTDLP_PYTHON = savedPython;
-            fs.rmSync(fakeBin, { recursive: true, force: true });
+            fakeYtdlp.restore();
+            fs.rmSync(path.dirname(runLog), { recursive: true, force: true });
         }
     });
 

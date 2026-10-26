@@ -990,7 +990,59 @@ async function main() {
         }
         const { spawnSync } = require('child_process');
         if (spawnSync('mkfifo', [path.join(OUT, 'pipe')]).status === 0) {
-            assert.strictEqual((await open('pipe')).error, 'not_file', 'a FIFO neither hangs nor opens');
+            const fifo = await open('pipe');
+            if (process.platform === 'win32') {
+                // Git for Windows' mkfifo makes an MSYS emulation that Windows
+                // itself does not see as a file: refused either way, no hang.
+                assert.ok(fifo.error && !fifo.buffer, `a FIFO neither hangs nor opens → ${JSON.stringify(fifo.error || fifo.name)}`);
+            } else {
+                assert.strictEqual(fifo.error, 'not_file', 'a FIFO neither hangs nor opens');
+            }
+        }
+    });
+
+    await test('files: nested files stay allowed; a sibling folder that only shares a prefix or differs in case is refused', async () => {
+        fs.writeFileSync(path.join(OUT, 'sub', 'deep.txt'), 'nested\n');
+        assert.strictEqual((await agentMedia.open('sub/deep.txt', OUT, 1000)).name, 'deep.txt', 'agents may organise output in subfolders');
+        assert.strictEqual((await agentMedia.open(path.join(OUT, 'sub', 'deep.txt'), OUT, 1000)).name, 'deep.txt');
+
+        const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-case-')));
+        // On Windows a folder can be made case-sensitive; try, so the
+        // case-sensitive branch runs there too when the runner allows it.
+        if (process.platform === 'win32') {
+            require('child_process').spawnSync('fsutil.exe', ['file', 'setCaseSensitiveInfo', parent, 'enable'], { stdio: 'ignore' });
+        }
+        const lower = path.join(parent, 'outbox');
+        const upper = path.join(parent, 'Outbox');
+        fs.mkdirSync(lower);
+        let caseSensitive = true;
+        try {
+            fs.mkdirSync(upper);
+        } catch (error) {
+            if (error.code !== 'EEXIST') throw error;
+            caseSensitive = false;
+        }
+        fs.writeFileSync(path.join(upper, 'x.png'), PNG);
+        fs.mkdirSync(`${lower}-evil`);
+        fs.writeFileSync(path.join(`${lower}-evil`, 'x.png'), PNG);
+        try {
+            assert.strictEqual((await agentMedia.open(path.join(`${lower}-evil`, 'x.png'), lower, 1000)).error, 'outside', 'prefix sibling');
+            const r = await agentMedia.open(path.join(upper, 'x.png'), lower, 1000);
+            if (caseSensitive) {
+                // Outbox/ is a different folder here: never admitted.
+                assert.strictEqual(r.error, 'outside', `case sibling on a case-sensitive filesystem → ${JSON.stringify(r.error || r.name)}`);
+            } else {
+                // One folder under two spellings: a refusal is the only
+                // possible mistake, never a file from elsewhere.
+                assert.ok(r.error === 'outside' || r.name === 'x.png', JSON.stringify(r.error || r.name));
+            }
+            console.log(`   (filesystem here is case-${caseSensitive ? 'sensitive' : 'insensitive'})`);
+
+            // A reference in another case: the OS's canonical spelling decides.
+            const mixed = await agentMedia.open('CHART.PNG', OUT, 1000);
+            assert.ok(mixed.error === 'missing' || mixed.name === 'chart.png', JSON.stringify(mixed.error || mixed.name));
+        } finally {
+            fs.rmSync(parent, { recursive: true, force: true });
         }
     });
 
