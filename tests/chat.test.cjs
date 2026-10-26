@@ -816,6 +816,87 @@ async function main() {
         assert.match(today(), /^\d{4}-\d{2}-\d{2}$/);
     });
 
+    await test('daily limit: one person asking in two chats at once gets one answer, not two', async () => {
+        srv.on((req, res) => sseAnswer(res, ['a', 'b', 'c'], { gap: 80 }));
+        try { fs.unlinkSync(path.join(DATA, 'chat-usage.json')); } catch { /* none */ }
+        const svc = serviceFor(srv, { CHAT_DAILY_LIMIT_ENABLED: 'true', CHAT_DAILY_LIMIT: '1' });
+        const inPrivate = who(70);
+        const inGroup = who(70, { chat: '120363000000000070@g.us', isGroup: true });
+
+        // Started in the same tick, as two messages arriving together.
+        const results = await Promise.allSettled([svc.ask(inPrivate, 'q1'), svc.ask(inGroup, 'q2')]);
+        const answered = results.filter(r => r.status === 'fulfilled');
+        assert.strictEqual(answered.length, 1, JSON.stringify(results.map(r => r.status === 'fulfilled' ? 'ok' : r.reason.code)));
+        assert.strictEqual(results.find(r => r.status === 'rejected').reason.code, 'busy_user', 'one request per person, across chats');
+        assert.strictEqual(srv.requests.length, 1, 'the AI was asked once');
+
+        // The one answer used the day's only question.
+        assert.strictEqual(answered[0].value.remaining, 0);
+        await assert.rejects(svc.ask(inGroup, 'q3'), e => e.code === 'daily_limit');
+        assert.strictEqual(svc.usage.counts[Object.keys(svc.usage.counts).find(k => k.startsWith('628120000007'))], 1);
+        svc.shutdown();
+    });
+
+    await test('daily limit: a request in flight holds its question; failures and stops give it back', async () => {
+        try { fs.unlinkSync(path.join(DATA, 'chat-usage.json')); } catch { /* none */ }
+        const svc = serviceFor(srv, { CHAT_DAILY_LIMIT_ENABLED: 'true', CHAT_DAILY_LIMIT: '2', CHAT_MAX_CONCURRENT: '1' });
+
+        // In flight: already counted against what is left.
+        srv.on((req, res) => sseAnswer(res, Array(40).fill('x'), { gap: 50 }));
+        const running = svc.ask(who(71), 'q');
+        await sleep(30);
+        assert.strictEqual(svc.remaining(who(71)), 1, 'reserved while it runs');
+
+        // Queued behind someone else, then stopped: given back.
+        const queued = svc.ask(who(72), 'q', { onQueued: () => {} });
+        await sleep(30);
+        assert.strictEqual(svc.remaining(who(72)), 1);
+        assert.strictEqual(svc.stop(who(72)), 1);
+        await assert.rejects(queued, e => e.code === 'stopped');
+        assert.strictEqual(svc.remaining(who(72)), 2, 'a stopped request costs nothing');
+
+        // Stopped while running: given back.
+        assert.strictEqual(svc.stop(who(71)), 1);
+        await assert.rejects(running, e => e.code === 'stopped');
+        assert.strictEqual(svc.remaining(who(71)), 2);
+
+        // An error: given back.
+        srv.on((req, res) => jsonReply(res, 500, { error: 'boom' }));
+        await assert.rejects(svc.ask(who(71), 'q'), e => e.code === 'offline');
+        assert.strictEqual(svc.remaining(who(71)), 2, 'a failed request costs nothing');
+
+        // An answer: counted.
+        srv.on((req, res) => sseAnswer(res, ['ok']));
+        const r = await svc.ask(who(71), 'q');
+        assert.strictEqual(r.remaining, 1);
+        assert.strictEqual(svc.reserved.size, 0, 'nothing left reserved');
+        svc.shutdown();
+    });
+
+    await test('one person, two chats: each chat keeps its own history; .chat stop works from either', async () => {
+        srv.on((req, res) => sseAnswer(res, ['jawaban']));
+        const svc = serviceFor(srv);
+        const inPrivate = who(73);
+        const inGroup = who(73, { chat: '120363000000000073@g.us', isGroup: true });
+        await svc.ask(inPrivate, 'pertanyaan pribadi');
+        await svc.ask(inGroup, 'pertanyaan grup');
+        const privateTurns = JSON.stringify(svc.memory.history(require('../utils/chat/memory').key(inPrivate.chat, inPrivate.sender)));
+        const groupTurns = JSON.stringify(svc.memory.history(require('../utils/chat/memory').key(inGroup.chat, inGroup.sender)));
+        assert.ok(privateTurns.includes('pertanyaan pribadi') && !privateTurns.includes('pertanyaan grup'), privateTurns);
+        assert.ok(groupTurns.includes('pertanyaan grup') && !groupTurns.includes('pertanyaan pribadi'), groupTurns);
+
+        // "Masih diproses" in the group about a request in the private chat:
+        // stoppable from the group.
+        srv.on((req, res) => sseAnswer(res, Array(40).fill('x'), { gap: 50 }));
+        const running = svc.ask(inPrivate, 'lama');
+        await sleep(30);
+        await assert.rejects(svc.ask(inGroup, 'lagi'), e => e.code === 'busy_user');
+        assert.strictEqual(svc.stop(inGroup), 1);
+        await assert.rejects(running, e => e.code === 'stopped');
+        assert.strictEqual(svc.stop(who(74)), 0, 'never someone else\'s');
+        svc.shutdown();
+    });
+
     await test('fallback answers when the main one is down; a 401 drops the main one at once', async () => {
         srv.on((req, res) => jsonReply(res, 401, { error: { message: 'bad key' } }));
         srv2.on((req, res) => sseAnswer(res, ['dari cadangan']));

@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The `.chat` daily limit could be exceeded.** It was checked when a
+  question started but counted only when it was answered, and "one question
+  at a time" applied per chat. So one person asking in two chats at once got
+  two answers on a limit of one. Now:
+  - a question reserves its place in the count the moment it starts (in the
+    same step as the check);
+  - an answer keeps the reservation; an error, an empty answer, a queue
+    timeout or `.chat stop` gives it back;
+  - each person has one question in progress across all chats, while every
+    chat keeps its own history;
+  - `.chat stop` cancels your question from whichever chat you send it in.
+
 ## [4.1.0] - 2026-10-21
 
 Agents can send **files** to WhatsApp through `.chat`, and seven media
