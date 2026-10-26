@@ -42,7 +42,7 @@ closed rather than granting access.
 | `RATE_LIMIT_MAX` | `15` | Commands allowed per window |
 | `CACHE_EXPIRATION` | `300000` | Default cache TTL, ms |
 | `MAX_MUSIC_DURATION` | `600` | Maximum media length, seconds |
-| `MAX_MEDIA_SIZE` | `64M` | Maximum download size. `MAX_FILE_SIZE` is the legacy name. |
+| `MAX_MEDIA_SIZE` | `64M` | Maximum download size: `.video`/`.music` results and the attachments `.sticker`/`.toimg` fetch. `MAX_FILE_SIZE` is the legacy name. |
 | `YTDLP_PLAYER_CLIENTS` | `default,web_safari` | YouTube player clients for yt-dlp. Retune here when YouTube changes; no code edit needed. |
 | `POT_PROVIDER_URL` | unset | Optional PO token provider, raises the YouTube success rate |
 | `WALLHAVEN_API_KEY` | unset | Optional; the `.pinterest` fallback works without one |
