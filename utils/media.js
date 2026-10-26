@@ -89,7 +89,7 @@ function describeError(error, kind = 'media') {
         };
     }
 
-    if (msg.includes('no module named') || msg.includes('python3 tidak ditemukan')) {
+    if (msg.includes('no module named') || /python3? tidak ditemukan/.test(msg)) {
         return {
             title: 'Tidak Tersedia',
             reason: 'Komponen pengunduh belum terpasang di server.',

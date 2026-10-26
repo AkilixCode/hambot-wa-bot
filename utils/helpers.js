@@ -44,7 +44,7 @@ function spawnPromise(command, args, options = {}) {
 
     return new Promise((resolve, reject) => {
         // Validate command to prevent injection
-        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node', 'python3', 'deno'];
+        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node', 'python3', 'python', 'deno'];
         if (!allowedCommands.includes(command)) {
             return reject(new Error('Command not allowed'));
         }

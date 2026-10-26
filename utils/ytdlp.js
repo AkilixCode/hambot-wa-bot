@@ -86,17 +86,32 @@ function getYouTubeArgs() {
  *
  * A local install (deploy.sh --local) keeps yt-dlp in a private .venv and
  * sets YTDLP_PYTHON to it; a relative path is taken from the repository root.
- * If that interpreter is gone (the .venv was deleted, or a .env from a local
- * install is used by the Docker container), fall back to python3 rather than
- * failing every download.
+ * Either slash works, and a venv path written for the other OS is translated
+ * (`.venv/bin/python` <-> `.venv\Scripts\python.exe`), so a .env carried
+ * between machines keeps working. If that interpreter is gone (the .venv was
+ * deleted, or a .env from a local install is used by the Docker container),
+ * fall back to the system Python rather than failing every download:
+ * `python` on Windows, where `python3` usually does not exist, else `python3`.
+ *
+ * @param {string} [platform=process.platform]
  * @returns {string}
  */
-function pythonBin() {
+function pythonBin(platform = process.platform) {
+    const fallback = platform === 'win32' ? 'python' : 'python3';
     const configured = (process.env.YTDLP_PYTHON || '').trim();
-    if (!configured) return 'python3';
-    if (!configured.includes('/')) return configured;
-    const resolved = path.resolve(__dirname, '..', configured);
-    return fs.existsSync(resolved) ? resolved : 'python3';
+    if (!configured) return fallback;
+    if (!/[\\/]/.test(configured)) return configured;
+
+    const resolved = path.resolve(path.join(__dirname, '..'), configured.replace(/[\\/]/g, path.sep));
+    const candidates = [resolved];
+    const venv = /([\\/])(bin[\\/]python3?|Scripts[\\/]python(?:\.exe)?)$/i.exec(resolved);
+    if (venv) {
+        const root = resolved.slice(0, venv.index);
+        candidates.push(platform === 'win32'
+            ? path.join(root, 'Scripts', 'python.exe')
+            : path.join(root, 'bin', 'python'));
+    }
+    return candidates.find(file => fs.existsSync(file)) || fallback;
 }
 
 /**
@@ -166,7 +181,7 @@ function run(args, options = {}) {
         proc.on('error', (err) => {
             // ENOENT here means python3 or the yt_dlp module is missing.
             if (err.code === 'ENOENT') {
-                finish(reject, new Error('python3 tidak ditemukan. Install python3 dan yt-dlp.'));
+                finish(reject, new Error('python tidak ditemukan. Install Python 3 dan yt-dlp.'));
             } else {
                 finish(reject, err);
             }
@@ -200,7 +215,7 @@ function describeTarget(target) {
 function failureReason(error) {
     const msg = (error && error.message ? error.message : '').toLowerCase();
     if (error && error.timedOut) return 'timeout';
-    if (msg.includes('no module named') || msg.includes('python3 tidak ditemukan')) return 'not-installed';
+    if (msg.includes('no module named') || /python3? tidak ditemukan/.test(msg)) return 'not-installed';
     if (isProxyFailure(error)) return 'proxy';
     if (isBotCheck(error)) return 'bot-check';
     if (msg.includes('geo') || msg.includes('not available in your country')) return 'geo-blocked';

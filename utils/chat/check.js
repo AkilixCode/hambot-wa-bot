@@ -107,7 +107,7 @@ async function probe(backend, opts = {}) {
  * Shell entry point for deploy.sh.
  */
 async function main() {
-    require('dotenv').config({ quiet: true });
+    require('../env');
     const settings = settingsLib.load(process.env);
     const print = (level, text) => console.log(`${level.padEnd(4)} ${text}`);
 

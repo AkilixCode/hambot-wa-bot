@@ -4,6 +4,7 @@
  */
 
 const dns = require('dns').promises;
+const net = require('net');
 const logger = require('./logger');
 const config = require('../config');
 const redact = require('./redact');
@@ -23,6 +24,49 @@ const UNAUTHORIZED_PENALTIES = [
     { attempts: 5, blockMs: 2 * 60 * 60 * 1000 },
     { attempts: 3, blockMs: 30 * 60 * 1000 }
 ];
+
+/**
+ * Address ranges a user-supplied URL may not reach: everything the IANA
+ * special-purpose registries mark as not globally reachable, plus the
+ * translation prefixes that would carry a request to one of them.
+ *   https://www.iana.org/assignments/iana-ipv4-special-registry
+ *   https://www.iana.org/assignments/iana-ipv6-special-registry
+ *
+ * There is deliberately no ::ffff:0:0/96 entry: in net.BlockList an IPv4
+ * address also matches IPv4-mapped rules, so that entry would block every
+ * IPv4 address. The IPv4 rules below already catch the mapped forms.
+ */
+const BLOCKED_RANGES = [
+    ['0.0.0.0', 8, 'ipv4'],          // "this network"
+    ['10.0.0.0', 8, 'ipv4'],         // private
+    ['100.64.0.0', 10, 'ipv4'],      // CGNAT, Tailscale
+    ['127.0.0.0', 8, 'ipv4'],        // loopback
+    ['169.254.0.0', 16, 'ipv4'],     // link-local, cloud metadata
+    ['172.16.0.0', 12, 'ipv4'],      // private, Docker's bridge
+    ['192.0.0.0', 24, 'ipv4'],       // IETF protocol assignments
+    ['192.0.2.0', 24, 'ipv4'],       // TEST-NET-1
+    ['192.88.99.0', 24, 'ipv4'],     // 6to4 relay anycast
+    ['192.168.0.0', 16, 'ipv4'],     // private
+    ['198.18.0.0', 15, 'ipv4'],      // benchmarking
+    ['198.51.100.0', 24, 'ipv4'],    // TEST-NET-2
+    ['203.0.113.0', 24, 'ipv4'],     // TEST-NET-3
+    ['224.0.0.0', 4, 'ipv4'],        // multicast
+    ['240.0.0.0', 4, 'ipv4'],        // reserved, broadcast
+    ['::', 128, 'ipv6'],             // unspecified
+    ['::1', 128, 'ipv6'],            // loopback
+    ['64:ff9b::', 96, 'ipv6'],       // NAT64: reaches any IPv4, private included
+    ['64:ff9b:1::', 48, 'ipv6'],     // local-use NAT64
+    ['100::', 64, 'ipv6'],           // discard-only
+    ['2001::', 23, 'ipv6'],          // IETF protocol assignments, Teredo
+    ['2001:db8::', 32, 'ipv6'],      // documentation
+    ['2002::', 16, 'ipv6'],          // 6to4: tunnels to an embedded IPv4
+    ['fc00::', 7, 'ipv6'],           // unique local
+    ['fe80::', 10, 'ipv6'],          // link-local
+    ['ff00::', 8, 'ipv6']            // multicast
+];
+
+const BLOCKED = new net.BlockList();
+for (const [address, prefix, type] of BLOCKED_RANGES) BLOCKED.addSubnet(address, prefix, type);
 
 class SecurityManager {
     constructor() {
@@ -327,56 +371,37 @@ class SecurityManager {
     }
 
     /**
-     * Is this IPv4 address outside the public internet?
+     * Is this IP address outside the public internet?
      *
-     * @param {number} a First octet
-     * @param {number} b Second octet
+     * Checked against BLOCKED_RANGES with Node's own net.BlockList, which
+     * also matches the IPv4-mapped forms of an IPv4 rule (::ffff:7f00:1 and
+     * ::ffff:127.0.0.1 both hit 127.0.0.0/8). An address it cannot parse
+     * counts as private: the check fails closed.
+     *
+     * @param {string} address Bare address, IPv6 without brackets
      * @returns {boolean}
-     * @private
      */
-    _isPrivateIPv4(a, b) {
-        if (a === 0) return true;                          // 0.0.0.0/8 "this network"
-        if (a === 10) return true;                          // 10.0.0.0/8
-        if (a === 127) return true;                         // loopback, all of 127/8
-        if (a === 169 && b === 254) return true;            // link-local + cloud metadata
-        if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16.0.0/12, incl. Docker's bridge
-        if (a === 192 && b === 168) return true;            // 192.168.0.0/16
-        if (a === 192 && b === 0) return true;              // 192.0.0.0/24 + TEST-NET-1
-        if (a === 100 && b >= 64 && b <= 127) return true;  // 100.64.0.0/10 CGNAT / Tailscale
-        if (a >= 224) return true;                          // multicast, reserved, broadcast
-        return false;
-    }
-
-    /**
-     * Is this IPv6 address outside the public internet?
-     * @param {string} address Address without the surrounding brackets
-     * @returns {boolean}
-     * @private
-     */
-    _isPrivateIPv6(address) {
-        const addr = String(address).toLowerCase();
-
-        if (addr === '::1' || addr === '::') return true;
-
-        // IPv4-mapped addresses (::ffff:7f00:1) tunnel an IPv4 target through
-        // an IPv6 literal, so unwrap and re-check the embedded address.
-        const mapped = addr.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-        if (mapped) {
-            const high = parseInt(mapped[1], 16);
-            return this._isPrivateIPv4((high >> 8) & 0xff, high & 0xff);
+    isPrivateAddress(address) {
+        const bare = String(address || '').replace(/%.*$/, ''); // drop an IPv6 zone id
+        const family = net.isIP(bare);
+        if (!family) return true;
+        try {
+            return BLOCKED.check(bare, family === 6 ? 'ipv6' : 'ipv4');
+        } catch {
+            return true;
         }
-
-        if (/^f[cd]/.test(addr)) return true;    // fc00::/7 unique local
-        if (/^fe[89ab]/.test(addr)) return true; // fe80::/10 link-local
-        return false;
     }
 
     /**
      * Does this hostname point somewhere that is not the public internet?
      *
      * The WHATWG URL parser already normalises the alternate IPv4 encodings
-     * (2130706433, 0x7f000001, 127.1, 0177.0.0.1 all become 127.0.0.1), so only
-     * the dotted-quad form has to be recognised here.
+     * (2130706433, 0x7f000001, 127.1, 0177.0.0.1 all become 127.0.0.1), so a
+     * literal arrives here as a plain address.
+     *
+     * Only for user-supplied URLs. Addresses the owner configures (AI chat
+     * backends, the egress proxy) are deliberately private and never pass
+     * through here.
      *
      * @param {string} hostname url.hostname, IPv6 literals still bracketed
      * @returns {boolean}
@@ -388,7 +413,7 @@ class SecurityManager {
         if (!host) return true;
 
         if (host.startsWith('[') && host.endsWith(']')) {
-            return this._isPrivateIPv6(host.slice(1, -1));
+            return this.isPrivateAddress(host.slice(1, -1));
         }
 
         if (host === 'localhost' || host.endsWith('.localhost') ||
@@ -397,10 +422,7 @@ class SecurityManager {
             return true;
         }
 
-        const quad = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-        if (quad) {
-            return this._isPrivateIPv4(Number(quad[1]), Number(quad[2]));
-        }
+        if (net.isIP(host)) return this.isPrivateAddress(host);
 
         return false;
     }
@@ -439,8 +461,7 @@ class SecurityManager {
         try {
             const records = await dns.lookup(hostname, { all: true });
             for (const record of records) {
-                const bracketed = record.family === 6 ? `[${record.address}]` : record.address;
-                if (this.isPrivateHostname(bracketed)) {
+                if (this.isPrivateAddress(record.address)) {
                     return { safe: false, reason: 'URL mengarah ke jaringan internal.' };
                 }
             }
@@ -998,3 +1019,4 @@ const cleanupTimer = setInterval(() => securityManager.cleanup(), 300000);
 cleanupTimer.unref();
 
 module.exports = securityManager;
+module.exports.BLOCKED_RANGES = BLOCKED_RANGES;
