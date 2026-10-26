@@ -19,7 +19,8 @@ Built on [Baileys](https://github.com/WhiskeySockets/Baileys) · replies in Indo
 
 ## Quick start
 
-One command on Linux or macOS (Windows: inside [WSL](https://learn.microsoft.com/windows/wsl/install)):
+One command on Linux or macOS (Windows: inside [WSL](https://learn.microsoft.com/windows/wsl/install), or
+[natively, set up by hand](docs/deployment.md#windows-without-wsl)):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AkilixCode/hambot-wa-bot/main/scripts/install.sh | sh
@@ -38,6 +39,9 @@ does the same.
 | **Set up for you** | Everything, in one prebuilt image (x86-64 / ARM64) | Packages, pm2, yt-dlp, Deno |
 | **Keeps running** | Docker restarts it | pm2 restarts it |
 | **Choose it with** | `./deploy.sh --docker` | `./deploy.sh --local` |
+
+The bot itself runs on Linux, macOS and Windows on any PC, laptop or server;
+CI tests it on all three ([what runs where](docs/deployment.md#what-runs-where)).
 
 Changed your mind? `./deploy.sh switch local` (or `docker`) moves the bot and
 its WhatsApp session — no relinking.
