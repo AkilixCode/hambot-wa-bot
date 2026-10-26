@@ -10,7 +10,7 @@
 
 # Deno, copied from its official image and pinned to a release tag, instead
 # of the previous unpinned `curl | sh`. Dependabot proposes bumps.
-FROM denoland/deno:bin-2.9.7 AS deno
+FROM denoland/deno:bin-2.9.8 AS deno
 
 # ---- Builder: install node_modules ----
 # canvas and sharp normally download prebuilt binaries that bundle their own
