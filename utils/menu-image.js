@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const logger = require('./logger');
+const { optional, reason: optionalReason } = require('./optional');
 
 const ASSET_DIR = path.join(__dirname, '..', 'assets');
 const ASSET_NAMES = ['menu.jpg', 'menu.jpeg', 'menu.png', 'menu.webp'];
@@ -39,6 +40,7 @@ const HEIGHT = 640;
 
 let cache = null;          // { key, buffer, at }
 let fontFamily = null;     // resolved once
+let canvasNoted = false;   // "no canvas" logged once
 
 /**
  * Normalise any image buffer to a reasonably sized JPEG.
@@ -67,12 +69,23 @@ function findAsset() {
 }
 
 /**
+ * canvas, which draws the generated banner, is optional (utils/optional).
+ * @returns {Object} The canvas module
+ * @throws {Error} When it is not available on this install
+ */
+function requireCanvas() {
+    const canvas = optional('canvas');
+    if (!canvas) throw new Error(`canvas is unavailable (${optionalReason('canvas')})`);
+    return canvas;
+}
+
+/**
  * Register the narrow font the banner is drawn in, once.
  * @returns {string} Font family to use
  */
 function resolveFont() {
     if (fontFamily) return fontFamily;
-    const { registerFont } = require('canvas');
+    const { registerFont } = requireCanvas();
     for (const fontPath of FONT_PATHS) {
         try {
             if (fs.existsSync(fontPath)) {
@@ -175,7 +188,7 @@ function drawBackground(g, width, height, opts = {}) {
  * @returns {Buffer} JPEG
  */
 function renderBanner(opts = {}) {
-    const { createCanvas } = require('canvas');
+    const { createCanvas } = requireCanvas();
     const family = resolveFont();
     const c = createCanvas(WIDTH, HEIGHT);
     const g = c.getContext('2d');
@@ -297,6 +310,15 @@ function sources() {
  */
 async function getMenuImage() {
     for (const source of sources()) {
+        // No canvas on this install: no generated banner, and no warning on
+        // every .menu about it (it is logged once, below).
+        if (source.type === 'generated' && !optional('canvas')) {
+            if (!canvasNoted) {
+                canvasNoted = true;
+                logger.info(`Menu image: canvas is unavailable (${optionalReason('canvas')}), so .menu is sent as text unless assets/menu.* exists`);
+            }
+            continue;
+        }
         const fresh = cache && cache.key === source.key &&
             (source.type !== 'url' || Date.now() - cache.at < URL_CACHE_MS);
         if (fresh) return cache.buffer;

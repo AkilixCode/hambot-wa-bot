@@ -126,8 +126,12 @@ Written by `./deploy.sh`; change them through it rather than by hand.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DEPLOY_MODE` | `docker` | `docker` or `local`. Use `./deploy.sh switch` to change it: that also moves the WhatsApp session. |
-| `YTDLP_PYTHON` | `python3` | Local mode: the Python that has yt-dlp (`.venv/bin/python`). Ignored if that file is missing. |
+| `YTDLP_PYTHON` | `python3` (`python` on Windows) | Local mode: the Python that has yt-dlp (`.venv/bin/python`, on Windows `.venv\Scripts\python.exe`; either slash works). A venv path written for the other OS is translated. Ignored if missing. |
 | `PAIRING_NUMBER` | — | The bot's own number for a pairing code; empty = QR code |
 | `LOGIN_METHOD` | `auto` | `auto`, `qr` or `code` |
 | `HAMBOT_TAG` | `latest` | Docker image version to run |
-| `PM2_PROCESS_NAME` | `hambot` | Local mode: the pm2 app name |
+| `PM2_PROCESS_NAME` | `hambot` | Local mode: the pm2 app name. Letters, digits, `.` `-` `_`, not starting with `-`; anything else is refused |
+| `PM2_BIN` | found on `PATH` | Local mode: pm2's JavaScript entry point (`…/node_modules/pm2/bin/pm2`), when pm2 is not on `PATH`. The bot runs it with its own Node, never through a shell |
+| `HAMBOT_MAX_HEAP_MB` | `1536` | Local mode (pm2): Node's heap ceiling and pm2's restart threshold. `640` suits a 1 GB machine. Docker sets its own |
+| `SHUTDOWN_DEADLINE_MS` | `4000` | Longest a clean shutdown may take (1000–60000). pm2 waits 4 s longer before it kills |
+| `HAMBOT_ENV_FILE` | `.env` | Another settings file, relative to the bot's folder. `.env` is always read from the bot's folder, not the folder it is started from; real environment variables win over it |

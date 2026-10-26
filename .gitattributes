@@ -1,0 +1,9 @@
+# Every text file is checked out with LF line endings, on Windows too.
+# deploy.sh and scripts/*.sh are shell scripts (a CR breaks them in WSL or
+# Git Bash), and docs/images/logo.svg is compared byte for byte with what
+# utils/logo.js renders. Git still detects binaries on its own; the lines
+# below only make it explicit for the files that must never be touched.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ttf binary

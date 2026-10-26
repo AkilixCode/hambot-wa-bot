@@ -17,7 +17,8 @@ relinking WhatsApp.
 
 ## Quick install
 
-On Linux or macOS (on Windows, inside [WSL](https://learn.microsoft.com/windows/wsl/install)):
+On Linux or macOS (on Windows, inside [WSL](https://learn.microsoft.com/windows/wsl/install), or see
+[Windows without WSL](#windows-without-wsl)):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AkilixCode/hambot-wa-bot/main/scripts/install.sh | sh
@@ -47,8 +48,20 @@ interrupted or failed setup simply continues where it stopped.
 | **Installed for you** | Everything, inside one prebuilt image | Node packages, pm2, yt-dlp (private `.venv`), Deno |
 | **Not installed for you** | — | ffmpeg (needs sudo; the exact command is shown) |
 | **Keeps running** | Docker restarts it; survives reboots | pm2 restarts it; one `sudo` line for reboots |
-| **Platforms** | x86-64 and ARM64 Linux | Linux, macOS, WSL |
+| **Platforms** | x86-64 and ARM64 Linux; macOS and Windows with Docker Desktop | Linux, macOS, WSL; Windows natively, set up by hand |
 | **Good for** | Servers, VPS, Raspberry Pi | Machines without Docker, development |
+
+### What runs where
+
+| | The bot (`npm start`) | `./deploy.sh` setup wizard | Docker image |
+| --- | --- | --- | --- |
+| **Linux** | ✓ tested in CI | ✓ tested in CI | ✓ tested in CI (x86-64, ARM64) |
+| **macOS** | ✓ tested in CI | ✓ tested in CI | ✓ with Docker Desktop |
+| **Windows, WSL2** | ✓ (it is Linux) | ✓ (it is Linux) | ✓ with Docker Desktop |
+| **Windows, native** | ✓ tested in CI; [set up by hand](#windows-without-wsl) | ✗ (a POSIX shell script) | ✓ with Docker Desktop, `docker compose` by hand |
+
+Git Bash and other shells on Windows are not tested with `./deploy.sh`: use
+WSL2, or the manual steps.
 
 `./deploy.sh` asks when it first runs (`--docker` or `--local` skips the
 question). If Docker isn't usable, it says exactly why — not installed, daemon
@@ -143,6 +156,46 @@ npm install -g pm2 && pm2 start ecosystem.config.cjs && pm2 save
 ```
 
 or simply `npm start` to run it in the foreground.
+
+The bot finds its `.env` and its session folder next to `index.js`, wherever
+it is started from, so `node /path/to/hambot-wa-bot/index.js` works from any
+folder (a service manager, a scheduled task).
+
+## Windows without WSL
+
+The bot runs natively on Windows; only the `./deploy.sh` wizard needs a POSIX
+shell. In PowerShell:
+
+```powershell
+winget install OpenJS.NodeJS.LTS Python.Python.3.12 Gyan.FFmpeg Git.Git
+winget install DenoLand.Deno                      # optional: steadier YouTube
+# open a new PowerShell window so the new commands are on PATH
+git clone https://github.com/AkilixCode/hambot-wa-bot.git
+cd hambot-wa-bot
+py -m venv .venv
+$v = (Select-String Dockerfile -Pattern '^ARG YTDLP_VERSION=(.+)').Matches[0].Groups[1].Value
+.venv\Scripts\pip install "yt-dlp==$v"           # the version the Docker image pins
+Copy-Item .env.example .env
+notepad .env                                     # BOT_OWNER_ID, PAIRING_NUMBER, API keys
+Add-Content .env 'YTDLP_PYTHON=.venv\Scripts\python.exe'
+npm ci --omit=dev
+npm start
+```
+
+Without `YTDLP_PYTHON`, the bot uses `python` from PATH (on Linux and macOS,
+`python3`), which then needs `pip install yt-dlp` itself.
+
+**Keep it running.** pm2 works on Windows too: `npm install -g pm2`, then
+`pm2 start ecosystem.config.cjs`. pm2 cannot send signals on Windows, so
+`ecosystem.config.cjs` has it send a shutdown message instead, and the bot
+closes the session cleanly either way. pm2 has no built-in start-at-boot on
+Windows: a Task Scheduler task "At log on" running `npm start` in the
+folder does the job.
+
+**Stopping.** `Ctrl+C`, `pm2 stop`, and `docker stop` all run the same clean
+shutdown (it finishes within `SHUTDOWN_DEADLINE_MS`, default 4 s). Closing the
+console window also asks the bot to stop, but Windows ends the process a few
+seconds later whatever it is doing; prefer `Ctrl+C`.
 
 ## Linking the number
 

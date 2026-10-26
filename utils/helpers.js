@@ -22,18 +22,19 @@ const tempdir = require('./tempdir');
  * @param {string[]} args - Process arguments
  * @param {Object} [options]
  * @param {number} [options.timeout=120000] - Milliseconds before termination
+ * @param {number} [options.killGraceMs=5000] - Wait after SIGTERM before SIGKILL
  * @returns {Promise<string>} stdout
  */
 function spawnPromise(command, args, options = {}) {
     const timeout = options.timeout || 120000;
     // SIGTERM lets ffmpeg finish writing/removing its partial output; SIGKILL
     // is the escalation for a process that ignores it.
-    const KILL_GRACE_MS = 5000;
+    const KILL_GRACE_MS = options.killGraceMs || 5000;
     const MAX_OUTPUT = 16 * 1024 * 1024;
 
     return new Promise((resolve, reject) => {
         // Validate command to prevent injection
-        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node', 'python3', 'deno'];
+        const allowedCommands = ['yt-dlp', 'ffmpeg', 'ping', 'node', 'python3', 'python', 'deno'];
         if (!allowedCommands.includes(command)) {
             return reject(new Error('Command not allowed'));
         }
@@ -44,13 +45,16 @@ function spawnPromise(command, args, options = {}) {
         let settled = false;
         let killTimer = null;
 
+        // The caller hears about a timeout at once, but the SIGKILL stays
+        // armed until the child has really exited: clearing it on reject
+        // (as this used to) left a child that ignores SIGTERM running.
         const finish = (fn, arg) => {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
-            if (killTimer) clearTimeout(killTimer);
             fn(arg);
         };
+        proc.on('exit', () => { if (killTimer) clearTimeout(killTimer); });
 
         const timer = setTimeout(() => {
             if (settled) return;

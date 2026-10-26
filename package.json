@@ -1,6 +1,6 @@
 {
   "name": "hambot",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "private": true,
   "description": "WhatsApp bot with AI chat, a modular command system, media downloading, and networking tools",
   "main": "index.js",
@@ -14,17 +14,20 @@
   "homepage": "https://github.com/AkilixCode/hambot-wa-bot#readme",
   "scripts": {
     "start": "node index.js",
-    "dev": "NODE_ENV=development node index.js",
+    "dev": "node index.js --dev",
     "test": "node tests/system.test.cjs",
     "test:integration": "node tests/integration.test.cjs",
     "test:security": "node tests/security.test.cjs",
-    "test:all": "npm run test && npm run test:integration && npm run test:security && npm run test:media && npm run test:commands && npm run test:chat && npm run test:network && npm run test:deploy",
-    "test:verbose": "LOG_LEVEL=debug node tests/system.test.cjs",
+    "test:all": "npm run test:runtime && npm run test:deploy",
+    "test:verbose": "node tests/system.test.cjs --verbose",
     "test:media": "node tests/media.test.cjs",
     "test:commands": "node tests/commands.test.cjs",
     "test:deploy": "node tests/deploy.test.cjs",
     "test:network": "node tests/network.test.cjs",
-    "test:chat": "node tests/chat.test.cjs"
+    "test:chat": "node tests/chat.test.cjs",
+    "test:platform": "node tests/platform.test.cjs",
+    "test:runtime": "npm run test && npm run test:integration && npm run test:security && npm run test:media && npm run test:commands && npm run test:chat && npm run test:network && npm run test:platform",
+    "test:pm2": "node tests/pm2-stop.test.cjs"
   },
   "keywords": [
     "whatsapp",
@@ -40,13 +43,15 @@
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "axios": "^1.20.0",
-    "canvas": "^3.2.3",
     "dotenv": "^18.0.8",
     "https-proxy-agent": "^9.0.0",
     "pino": "^10.4.0",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.35.5",
     "socks-proxy-agent": "^10.1.0"
+  },
+  "optionalDependencies": {
+    "canvas": "^3.2.3"
   },
   "engines": {
     "node": ">=22.12.0"

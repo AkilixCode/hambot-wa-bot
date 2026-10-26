@@ -22,6 +22,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Images over 40 megapixels are refused before decoding (decompression bombs).
 - `.sticker` and `.toimg` now wait for a heavy-command slot like the other
   conversions, so a burst of them is queued and bounded.
+## [4.2.0] - 2026-10-26
+
+HamBot runs the same on Linux, macOS and Windows, on a PC, a laptop or a
+server. CI now tests the bot on Windows and macOS, on Node 22 and 24.
+
+### Fixed
+
+- **Started from another folder, the bot lost its settings and its session.**
+  `.env` was read from the folder the bot was started in, in four places
+  (`index.js`, `handler.js`, `config.js`, the chat check), and the session
+  folder was relative to it too. A shortcut, a service manager or
+  `node /path/to/index.js` picked up the wrong `.env`, or none, and started a
+  fresh, unlinked session. Both now come from the bot's own folder;
+  real environment variables still win over `.env`.
+- **Windows:**
+  - yt-dlp was run with `python3`, which Windows does not have. It now uses
+    `python` there (still `python3` elsewhere), and `YTDLP_PYTHON` takes
+    either slash. A venv path written on another OS
+    (`.venv/bin/python` ↔ `.venv\Scripts\python.exe`) is translated.
+  - `.security restart`, `stop` and `logs` could not start pm2, whose launcher
+    on Windows is a `.cmd` file. pm2 now runs as its own JavaScript entry
+    point under the bot's Node, on every OS, never through a shell.
+  - `npm run dev` and `npm run test:verbose` used POSIX-only `VAR=value`
+    syntax; they take `--dev` and `--verbose` flags now.
+  - The pm2 config put `.venv/bin` on `PATH`; on Windows it is `.venv\Scripts`.
+- **`.brat`** looked for its font relative to the working folder.
+- **Shutdown** could exit with a session write half done, and a reconnect
+  timer could start a new connection mid-shutdown. One routine now handles
+  every stop:
+  - `Ctrl+C`, `docker stop` (SIGTERM), a closed terminal or console (SIGHUP),
+    `Ctrl+Break`, and pm2's shutdown message on Windows, where pm2 cannot
+    send signals;
+  - it runs once, cancels reconnects, and waits for session writes;
+  - it ends within `SHUTDOWN_DEADLINE_MS` (default 4 s), and pm2's
+    `kill_timeout` is set 4 s longer, so pm2 never cuts it short.
+- **A timed-out ffmpeg or yt-dlp that ignored SIGTERM kept running.** Both
+  process runners armed the SIGKILL fallback and then cancelled it at once,
+  while reporting the timeout. The SIGKILL now stays armed until the process
+  has really exited.
+- **A checkout on Windows turned line endings into CRLF** (Git's usual
+  `core.autocrlf`), which breaks `deploy.sh` in WSL or Git Bash. A new
+  `.gitattributes` keeps every text file LF on every OS.
+- **`.env.example` set `NODE_OPTIONS=--max-old-space-size=2048`.** Docker
+  passes `.env` to the container, so that replaced the image's 1536 MB heap
+  ceiling with one above the container's 2 GB memory limit. It is no longer
+  set.
+
+### Security
+
+- **Private-address check for user-supplied URLs** (`.video`, `.music`): a
+  DNS answer in IPv4-mapped dotted form (`::ffff:169.254.169.254`), NAT64
+  (`64:ff9b::/96`) or 6to4 slipped past it. It now uses Node's `net.BlockList`
+  with one documented table of the IANA special-purpose ranges. Addresses the
+  owner configures (AI backends on `localhost`, Docker, Tailscale or the LAN;
+  the egress proxy) are untouched.
+- `PM2_PROCESS_NAME` must be a plain name (letters, digits, `.` `-` `_`, not
+  starting with `-`). It ends up in pm2's arguments and in log file paths.
+- **Agent files:** folder and file are resolved with the OS's own realpath and
+  compared case-exactly on every OS, so a sibling folder that differs only in
+  letter case is never admitted. The docs now state what the checks cover on
+  each OS.
+
+### Changed
+
+- **`canvas` is an optional dependency.** Where it has no prebuilt binary
+  (Windows on ARM, musl Linux, some boards), the install no longer fails:
+  `.menu` is sent as text and `.brat` says it is unavailable.
+- **"Files from the agent"** docs work for any agent and any setup. They spell
+  out that HamBot must be able to read the folder: a shared volume, a shared
+  folder, or a sync from the agent's machine. A Tailscale connection alone
+  shares answers, not files.
+- **Docs:** a platform table (native Windows, WSL2, macOS, Linux; what CI
+  tests), and setting HamBot up on Windows without WSL.
+
+### Added
+
+- **Settings:**
+  - `HAMBOT_MAX_HEAP_MB`: heap ceiling for pm2, so it fits a small machine;
+  - `SHUTDOWN_DEADLINE_MS`;
+  - `PM2_BIN`;
+  - `HAMBOT_ENV_FILE`.
+- **Tests:**
+  - `tests/platform.test.cjs`;
+  - `tests/pm2-stop.test.cjs`, which runs real pm2 in CI on all three OSes;
+  - the yt-dlp fake now runs through the machine's real Python on every OS.
 
 ## [4.1.0] - 2026-10-21
 
