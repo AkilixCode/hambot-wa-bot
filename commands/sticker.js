@@ -6,6 +6,7 @@
 const CommandBase = require('./base');
 const logger = require('../utils/logger');
 const { downloadMedia } = require('../utils/helpers');
+const incomingMedia = require('../utils/incoming-media');
 
 class StickerCommand extends CommandBase {
     constructor() {
@@ -16,7 +17,9 @@ class StickerCommand extends CommandBase {
             usage: '.sticker (kirim dengan gambar atau reply gambar)',
             category: 'tools',
             cooldown: 3000,
-            isHeavy: false,
+            // Download + decode + encode: it waits for a heavy slot like
+            // the other conversions, so a burst cannot pile up unbounded.
+            isHeavy: true,
             requiresMedia: true
         });
     }
@@ -46,7 +49,8 @@ class StickerCommand extends CommandBase {
             logger.info('Sticker: processing image...');
             // Required here, not at load: sharp is ~22 MB an idle bot need not hold.
             const sharp = require('sharp');
-            const stickerBuffer = await sharp(buffer)
+            // Pixel ceiling: a tiny file cannot unpack into gigabytes.
+            const stickerBuffer = await sharp(buffer, incomingMedia.SHARP_INPUT)
                 .resize(512, 512, {
                     fit: 'contain',
                     background: { r: 0, g: 0, b: 0, alpha: 0 }
@@ -61,7 +65,9 @@ class StickerCommand extends CommandBase {
 
         } catch (error) {
             this.logError(error, context);
-            await this.replyError(sock, from, msg, 'Gagal membuat stiker. Pastikan gambarnya valid.');
+            const refused = incomingMedia.describe(error);
+            await this.replyError(sock, from, msg, refused ? refused.reason : 'Gagal membuat stiker. Pastikan gambarnya valid.',
+                refused ? { title: refused.title } : undefined);
         }
     }
 }

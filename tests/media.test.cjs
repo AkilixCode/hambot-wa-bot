@@ -600,6 +600,182 @@ async function main() {
         }
     });
 
+    // ── Incoming attachments (.sticker, .toimg) ─────────────────────
+    console.log('\n📎 Incoming attachments...\n');
+
+    const incoming = require('../utils/incoming-media');
+    const crypto = require('crypto');
+    const http = require('http');
+    const { getMediaKeys } = await import('@whiskeysockets/baileys');
+
+    /** Encrypt like WhatsApp: AES-256-CBC, then 10 bytes of HMAC-SHA256. */
+    async function waEncrypt(plain, type) {
+        const mediaKey = crypto.randomBytes(32);
+        const { iv, cipherKey, macKey } = await getMediaKeys(mediaKey, type);
+        const cipher = crypto.createCipheriv('aes-256-cbc', cipherKey, iv);
+        const body = Buffer.concat([cipher.update(plain), cipher.final()]);
+        const mac = crypto.createHmac('sha256', macKey).update(iv).update(body).digest().subarray(0, 10);
+        return { mediaKey, file: Buffer.concat([body, mac]) };
+    }
+
+    /** A server that counts every connection and request it gets. */
+    async function countingServer(handler) {
+        const srv = { connections: 0, requests: [], bytesSent: 0 };
+        srv.server = http.createServer((req, res) => { srv.requests.push(req.url); handler(req, res, srv); });
+        srv.server.on('connection', () => { srv.connections++; });
+        await new Promise(resolve => srv.server.listen(0, '127.0.0.1', resolve));
+        srv.port = srv.server.address().port;
+        srv.url = `http://127.0.0.1:${srv.port}`;
+        srv.close = () => new Promise(resolve => { srv.server.closeAllConnections(); srv.server.close(resolve); });
+        return srv;
+    }
+
+    const plain = Buffer.from('a real attachment '.repeat(50));
+    const enc = await waEncrypt(plain, 'image');
+    const canary = await countingServer((req, res) => res.end('should never be asked'));
+    const cdn = await countingServer((req, res, srv) => {
+        if (req.url === '/ok') return res.end(enc.file);
+        if (req.url === '/hop') { res.writeHead(302, { Location: '/ok' }); return res.end(); }
+        if (req.url === '/out') { res.writeHead(302, { Location: `${canary.url}/stolen` }); return res.end(); }
+        if (req.url === '/loop') { res.writeHead(302, { Location: '/loop' }); return res.end(); }
+        if (req.url === '/tampered') { const t = Buffer.from(enc.file); t[3] ^= 0xff; return res.end(t); }
+        if (req.url === '/hang') return; // never answers
+        if (req.url === '/endless') {
+            // An endless body; stops only when the client goes away.
+            const chunk = Buffer.alloc(64 * 1024, 7);
+            const push = () => {
+                while (!res.destroyed && res.write(chunk)) srv.bytesSent += chunk.length;
+                if (!res.destroyed) res.once('drain', push);
+            };
+            res.on('close', () => {});
+            return push();
+        }
+        res.statusCode = 404;
+        res.end();
+    });
+    // The test CDN stands in for *.whatsapp.net; nothing else is allowed.
+    const testCdn = (url) => url.protocol === 'http:' && url.hostname === '127.0.0.1' && url.port === String(cdn.port);
+    const msgAt = (p, extra = {}) => ({ url: `${cdn.url}${p}`, mediaKey: enc.mediaKey, ...extra });
+
+    try {
+        await test('attachments: the download URL never takes its host from the message', () => {
+            const url = (m) => incoming.downloadUrl(m).href;
+            const refused = (m) => assert.throws(() => incoming.downloadUrl(m), e => e.reason === 'host', JSON.stringify(m));
+
+            // directPath: host from the message only if it is a WhatsApp media host.
+            assert.strictEqual(url({ url: 'http://127.0.0.1:8080/x', directPath: '/v/t62/abc?ccb=1' }), 'https://mmg.whatsapp.net/v/t62/abc?ccb=1');
+            assert.strictEqual(url({ url: 'https://169.254.169.254/x', directPath: '/v/a' }), 'https://mmg.whatsapp.net/v/a');
+            assert.strictEqual(url({ url: 'https://media-sin6-1.cdn.whatsapp.net/v/x', directPath: '/v/y' }), 'https://media-sin6-1.cdn.whatsapp.net/v/y');
+            assert.strictEqual(url({ directPath: '/v/z' }), 'https://mmg.whatsapp.net/v/z');
+            refused({ directPath: '//evil.example/x' });
+            refused({ directPath: 'http://127.0.0.1/x' });
+
+            // No directPath: the URL itself must be WhatsApp's CDN, over https.
+            assert.strictEqual(url({ url: 'https://mmg.whatsapp.net/d/f/abc.enc' }), 'https://mmg.whatsapp.net/d/f/abc.enc');
+            for (const bad of ['http://127.0.0.1:8080/x', 'http://localhost/x', 'https://169.254.169.254/latest/meta-data',
+                'http://mmg.whatsapp.net/x', 'https://whatsapp.net.evil.example/x', 'https://mmg.whatsapp.net:8443/x',
+                'https://user:pass@mmg.whatsapp.net/x', 'file:///etc/passwd', 'not a url']) {
+                refused({ url: bad });
+            }
+        });
+
+        await test('attachments: a message pointing at a local server is refused without any connection', async () => {
+            // The real rules. The fetch only records where it was sent, so
+            // the test needs no internet.
+            const asked = [];
+            const recordingFetch = async (url) => { asked.push(url); throw new Error('offline test'); };
+
+            const direct = await incoming.download(msgAt('/ok'), 'image', { fetch: recordingFetch }).then(() => null, e => e);
+            assert.strictEqual(direct && direct.reason, 'host', 'a bare local URL is refused outright');
+            assert.deepStrictEqual(asked, [], 'and nothing is fetched');
+
+            // With a directPath, the message's host is dropped for WhatsApp's.
+            await incoming.download(msgAt('/ok', { directPath: '/v/t62/x' }), 'image', { fetch: recordingFetch }).catch(() => {});
+            assert.deepStrictEqual(asked, ['https://mmg.whatsapp.net/v/t62/x']);
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+            assert.strictEqual(cdn.connections, 0, 'the local server was never contacted');
+        });
+
+        await test('attachments: a WhatsApp-style file downloads, MAC-checked and decrypted', async () => {
+            const out = await incoming.download(msgAt('/ok'), 'image', { allowUrl: testCdn });
+            assert.ok(out.equals(plain));
+            const hopped = await incoming.download(msgAt('/hop'), 'image', { allowUrl: testCdn });
+            assert.ok(hopped.equals(plain), 'a redirect within the CDN is followed');
+        });
+
+        await test('attachments: redirects out of the CDN, and redirect loops, are refused', async () => {
+            const out = await incoming.download(msgAt('/out'), 'image', { allowUrl: testCdn }).then(() => null, e => e);
+            assert.strictEqual(out && out.reason, 'host');
+            assert.strictEqual(canary.connections, 0, 'the redirect target was never contacted');
+            const loop = await incoming.download(msgAt('/loop'), 'image', { allowUrl: testCdn }).then(() => null, e => e);
+            assert.strictEqual(loop && loop.reason, 'redirects');
+        });
+
+        await test('attachments: a body over the limit is cut off while streaming, not buffered', async () => {
+            const before = cdn.bytesSent;
+            const error = await incoming.download(msgAt('/endless'), 'image', { allowUrl: testCdn, maxBytes: 1024, timeoutMs: 5000 }).then(() => null, e => e);
+            assert.strictEqual(error && error.reason, 'too_large');
+            await new Promise(resolve => setTimeout(resolve, 200));
+            const sent = cdn.bytesSent - before;
+            assert.ok(sent < 8 * 1024 * 1024, `the server kept sending: ${sent} bytes`);
+        });
+
+        await test('attachments: a declared size over the limit is refused before connecting', async () => {
+            const before = cdn.connections;
+            const message = msgAt('/ok', { fileLength: { toNumber: () => 2048 } }); // a protobuf Long
+            const error = await incoming.download(message, 'image', { allowUrl: testCdn, maxBytes: 1024 }).then(() => null, e => e);
+            assert.strictEqual(error && error.reason, 'too_large');
+            assert.strictEqual(cdn.connections, before);
+            // Exactly at the limit is fine.
+            const ok = await incoming.download(msgAt('/ok', { fileLength: plain.length }), 'image', { allowUrl: testCdn, maxBytes: plain.length });
+            assert.ok(ok.equals(plain));
+        });
+
+        await test('attachments: a tampered file fails its MAC; a silent server times out', async () => {
+            const tampered = await incoming.download(msgAt('/tampered'), 'image', { allowUrl: testCdn }).then(() => null, e => e);
+            assert.strictEqual(tampered && tampered.reason, 'corrupt');
+            const started = Date.now();
+            const hang = await incoming.download(msgAt('/hang'), 'image', { allowUrl: testCdn, timeoutMs: 300 }).then(() => null, e => e);
+            assert.strictEqual(hang && hang.reason, 'timeout');
+            assert.ok(Date.now() - started < 3000);
+        });
+
+        await test('attachments: the user gets a plain reason; .sticker and .toimg wait for a heavy slot', () => {
+            assert.strictEqual(incoming.describe(new incoming.IncomingMediaError('too_large')).title, 'File Kegedean');
+            assert.strictEqual(incoming.describe(new incoming.IncomingMediaError('host')).title, 'File Tidak Valid');
+            assert.strictEqual(incoming.describe(new Error('other')), null);
+            assert.strictEqual(new (require('../commands/sticker'))().isHeavy, true);
+            assert.strictEqual(new (require('../commands/toimg'))().isHeavy, true);
+        });
+
+        await test('attachments: an image that unpacks past the pixel ceiling is refused before decoding', async () => {
+            // A PNG header claiming 10000x10000 (100 MP) with almost no data:
+            // the classic decompression bomb shape.
+            const zlib = require('zlib');
+            const crc = (buf) => { let c = ~0; for (const b of buf) { c ^= b; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return ~c >>> 0; };
+            const chunk = (type, data) => {
+                const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+                const td = Buffer.concat([Buffer.from(type), data]);
+                const c = Buffer.alloc(4); c.writeUInt32BE(crc(td));
+                return Buffer.concat([len, td, c]);
+            };
+            const ihdr = Buffer.alloc(13);
+            ihdr.writeUInt32BE(10000, 0); ihdr.writeUInt32BE(10000, 4);
+            ihdr[8] = 8; ihdr[9] = 2; // 8-bit RGB
+            const bomb = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', ihdr),
+                chunk('IDAT', zlib.deflateSync(Buffer.alloc(1024))), chunk('IEND', Buffer.alloc(0))]);
+            const sharp = require('sharp');
+            const error = await sharp(bomb, incoming.SHARP_INPUT).webp().toBuffer().then(() => null, e => e);
+            assert.ok(error && /pixel limit/i.test(error.message), String(error && error.message));
+            const toimgError = await new (require('../commands/toimg'))().convert(bomb).then(() => null, e => e);
+            assert.ok(toimgError && /pixel limit/i.test(toimgError.message), '.toimg uses the ceiling too');
+        });
+    } finally {
+        await cdn.close();
+        await canary.close();
+    }
+
     await test('Playwright is no longer a dependency', () => {
         const pkg = require('../package.json');
         assert.ok(!pkg.dependencies.playwright, 'playwright must be removed');

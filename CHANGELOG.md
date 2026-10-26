@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **`.sticker` and `.toimg` could be made to fetch any address.** A WhatsApp
+  message carries its own download location, and Baileys' downloader trusted
+  it, host included, so a crafted attachment (sent from a modified client)
+  made the bot connect to localhost, the LAN or cloud metadata. The bot also
+  read the response without a size limit. Attachments now come only from
+  WhatsApp's media CDN (`https`, `*.whatsapp.net`); redirects are checked hop
+  by hop; the declared size, `Content-Length` and the bytes read are each
+  capped at `MAX_MEDIA_SIZE`, cancelling the transfer as soon as it is over;
+  the file's MAC is verified before it is decrypted
+  ([details](docs/security-architecture.md#incoming-attachments)).
+- Images over 40 megapixels are refused before decoding (decompression bombs).
+- `.sticker` and `.toimg` now wait for a heavy-command slot like the other
+  conversions, so a burst of them is queued and bounded.
 ## [4.2.0] - 2026-10-26
 
 HamBot runs the same on Linux, macOS and Windows, on a PC, a laptop or a

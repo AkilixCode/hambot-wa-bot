@@ -7,6 +7,7 @@ const CommandBase = require('./base');
 const logger = require('../utils/logger');
 const ui = require('../utils/ui');
 const { downloadMedia } = require('../utils/helpers');
+const incomingMedia = require('../utils/incoming-media');
 
 class ToImgCommand extends CommandBase {
     constructor() {
@@ -16,7 +17,10 @@ class ToImgCommand extends CommandBase {
             description: 'Ubah stiker menjadi gambar',
             usage: '.toimg (reply stiker)',
             category: 'tools',
-            cooldown: 3000
+            cooldown: 3000,
+            // Download + decode + encode: it waits for a heavy slot like
+            // the other conversions, so a burst cannot pile up unbounded.
+            isHeavy: true
         });
     }
 
@@ -56,7 +60,9 @@ class ToImgCommand extends CommandBase {
             await this.react(sock, msg, '✅');
         } catch (error) {
             this.logError(error, context);
-            await this.replyError(sock, from, msg, 'Gagal mengubah stiker jadi gambar.', {
+            const refused = incomingMedia.describe(error);
+            await this.replyError(sock, from, msg, refused ? refused.reason : 'Gagal mengubah stiker jadi gambar.', {
+                ...(refused ? { title: refused.title } : {}),
                 hint: ['Coba stiker yang lain']
             });
         }
@@ -76,7 +82,8 @@ class ToImgCommand extends CommandBase {
     async convert(webp) {
         // Required here, not at load: sharp is ~22 MB an idle bot need not hold.
         const sharp = require('sharp');
-        return sharp(webp, { animated: false }).png().toBuffer();
+        // Pixel ceiling: a tiny file cannot unpack into gigabytes.
+        return sharp(webp, { animated: false, ...incomingMedia.SHARP_INPUT }).png().toBuffer();
     }
 }
 
