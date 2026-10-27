@@ -50,6 +50,26 @@ jobs:
       - run: npm install -g pm2@6
       - run: npm run test:pm2
 
+  egress-real:
+    # The egress guard against the real tools: yt-dlp (the version the Docker
+    # image pins) and ffmpeg, downloading from local servers and refused from
+    # canaries that must never be contacted. See tests/egress-real.test.cjs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      # The runner's Python is "externally managed" (PEP 668); a user install
+      # is fine on a throwaway runner, as in the Dockerfile.
+      - run: python3 -m pip install --user --break-system-packages "yt-dlp==$(sed -n 's/^ARG YTDLP_VERSION=//p' Dockerfile)"
+      - run: npm run test:egress-real
+        env:
+          HAMBOT_EGRESS_REAL: '1'
+
   deploy-macos:
     # deploy.sh and the installer must also work with macOS's BSD tools.
     # The suite uses fakes on a sealed PATH, so no Docker or pm2 is needed.

@@ -97,6 +97,16 @@ function describeError(error, kind = 'media') {
         };
     }
 
+    // The egress guard refused where the media led: a redirect, a playlist
+    // or a DNS answer pointing into a private network.
+    if (msg.includes('egress blocked')) {
+        return {
+            title: 'URL Ditolak',
+            reason: 'Tautan ini mengarah ke jaringan internal, jadi tidak diunduh.',
+            hint: ['Pakai tautan langsung dari situs aslinya']
+        };
+    }
+
     if (msg.includes('sign in to confirm') || msg.includes('not a bot') ||
         msg.includes('the page needs to be reloaded')) {
         return {

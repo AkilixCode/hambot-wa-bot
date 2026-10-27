@@ -556,33 +556,87 @@ async function main() {
         delete process.env.YTDLP_RETRIES;
     });
 
-    await test('yt-dlp skips a proxy the HTTP layer already found dead, and never logs its args', async () => {
+    await test('yt-dlp: every route behind the egress guard; a dead proxy falls back direct; no proxy password in its args', async () => {
+        const net = require('net');
+        const egressGuard = require('../utils/egress-guard');
         const runLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hambot-ytdlp-runs-')), 'runs.log');
+
+        // The fake yt-dlp does what the real one does with --proxy: a CONNECT
+        // through it, reporting the proxy's status line the way yt-dlp does.
         const fakeYtdlp = require('./fixtures/fake-ytdlp.cjs').install(`
-require('fs').appendFileSync(${JSON.stringify(runLog)}, JSON.stringify(args) + '\\n');
-if (args.includes('--proxy')) { console.error('ERROR: Unable to connect to proxy'); process.exit(1); }
-console.log(JSON.stringify({ title: 'ok' }));
+const fs = require('fs');
+const net = require('net');
+fs.appendFileSync(${JSON.stringify(runLog)}, JSON.stringify(args) + '\\n');
+const at = args.indexOf('--proxy');
+if (at === -1) { console.log(JSON.stringify({ title: 'ok' })); process.exit(0); }
+const p = new URL(args[at + 1]);
+const auth = Buffer.from(decodeURIComponent(p.username) + ':' + decodeURIComponent(p.password)).toString('base64');
+const s = net.connect(Number(p.port), p.hostname, () => {
+    s.write('CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\nProxy-Authorization: Basic ' + auth + '\\r\\n\\r\\n');
+});
+let buf = '';
+s.on('data', d => {
+    buf += d;
+    if (!buf.includes('\\r\\n\\r\\n')) return;
+    const status = buf.split('\\r\\n')[0].replace(/^HTTP\\/1\\.1 /, '');
+    s.destroy();
+    if (status.startsWith('200')) { console.log(JSON.stringify({ title: 'ok' })); process.exit(0); }
+    console.error("ERROR: [generic] Unable to download webpage: ('Unable to connect to proxy', OSError('Tunnel connection failed: " + status + "'))");
+    process.exit(1);
+});
+s.on('error', e => { console.error('ERROR: ' + e.message); process.exit(1); });
 `);
         const runs = () => fs.readFileSync(runLog, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+        const proxyOf = (run) => run[run.indexOf('--proxy') + 1];
+
+        // A guard that resolves example.com to a public address and "dials"
+        // a local server instead of the internet.
+        const sink = net.createServer(sock => sock.on('error', () => {}));
+        await new Promise(resolve => sink.listen(0, '127.0.0.1', resolve));
+        const dialled = [];
+        await ytdlp.useGuard(egressGuard.create({
+            lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+            connect: (o) => { dialled.push(`${o.host}:${o.port}`); return net.connect(sink.address().port, '127.0.0.1'); }
+        }));
 
         try {
-            setProxy('http://hamuser:hunter2pass@127.0.0.1:9');
+            setProxy('http://hamuser:hunter2pass@127.0.0.1:9'); // nothing listens on 9
 
-            // Proxy healthy as far as anyone knows: proxied first, then direct.
+            // Proxy healthy as far as anyone knows: proxied first (the guard
+            // reports the dead proxy), then direct, both through the guard.
             const lines = await captureLogs(() => ytdlp.getInfo('https://example.com/v'));
             assert.strictEqual(runs().length, 2);
-            assert.ok(runs()[0].includes('--proxy') && !runs()[1].includes('--proxy'));
+            const [viaProxy, viaDirect] = runs().map(proxyOf);
+            assert.match(viaProxy, /^http:\/\/hambot:[^@]+@127\.0\.0\.1:\d+$/, 'yt-dlp\'s proxy is the guard');
+            assert.match(viaDirect, /^http:\/\/hambot:[^@]+@127\.0\.0\.1:\d+$/, 'the direct fallback is behind the guard too');
+            assert.notStrictEqual(viaProxy, viaDirect, 'one guard, a separate token per route');
+            assert.ok(runs().every(r => r.includes('--downloader') && r[r.indexOf('--downloader') + 1] === 'native'));
+            assert.deepStrictEqual(dialled, ['93.184.216.34:443'], 'the direct run dialled the checked address');
             assert.ok(lines.some(l => l.startsWith('🎬') && l.includes('✗ proxy (retrying direct)')), lines.join('\n'));
-            assert.ok(!lines.join('\n').includes('hunter2pass'), 'proxy password leaked');
+            assert.ok(!lines.join('\n').includes('hunter2pass'), 'proxy password leaked into the log');
+            assert.ok(!JSON.stringify(runs()).includes('hunter2pass'), 'the owner\'s proxy password no longer appears in yt-dlp\'s arguments');
 
-            // Breaker open: straight to direct, one run.
+            // Breaker open: straight to direct, one run, same guarded route.
             for (let i = 0; i < providers.FAILURE_THRESHOLD; i++) {
                 providers.recordFailure(httpClient.PROXY_BREAKER_ID, new Error('down'));
             }
             await captureLogs(() => ytdlp.getInfo('https://example.com/v'));
             assert.strictEqual(runs().length, 3);
-            assert.ok(!runs()[2].includes('--proxy'));
+            assert.strictEqual(proxyOf(runs()[2]), viaDirect);
+
+            // A destination the guard refuses is not a proxy failure: no retry.
+            await ytdlp.useGuard(egressGuard.create({ lookup: async () => [{ address: '10.0.0.5', family: 4 }] }));
+            setProxy(null);
+            const before = runs().length;
+            const error = await captureLogs(() => ytdlp.getInfo('https://example.com/v')).then(() => null, e => e);
+            assert.ok(error, 'refused');
+            assert.strictEqual(ytdlp.failureReason(error), 'blocked');
+            assert.strictEqual(ytdlp.isProxyFailure(error), false);
+            assert.strictEqual(runs().length, before + 1, 'not retried');
         } finally {
+            setProxy(null);
+            await ytdlp.useGuard(null);
+            sink.close();
             fakeYtdlp.restore();
             fs.rmSync(path.dirname(runLog), { recursive: true, force: true });
         }
