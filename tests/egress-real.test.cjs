@@ -45,8 +45,13 @@ const { spawnSync } = require('child_process');
 const PUBLIC = '93.184.216.34';
 let passed = 0;
 let failed = 0;
+// Canary counts at the start of the current case: each case is judged on
+// what it caused, so one leak does not fail every case after it.
+let canaryRef = null;
+let baseline = null;
 
 async function test(name, fn) {
+    if (canaryRef) baseline = { ...canaryRef };
     try {
         await fn();
         passed++;
@@ -106,6 +111,7 @@ async function main() {
 
     // ── Canaries ──
     const canary = { http: 0, raw: 0 };
+    canaryRef = canary;
     const canaryHttp = http.createServer((req, res) => { res.end('stolen'); });
     canaryHttp.on('connection', () => { canary.http++; });
     const B = await listen(canaryHttp);
@@ -200,7 +206,8 @@ async function main() {
         return r.stderr;
     };
     const assertCanaryUntouched = (what) => {
-        assert.deepStrictEqual(canary, { http: 0, raw: 0 }, `${what}: a canary was contacted`);
+        const during = { http: canary.http - baseline.http, raw: canary.raw - baseline.raw };
+        assert.deepStrictEqual(during, { http: 0, raw: 0 }, `${what}: a canary was contacted`);
     };
 
     try {

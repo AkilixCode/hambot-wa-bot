@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - yt-dlp's process arguments no longer contain your proxy's username and
   password, only the guard's local address and a per-process token.
 - `YTDLP_EGRESS_GUARD=false` switches the guard off, for diagnosis only.
+- With a proxy, yt-dlp's names are now resolved on the bot's machine and the
+  proxy gets only the IP, so a CDN picks an edge near the server rather than
+  near the proxy's exit.
 
 ### Fixed
 

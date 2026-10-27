@@ -90,7 +90,12 @@ into both `music.js` and `video.js`.
   - yt-dlp's own downloader does every transfer;
   - formats that need rtmp/rtsp are skipped;
   - `HTTP(S)_PROXY`/`NO_PROXY` from the environment are no longer used (set
-    `PROXY_*` in `.env` instead, as for the rest of the bot).
+    `PROXY_*` in `.env` instead, as for the rest of the bot);
+  - names are resolved on the bot's machine even with a proxy (the proxy
+    gets the IP), so a CDN picks an edge near the server, not near the
+    proxy's exit.
+- **Log noise is capped:** a refusal is logged once per destination per
+  minute; the next line says how many more there were.
 
 ### Egress toggle — `utils/egress.js`
 

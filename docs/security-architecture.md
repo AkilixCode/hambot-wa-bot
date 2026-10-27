@@ -108,6 +108,19 @@ Three more settings close the routes around it:
 - **The owner's proxy,** for what it does with a public IP the bot approved.
   It must route that IP to the internet; the bot cannot see past it.
 
+**The cost: names are resolved on the bot's machine.** Even with a proxy, the
+bot resolves names itself and hands the proxy only the IP. Two effects:
+
+- **CDN edges:** a CDN that picks an edge server by DNS picks one near the
+  server, not near the proxy's exit. Downloads still work, sometimes more
+  slowly.
+- **Proxy-only names:** a name that only the proxy's network can resolve
+  (split-horizon DNS) does not resolve at all.
+
+Handing the proxy a name instead would let its network decide where the name
+points, which is what the guard exists to prevent. If a site needs it,
+`YTDLP_EGRESS_GUARD=false` is the escape hatch for diagnosis.
+
 `YTDLP_EGRESS_GUARD=false` turns all of this off, for diagnosing a site that
 breaks. The bot logs a warning when it is off. Do not leave it off.
 

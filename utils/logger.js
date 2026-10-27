@@ -442,7 +442,8 @@ class Logger {
 
             case 'egress':
                 // Host and port only: never the path or query of what was asked.
-                return `egress guard: ${e.host}:${e.port} refused (${e.reason})`;
+                return `egress guard: ${e.host}:${e.port} refused (${e.reason})` +
+                    (e.suppressed ? ` ×${e.suppressed} more since the last line` : '');
 
             default:
                 return JSON.stringify(e);

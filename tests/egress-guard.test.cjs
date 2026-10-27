@@ -369,6 +369,83 @@ async function main() {
         assert.match(video[1], /^best\[protocol~=/);
     });
 
+    await test('a client that leaves while the guard is still dialling leaves no connection open', async () => {
+        const target = { open: 0 };
+        const slowServer = net.createServer(s => {
+            target.open++;
+            s.on('close', () => { target.open--; });
+            s.on('error', () => {});
+        });
+        servers.push(slowServer);
+        const port = await new Promise(resolve => slowServer.listen(0, '127.0.0.1', () => resolve(slowServer.address().port)));
+        const guard = egressGuard.create({
+            lookup: publicLookup,
+            // Dials, but only after the client has already gone.
+            connect: () => {
+                const s = new net.Socket();
+                setTimeout(() => s.connect(port, '127.0.0.1'), 300);
+                return s;
+            }
+        });
+        const p = new URL(await guard.urlFor(null));
+        const auth = Buffer.from(`${p.username}:${p.password}`).toString('base64');
+        const client = net.connect(Number(p.port), '127.0.0.1', () => {
+            client.write(`CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nProxy-Authorization: Basic ${auth}\r\n\r\n`);
+            setTimeout(() => client.destroy(), 50);
+        });
+        client.on('error', () => {});
+        await new Promise(resolve => setTimeout(resolve, 900));
+        assert.strictEqual(target.open, 0, 'the dialled socket must be closed once nobody is on the other end');
+        await guard.close();
+    });
+
+    await test('a plain-HTTP download the client abandons stops at the origin too', async () => {
+        const origin = { closedAt: null };
+        const endless = http.createServer((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'video/mp4' });
+            const chunk = Buffer.alloc(64 * 1024);
+            const push = () => { while (!res.destroyed && res.write(chunk)); if (!res.destroyed) res.once('drain', push); };
+            res.socket.on('close', () => { origin.closedAt = Date.now(); });
+            push();
+        });
+        servers.push(endless);
+        const port = await new Promise(resolve => endless.listen(0, '127.0.0.1', () => resolve(endless.address().port)));
+        const guard = egressGuard.create({ lookup: publicLookup, connect: () => net.connect(port, '127.0.0.1') });
+        const p = new URL(await guard.urlFor(null));
+        let abortedAt = null;
+        await new Promise((resolve) => {
+            const req = http.request({
+                host: '127.0.0.1', port: Number(p.port), path: 'http://media.example.com/big.mp4',
+                headers: { Host: 'media.example.com', 'Proxy-Authorization': `Basic ${Buffer.from(`${p.username}:${p.password}`).toString('base64')}` }
+            }, res => {
+                res.once('data', () => { abortedAt = Date.now(); req.destroy(); resolve(); });
+            });
+            req.on('error', () => {});
+            req.end();
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        assert.ok(origin.closedAt && origin.closedAt - abortedAt < 1000, 'the guard must stop reading from the origin');
+        await guard.close();
+    });
+
+    await test('refusals are logged once per destination per minute, then with a count', async () => {
+        const lines = [];
+        let now = 1_000_000;
+        const guard = egressGuard.create({ log: (e) => lines.push(e), now: () => now });
+        const url = await guard.urlFor(null);
+        for (let i = 0; i < 50; i++) {
+            assert.match((await connectThrough(url, '127.0.0.1:443')).status, / 403 /);
+        }
+        assert.strictEqual(lines.length, 1, `one line for 50 refusals, got ${lines.length}`);
+        now += 61 * 1000;
+        await connectThrough(url, '127.0.0.1:443');
+        assert.strictEqual(lines.length, 2);
+        assert.strictEqual(lines[1].suppressed, 49, 'the next line says how many were not logged');
+        await connectThrough(url, '10.0.0.1:443');
+        assert.strictEqual(lines.length, 3, 'another destination is logged at once');
+        await guard.close();
+    });
+
     await test('one token per route, reused; a closed guard frees its port', async () => {
         const guard = egressGuard.create({ lookup: publicLookup });
         const direct = await guard.urlFor(null);

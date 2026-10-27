@@ -42,6 +42,7 @@ const logger = require('./logger');
 const ALLOWED_PORTS = new Set([80, 443]);
 const CONNECT_TIMEOUT_MS = 15 * 1000;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const LOG_WINDOW_MS = 60 * 1000;
 
 /** A refusal, with the status line the client sees. */
 class EgressRefused extends Error {
@@ -97,10 +98,16 @@ function ownerEndpoints(env = process.env) {
  * @param {Function} [opts.lookup] - dns.promises.lookup stand-in (tests)
  * @param {Function} [opts.connect] - net.connect stand-in for direct dials (tests)
  * @param {boolean|Function} [opts.preferIPv4=true]
+ * @param {Function} [opts.log=logger.net] - Where refusals are reported (tests)
+ * @param {Function} [opts.now=Date.now] - Clock for the log rate limit (tests)
  */
 function create(opts = {}) {
     const lookup = opts.lookup || ((host) => dns.lookup(host, { all: true, verbatim: true }));
     const dialDirect = opts.connect || ((o) => net.connect(o));
+    const log = opts.log || ((event) => logger.net(event));
+    const now = opts.now || Date.now;
+    // destination + reason → { at, suppressed }, for report()
+    const logged = new Map();
     const preferIPv4 = typeof opts.preferIPv4 === 'function' ? opts.preferIPv4 : () => opts.preferIPv4 !== false;
     const extraAllow = new Set((opts.allow || []).map(entry => {
         const hp = splitHostPort(entry);
@@ -237,8 +244,22 @@ function create(opts = {}) {
         }
     }
 
+    /**
+     * Log a refusal: once per destination per minute. A hostile playlist can
+     * list thousands of internal segments, and yt-dlp tries each one; the
+     * next line after a quiet minute says how many were not logged.
+     */
     function report(host, port, error) {
-        logger.net({ type: 'egress', host, port, reason: error.message, status: error.status, problem: true });
+        const id = `${key(host, port)} ${error.message}`;
+        const seen = logged.get(id);
+        const at = now();
+        if (seen && at - seen.at < LOG_WINDOW_MS) {
+            seen.suppressed++;
+            return;
+        }
+        logged.set(id, { at, suppressed: 0 });
+        if (logged.size > 500) logged.delete(logged.keys().next().value);
+        log({ type: 'egress', host, port, reason: error.message, status: error.status, suppressed: seen ? seen.suppressed : 0, problem: true });
     }
 
     function pipeBoth(a, b) {
@@ -266,6 +287,11 @@ function create(opts = {}) {
         try {
             const target = await decide(hp.host, hp.port);
             const socket = await dial(target, upstream);
+            // yt-dlp left while we resolved and dialled: nobody to tunnel for.
+            if (clientSocket.destroyed) {
+                socket.destroy();
+                return;
+            }
             clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
             if (head && head.length) socket.write(head);
             pipeBoth(clientSocket, socket);
@@ -321,6 +347,15 @@ function create(opts = {}) {
                 r.pipe(res);
             });
             out.on('error', () => res.destroy());
+            // yt-dlp gave up (--max-filesize, its timeout, a cancel): stop
+            // reading from the origin too, instead of draining the rest of
+            // the file into nowhere.
+            res.on('close', () => {
+                if (!res.writableFinished) {
+                    out.destroy();
+                    socket.destroy();
+                }
+            });
             req.pipe(out);
         } catch (error) {
             const refused = error instanceof EgressRefused ? error : upstreamFailed(error.message);
