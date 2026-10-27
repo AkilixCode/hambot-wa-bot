@@ -41,7 +41,7 @@
   "author": "Ilham",
   "license": "ISC",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.137.0",
+    "@anthropic-ai/sdk": "^1.2.0",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "axios": "^1.20.0",
