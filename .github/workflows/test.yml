@@ -55,6 +55,7 @@ jobs:
     # image pins) and ffmpeg, downloading from local servers and refused from
     # canaries that must never be contacted. See tests/egress-real.test.cjs.
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -62,7 +63,10 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      # Only ffmpeg itself: the recommended extras are hundreds of packages
+      # and made this step hang for a quarter of an hour.
+      - run: sudo apt-get update -q -o Acquire::Retries=3 && sudo apt-get install -y -q --no-install-recommends -o Acquire::Retries=3 ffmpeg
+        timeout-minutes: 10
       # The runner's Python is "externally managed" (PEP 668); a user install
       # is fine on a throwaway runner, as in the Dockerfile.
       - run: python3 -m pip install --user --break-system-packages "yt-dlp==$(sed -n 's/^ARG YTDLP_VERSION=//p' Dockerfile)"
