@@ -79,6 +79,23 @@ into both `music.js` and `video.js`.
 - **Player clients come from `YTDLP_PLAYER_CLIENTS`**, not from source.
 - **PO token support** via `POT_PROVIDER_URL`.
 - Invoked as `python3 -m yt_dlp` so pip-installed plugins are on the module path.
+- **Every run goes through the egress guard** (`utils/egress-guard.js`), with
+  `PROXY_*` behind it when the proxy is on. yt-dlp can only reach public
+  addresses, whichever redirect, DNS answer or playlist leads it elsewhere
+  ([details](security-architecture.md#egress-guard--utilsegress-guardjs)).
+  The network log shows a refusal as
+  `🛡️ egress guard: host:port refused (private address)`. The user sees
+  "URL Ditolak".
+- **What the guard changes for downloads:**
+  - yt-dlp's own downloader does every transfer;
+  - formats that need rtmp/rtsp are skipped;
+  - `HTTP(S)_PROXY`/`NO_PROXY` from the environment are no longer used (set
+    `PROXY_*` in `.env` instead, as for the rest of the bot);
+  - names are resolved on the bot's machine even with a proxy (the proxy
+    gets the IP), so a CDN picks an edge near the server, not near the
+    proxy's exit.
+- **Log noise is capped:** a refusal is logged once per destination per
+  minute; the next line says how many more there were.
 
 ### Egress toggle — `utils/egress.js`
 

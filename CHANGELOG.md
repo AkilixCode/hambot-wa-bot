@@ -22,6 +22,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Images over 40 megapixels are refused before decoding (decompression bombs).
 - `.sticker` and `.toimg` now wait for a heavy-command slot like the other
   conversions, so a burst of them is queued and bounded.
+- **`.video` and `.music` could be led into the bot's own network.** A link
+  was checked once before yt-dlp started, but yt-dlp then followed redirects,
+  resolved names again, and fetched whatever playlists and segments the media
+  named. Every yt-dlp run now goes through an **egress guard** inside the
+  bot. It does four things:
+  - it resolves each destination once, refuses anything that is not a public
+    address, and connects to the address it checked;
+  - with your proxy on, it sends the proxy only that IP;
+  - yt-dlp uses only its own downloader and HTTP(S) formats, so rtmpdump or
+    ffmpeg never connect on their own;
+  - yt-dlp no longer reads `NO_PROXY` or other proxy settings from the
+    environment. yt-dlp honoured `NO_PROXY` even when given a proxy, which
+    would have let `localhost` or internal ranges listed there straight past
+    the guard.
+
+  The proxy toggle, the circuit breaker and the direct fallback work as
+  before, and the fallback is guarded too. The PO token provider is still
+  reached directly. Tested against real yt-dlp and ffmpeg in CI
+  ([details](docs/security-architecture.md#egress-guard--utilsegress-guardjs)).
+
+### Changed
+
+- yt-dlp no longer picks up `HTTP_PROXY`/`HTTPS_PROXY` from the environment;
+  its proxy is `PROXY_*` in `.env`, like the rest of the bot.
+- yt-dlp's process arguments no longer contain your proxy's username and
+  password, only the guard's local address and a per-process token.
+- `YTDLP_EGRESS_GUARD=false` switches the guard off, for diagnosis only.
+- With a proxy, yt-dlp's names are now resolved on the bot's machine and the
+  proxy gets only the IP, so a CDN picks an edge near the server rather than
+  near the proxy's exit.
 
 ### Fixed
 

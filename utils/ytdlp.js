@@ -35,6 +35,7 @@ const path = require('path');
 const config = require('../config');
 const logger = require('./logger');
 const providers = require('./providers');
+const egressGuard = require('./egress-guard');
 const { PROXY_BREAKER_ID } = require('./http-client');
 
 // Wall-clock ceilings. Metadata is a single API round trip; a download moves
@@ -122,6 +123,8 @@ function pythonBin(platform = process.platform) {
  * @param {number} [options.timeout] - Milliseconds before the process is killed
  * @param {number} [options.killGraceMs] - Wait after SIGTERM before SIGKILL
  * @param {string} [options.cwd] - Working directory
+ * @param {boolean} [options.guarded] - Running behind the egress guard: no
+ *   proxy settings from the environment (see withoutProxyEnv)
  * @returns {Promise<string>} stdout
  * @throws {Error} On non-zero exit, spawn failure, or timeout (`.timedOut` set)
  */
@@ -131,6 +134,7 @@ function run(args, options = {}) {
     return new Promise((resolve, reject) => {
         const proc = spawn(pythonBin(), ['-m', 'yt_dlp', ...args], {
             cwd: options.cwd || process.cwd(),
+            env: options.guarded ? withoutProxyEnv(process.env) : process.env,
             shell: false
         });
 
@@ -220,6 +224,10 @@ function failureReason(error) {
     const msg = (error && error.message ? error.message : '').toLowerCase();
     if (error && error.timedOut) return 'timeout';
     if (msg.includes('no module named') || /python3? tidak ditemukan/.test(msg)) return 'not-installed';
+    // The egress guard refused a destination: a redirect, a manifest entry
+    // or a DNS answer pointing at a non-public address.
+    if (msg.includes('egress blocked')) return 'blocked';
+    if (msg.includes('destination unreachable') || msg.includes('name not resolved')) return 'network';
     if (isProxyFailure(error)) return 'proxy';
     if (isBotCheck(error)) return 'bot-check';
     if (msg.includes('geo') || msg.includes('not available in your country')) return 'geo-blocked';
@@ -255,9 +263,10 @@ function lastErrorLine(error) {
  * @param {'proxy'|'direct'} route
  * @param {Object} options - Passed to run()
  * @param {boolean} fallbackAllowed - Whether a proxy failure will be retried direct
+ * @param {boolean} [viaGuard] - Whether yt-dlp ran behind the egress guard
  * @returns {Promise<string>} stdout
  */
-async function runLogged(args, route, options, fallbackAllowed = false) {
+async function runLogged(args, route, options, fallbackAllowed = false, viaGuard = false) {
     const target = describeTarget(args[0]);
     const started = Date.now();
     try {
@@ -265,6 +274,7 @@ async function runLogged(args, route, options, fallbackAllowed = false) {
         logger.net({ type: 'ytdlp', ok: true, target, route, ms: Date.now() - started, problem: false });
         return stdout;
     } catch (error) {
+        error.viaGuard = viaGuard;
         const reason = failureReason(error);
         error.net = { summary: reason, kind: reason, host: target, route };
         logger.net({
@@ -293,22 +303,32 @@ async function runLogged(args, route, options, fallbackAllowed = false) {
  * already found the proxy dead (its breaker is open), yt-dlp goes direct
  * straight away instead of waiting on the dead proxy first.
  *
+ * Every route, the direct fallback included, runs behind the egress guard
+ * (utils/egress-guard): yt-dlp's proxy is the guard, and the owner's proxy,
+ * if any, sits behind it. A destination the guard refuses is never retried.
+ *
  * @param {string[]} baseArgs - Arguments excluding proxy/network flags
  * @param {Object} [options] - Passed through to run()
  * @returns {Promise<string>} stdout
  */
-async function runWithFallback(baseArgs, options = {}) {
-    const proxyArgs = config.getYtDlpProxyArgs();
+async function runWithFallback(baseArgs, runOptions = {}) {
+    const upstream = config.getProxyUrl() || null;
     const networkArgs = config.getYtDlpNetworkArgs();
-    const fallbackAllowed = proxyArgs.length > 0 && config.network.fallbackToLocal;
+    const fallbackAllowed = Boolean(upstream) && config.network.fallbackToLocal;
+    const guarded = guardEnabled();
+    const options = { ...runOptions, guarded };
+
+    const direct = async () =>
+        runLogged([...baseArgs, ...networkArgs, ...(await routeArgs(null))], 'direct', options, false, guarded);
 
     if (fallbackAllowed && providers.isOpen(PROXY_BREAKER_ID)) {
-        return runLogged([...baseArgs, ...networkArgs], 'direct', options);
+        return direct();
     }
 
-    const route = proxyArgs.length > 0 ? 'proxy' : 'direct';
+    const route = upstream ? 'proxy' : 'direct';
     try {
-        const stdout = await runLogged([...baseArgs, ...networkArgs, ...proxyArgs], route, options, fallbackAllowed);
+        const args = [...baseArgs, ...networkArgs, ...(await routeArgs(upstream))];
+        const stdout = await runLogged(args, route, options, fallbackAllowed, guarded);
         if (route === 'proxy') providers.recordSuccess(PROXY_BREAKER_ID);
         return stdout;
     } catch (error) {
@@ -316,20 +336,142 @@ async function runWithFallback(baseArgs, options = {}) {
         if (proxyFailed) providers.recordFailure(PROXY_BREAKER_ID, error);
 
         if (proxyFailed && fallbackAllowed) {
-            return runLogged([...baseArgs, ...networkArgs], 'direct', options);
+            return direct();
         }
         throw error;
     }
 }
 
+// ─────────────────────────────────────────────────────
+//  EGRESS GUARD
+// ─────────────────────────────────────────────────────
+
+let guard = null;
+let guardOffWarned = false;
+
+/** YTDLP_EGRESS_GUARD=false switches the guard off (not recommended). */
+function guardEnabled() {
+    return String(process.env.YTDLP_EGRESS_GUARD ?? 'true').trim().toLowerCase() !== 'false';
+}
+
+/** The process's guard, created on first use. */
+function getGuard() {
+    if (!guard) guard = egressGuard.create({ preferIPv4: () => config.network.forceIPv4 });
+    return guard;
+}
+
+/**
+ * Replace the guard (tests: one with extra allowlist entries or a stub
+ * resolver). Closes the previous one.
+ * @param {Object|null} next - From egressGuard.create(), or null for the default
+ */
+async function useGuard(next) {
+    if (guard && guard !== next) await guard.close();
+    guard = next;
+}
+
+/**
+ * The environment without any proxy settings (`http_proxy`, `NO_PROXY`, …).
+ *
+ * yt-dlp's networking honours `NO_PROXY` even when given `--proxy`: a host on
+ * that list is fetched directly, past the guard. Docker, Kubernetes and
+ * corporate setups routinely list localhost, 127.0.0.0/8 or internal ranges
+ * there, exactly the addresses the guard exists to refuse. ffmpeg, started
+ * by yt-dlp, reads the same variables. Behind the guard, yt-dlp therefore
+ * gets none of them: the guard is its only route, and the owner's proxy
+ * (PROXY_* in .env, as for the rest of the bot) sits behind it.
+ *
+ * @param {Object} env
+ * @returns {Object}
+ */
+function withoutProxyEnv(env) {
+    const out = {};
+    for (const [name, value] of Object.entries(env)) {
+        if (!/_proxy$/i.test(name)) out[name] = value;
+    }
+    return out;
+}
+
+/**
+ * Proxy and downloader args for one route.
+ *
+ * Behind the guard, yt-dlp's own downloader does every transfer
+ * (`--downloader native`): an external one could connect without the proxy.
+ * A guard that cannot start refuses the run rather than letting yt-dlp go
+ * out unchecked.
+ *
+ * @param {string|null} upstream - The owner's proxy URL, or null for direct
+ * @returns {Promise<string[]>}
+ */
+async function routeArgs(upstream) {
+    if (!guardEnabled()) {
+        if (!guardOffWarned) {
+            guardOffWarned = true;
+            logger.warn('YTDLP_EGRESS_GUARD=false: yt-dlp can reach private addresses through redirects and playlists');
+        }
+        return upstream ? ['--proxy', upstream] : [];
+    }
+    let url;
+    try {
+        url = await getGuard().urlFor(upstream);
+    } catch (error) {
+        throw new Error(`egress guard could not start (${error.code || error.message}); download refused`);
+    }
+    return ['--proxy', url, '--downloader', 'native'];
+}
+
+// Formats whose transfer yt-dlp itself does, over HTTP(S), through the
+// guard. rtmp, rtsp, mms and the like would hand the job to rtmpdump or
+// ffmpeg, which connect on their own.
+const PROTOCOL_FILTER = "[protocol~='^(https?|m3u8(_native)?|http_dash_segments(_generator)?)$']";
+
+/**
+ * Add the protocol filter to every part of a format selector.
+ * `best[ext=mp4]/bestvideo+bestaudio` →
+ * `best[ext=mp4][protocol~=…]/bestvideo[protocol~=…]+bestaudio[protocol~=…]`
+ * @param {string} selector
+ * @returns {string}
+ */
+function restrictProtocols(selector) {
+    return String(selector)
+        .split('/')
+        .map(choice => choice.split('+').map(part => `${part.trim()}${PROTOCOL_FILTER}`).join('+'))
+        .join('/');
+}
+
+/**
+ * Format args with the protocol filter applied: an existing `-f` is
+ * rewritten; without one, yt-dlp's own default is spelled out and filtered
+ * (`bestaudio/best` for audio extraction).
+ * @param {string[]} formatArgs
+ * @returns {string[]}
+ */
+function withProtocolFilter(formatArgs) {
+    const args = [...formatArgs];
+    const at = args.findIndex(a => a === '-f' || a === '--format');
+    if (at !== -1 && at + 1 < args.length) {
+        args[at + 1] = restrictProtocols(args[at + 1]);
+        return args;
+    }
+    const fallback = args.includes('-x') || args.includes('--extract-audio') ? 'bestaudio/best' : 'bestvideo*+bestaudio/best';
+    return ['-f', restrictProtocols(fallback), ...args];
+}
+
 /**
  * Whether an error indicates the proxy itself is unreachable, as opposed to
  * the remote site rejecting us.
+ *
+ * Behind the egress guard, yt-dlp only ever talks to the guard, so every
+ * failure reads like a proxy problem. The guard's status line says which it
+ * was: only `502 Upstream Proxy Failed` is the owner's proxy; a refused
+ * destination or an unreachable site is not.
+ *
  * @param {Error} error
  * @returns {boolean}
  */
 function isProxyFailure(error) {
     const msg = (error.message || '').toLowerCase();
+    if (error.viaGuard) return msg.includes('upstream proxy failed');
     return (
         msg.includes('proxy') ||
         msg.includes('econnrefused') ||
@@ -409,7 +551,8 @@ function parseJsonLines(stdout) {
 async function download(target, outputTemplate, formatArgs, options = {}) {
     const args = [
         target,
-        ...formatArgs,
+        // Only formats yt-dlp fetches itself over HTTP(S), behind the guard.
+        ...(guardEnabled() ? withProtocolFilter(formatArgs) : formatArgs),
         '-o', outputTemplate,
         '--no-warnings',
         '--no-playlist'
@@ -493,6 +636,12 @@ module.exports = {
     isBotCheck,
     failureReason,
     describeTarget,
+    restrictProtocols,
+    withProtocolFilter,
+    withoutProxyEnv,
+    guardEnabled,
+    getGuard,
+    useGuard,
     INFO_TIMEOUT_MS,
     DOWNLOAD_TIMEOUT_MS
 };

@@ -26,8 +26,10 @@
     "test:network": "node tests/network.test.cjs",
     "test:chat": "node tests/chat.test.cjs",
     "test:platform": "node tests/platform.test.cjs",
-    "test:runtime": "npm run test && npm run test:integration && npm run test:security && npm run test:media && npm run test:commands && npm run test:chat && npm run test:network && npm run test:platform",
-    "test:pm2": "node tests/pm2-stop.test.cjs"
+    "test:runtime": "npm run test && npm run test:integration && npm run test:security && npm run test:media && npm run test:commands && npm run test:chat && npm run test:network && npm run test:platform && npm run test:egress",
+    "test:pm2": "node tests/pm2-stop.test.cjs",
+    "test:egress": "node tests/egress-guard.test.cjs",
+    "test:egress-real": "node tests/egress-real.test.cjs"
   },
   "keywords": [
     "whatsapp",
@@ -48,6 +50,7 @@
     "pino": "^10.4.0",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.35.5",
+    "socks": "^2.8.10",
     "socks-proxy-agent": "^10.1.0"
   },
   "optionalDependencies": {

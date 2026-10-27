@@ -317,7 +317,7 @@ class Logger {
      * and, if it is a problem, the recent-problems list the media doctor shows.
      *
      * @param {Object} event
-     * @param {'request'|'fallback'|'circuit'|'cascade'|'ytdlp'} event.type
+     * @param {'request'|'fallback'|'circuit'|'cascade'|'ytdlp'|'egress'} event.type
      * @param {boolean} [event.problem] - true for anything worth seeing by default
      */
     net(event) {
@@ -337,7 +337,7 @@ class Logger {
         if (this.silent || this.netLevel === 'off') return;
         if (!event.problem && this.netLevel !== 'all') return;
 
-        const icon = { request: '🌐', fallback: '🌐', circuit: '⚡', cascade: '🔁', ytdlp: '🎬' }[event.type] || '🌐';
+        const icon = { request: '🌐', fallback: '🌐', circuit: '⚡', cascade: '🔁', ytdlp: '🎬', egress: '🛡️' }[event.type] || '🌐';
         if (this.mode === 'simple') {
             console.log(`${icon} ${line}`);
         } else {
@@ -439,6 +439,11 @@ class Logger {
                 const detail = e.detail ? ` · ${e.detail}` : '';
                 return `yt-dlp ${where} → ✗ ${e.reason}${e.fallback ? ' (retrying direct)' : ''} · ${shortMs(e.ms)}${detail}`;
             }
+
+            case 'egress':
+                // Host and port only: never the path or query of what was asked.
+                return `egress guard: ${e.host}:${e.port} refused (${e.reason})` +
+                    (e.suppressed ? ` ×${e.suppressed} more since the last line` : '');
 
             default:
                 return JSON.stringify(e);

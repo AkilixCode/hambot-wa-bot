@@ -45,6 +45,7 @@ closed rather than granting access.
 | `MAX_MEDIA_SIZE` | `64M` | Maximum download size: `.video`/`.music` results and the attachments `.sticker`/`.toimg` fetch. `MAX_FILE_SIZE` is the legacy name. |
 | `YTDLP_PLAYER_CLIENTS` | `default,web_safari` | YouTube player clients for yt-dlp. Retune here when YouTube changes; no code edit needed. |
 | `POT_PROVIDER_URL` | unset | Optional PO token provider, raises the YouTube success rate |
+| `YTDLP_EGRESS_GUARD` | `true` | yt-dlp can only reach public addresses ([egress guard](security-architecture.md#egress-guard--utilsegress-guardjs)); `false` is for diagnosis only |
 | `WALLHAVEN_API_KEY` | unset | Optional; the `.pinterest` fallback works without one |
 
 ### Presentation
