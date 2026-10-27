@@ -64,9 +64,62 @@ Commands that fetch a user-supplied URL (`.video`, `.music`) apply two checks:
    hostname the sender controls from pointing inward. A resolver failure counts
    as unsafe.
 
-A gap remains by design: yt-dlp performs its own DNS resolution, so a record
-that changes between our check and its fetch is not covered. Closing that would
-require proxying every fetch through the bot.
+These checks run once, before yt-dlp starts. yt-dlp then resolves names
+itself, follows redirects, and fetches every playlist and segment the media
+names. A redirect, a DNS answer that changes in between (rebinding), or an
+HLS/DASH manifest listing internal addresses would get past them, so every
+yt-dlp run also goes through the **egress guard**.
+
+### Egress guard — `utils/egress-guard.js`
+
+yt-dlp's proxy is a small forward proxy inside the bot, on `127.0.0.1`. That
+holds on every route: direct, through the owner's proxy, and the automatic
+direct fallback. For each connection the guard:
+
+1. **Checks the route.** It accepts only its own per-route token, so other
+   programs on the machine cannot use it, or the owner's proxy behind it.
+2. **Checks the port.** Only 80 and 443 are allowed.
+3. **Checks the address.** It resolves the name once and refuses
+   (`403 Egress Blocked`) if any answer is not a public address, using the
+   same table as above.
+4. **Dials what it checked.** It connects to that address and never resolves
+   the name again. Behind the owner's proxy it asks for the IP, not the name:
+   `CONNECT <ip>:<port>` for HTTP(S) proxies, an IP destination for SOCKS.
+
+Three more settings close the routes around it:
+
+- **Only yt-dlp's own downloader** (`--downloader native`), and only formats
+  it fetches over HTTP(S). rtmp, rtsp and similar would hand the transfer to
+  rtmpdump or ffmpeg, which connect on their own; such formats are never
+  chosen.
+- **No proxy settings from the environment.** yt-dlp honours `NO_PROXY` even
+  when given a proxy, and Docker, Kubernetes and corporate machines often
+  list localhost or internal ranges there, exactly what the guard refuses.
+  ffmpeg reads the same variables. yt-dlp therefore runs without them. The
+  owner's proxy is `PROXY_*` in `.env`, as for the rest of the bot.
+- **The circuit breaker and fallback behave as before.** Only the owner's proxy
+  failing (`502 Upstream Proxy Failed`) counts as a proxy failure. A refused
+  destination is never retried.
+
+**What it trusts:**
+
+- **The owner's own endpoints,** dialled directly even though they are
+  private: the PO token provider (`POT_PROVIDER_URL`).
+- **The owner's proxy,** for what it does with a public IP the bot approved.
+  It must route that IP to the internet; the bot cannot see past it.
+
+`YTDLP_EGRESS_GUARD=false` turns all of this off, for diagnosing a site that
+breaks. The bot logs a warning when it is off. Do not leave it off.
+
+The tests prove the guard with the real tools. `tests/egress-real.test.cjs`
+runs real yt-dlp and ffmpeg against:
+
+- a redirect, HLS segments, DASH segments, a rebinding name and an
+  rtmp-only page, each aimed at a canary that must never be contacted;
+- matching downloads that must succeed (direct, HLS, DASH merged by ffmpeg),
+  directly and through HTTP and SOCKS5 proxies.
+
+`NO_PROXY` is set in that test, so the environment bypass is covered as well.
 
 ## Incoming attachments
 
